@@ -2,7 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// Import halaman login yang baru saja kita buat
+// [BARU] Import ini wajib biar format tanggal Indonesia jalan
+import 'package:intl/date_symbol_data_local.dart'; 
+
+// Import halaman login
 import 'features/autentikasi/screens/login_screen.dart';
 
 void main() async {
@@ -17,6 +20,10 @@ void main() async {
     anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
   );
 
+  // [BARU] 3. Inisialisasi Format Tanggal Bahasa Indonesia
+  // Ini biar DateFormat('EEEE, d MMMM yyyy', 'id_ID') gak error
+  await initializeDateFormatting('id_ID', null);
+
   runApp(const MyApp());
 }
 
@@ -27,19 +34,16 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'MBG Logistics', 
-      debugShowCheckedModeBanner: false, // Biar pita 'Debug' di pojok hilang
+      debugShowCheckedModeBanner: false, 
       theme: ThemeData(
-        // Kita pakai warna Hijau sebagai warna utama (Identik dengan kesegaran/makanan)
         colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
         useMaterial3: true,
-        // Sedikit styling tambahan biar input text lebih rapi
         inputDecorationTheme: const InputDecorationTheme(
           border: OutlineInputBorder(),
           filled: true,
           fillColor: Colors.white,
         ),
       ),
-      // PENTING: Di sini kita arahkan langsung ke LoginScreen
       home: const LoginScreen(),
     );
   }

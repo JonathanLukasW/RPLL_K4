@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
-import '../services/auth_service.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+// Import Dashboard
 import '../../pengawas/screens/dashboard_bgn_screen.dart';
 import '../../admin_sppg/screens/dashboard_admin_screen.dart';
-import '../../kurir/screens/dashboard_kurir_screen.dart';
+import '../../kurir/screens/dashboard_kurir_screen.dart'; // Import Dashboard Kurir
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,33 +14,56 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
-  // Controller untuk mengambil teks dari inputan
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  
-  // Service Auth yang tadi kita buat
-  final _authService = AuthService();
-  
-  // Status loading (biar tombol muter-muter pas diklik)
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
   bool _isLoading = false;
 
-  // Fungsi saat tombol Login ditekan
-  Future<void> _handleLogin() async {
-    setState(() {
-      _isLoading = true;
-    });
+  // --- FUNGSI LOGIN UTAMA ---
+  Future<void> _login() async {
+    setState(() { _isLoading = true; });
 
     try {
-      // 1. Panggil fungsi login dari Service
-      final userProfile = await _authService.signIn(
-        email: _emailController.text.trim(),
-        password: _passwordController.text.trim(),
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+
+      if (email.isEmpty || password.isEmpty) {
+        throw Exception("Email dan Password harus diisi.");
+      }
+
+      // 1. Proses Login Auth Supabase
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
       );
 
+      if (res.user == null) {
+        throw Exception("Login gagal. Periksa kembali email & password Anda.");
+      }
+
       if (!mounted) return;
-      // 2. Cek Role dan Pindahkan Halaman
+
+      // 2. Ambil Data Profile User untuk Cek Role
+      final userId = res.user!.id;
+      final profileData = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      if (profileData == null) {
+        throw Exception("Profil user tidak ditemukan di database.");
+      }
       
-      final role = userProfile?.role;
+      // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
+      final String rawRole = profileData['role'] ?? 'unknown';
+      final String role = rawRole.toLowerCase().trim(); // <-- FIX RLS ERROR DISINI
+
+      print("Role yang Diterima dari DB: $rawRole");
+      print("Role yang Digunakan (Normalized): $role");
+
+
+      // 3. Resepsionis Pintar Mengarahkan User
+      if (!mounted) return;
 
       if (role == 'bgn') {
         Navigator.pushReplacement(
@@ -50,26 +75,28 @@ class _LoginScreenState extends State<LoginScreen> {
           context,
           MaterialPageRoute(builder: (_) => const DashboardAdminScreen()),
         );
-      } else if (role == 'kurir') {
+      } else if (role == 'kurir') { // <-- Sekarang comparison lebih aman
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKurirScreen()),
         );
       } else {
-        // Role lain (Koordinator/Wali Kelas) sementara tampilkan pesan dulu
+        // Role tidak dikenali
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Login Berhasil! Role: $role (Halaman belum dibuat)")),
+          SnackBar(
+            content: Text("Akses Ditolak: Role '$rawRole' tidak dikenali."),
+            backgroundColor: Colors.red,
+          ),
         );
+        // Logout lagi agar sesi yang salah terhapus
+        await Supabase.instance.client.auth.signOut();
       }
-      // NANTI DI SINI KITA ARRAHKAN KE HALAMAN SESUAI ROLE
-      // Misal: if (role == 'bgn') ke DashboardBGN, dst.
-      
+
     } catch (e) {
-      // 3. Jika gagal, tampilkan error
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(e.toString()),
+          content: Text("Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}"),
           backgroundColor: Colors.red,
         ),
       );
@@ -81,98 +108,57 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
   }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
+  // ... (kode dispose dan build tetap sama) ...
+  
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.white,
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            // ... (kode UI form) ...
             children: [
-              // --- LOGO / JUDUL ---
-              const Icon(
-                Icons.local_shipping_outlined,
-                size: 80,
-                color: Colors.green,
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                "MBG Logistics",
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green,
-                ),
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                "Sistem Monitoring Distribusi Pangan",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
+              const Icon(Icons.security, size: 80, color: Colors.blue),
+              const SizedBox(height: 20),
+              const Text("MBG Monitoring", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              const Text("Silakan masuk untuk melanjutkan", style: TextStyle(color: Colors.grey)),
               const SizedBox(height: 40),
-
-              // --- INPUT EMAIL ---
+              
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(
-                  labelText: "Email",
-                  prefixIcon: Icon(Icons.email_outlined),
-                  border: OutlineInputBorder(),
-                ),
+                decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
               ),
               const SizedBox(height: 16),
-
-              // --- INPUT PASSWORD ---
               TextField(
                 controller: _passwordController,
-                obscureText: true, // Biar password jadi bintang-bintang
-                decoration: const InputDecoration(
-                  labelText: "Password",
-                  prefixIcon: Icon(Icons.lock_outline),
-                  border: OutlineInputBorder(),
-                ),
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
               ),
-              const SizedBox(height: 24),
-
-              // --- TOMBOL LOGIN ---
+              const SizedBox(height: 30),
               SizedBox(
+                width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: _isLoading ? null : _handleLogin,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                  ),
+                  onPressed: _isLoading ? null : _login,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                   child: _isLoading
                       ? const CircularProgressIndicator(color: Colors.white)
                       : const Text("MASUK", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                 ),
-              ),
-              
-              const SizedBox(height: 20),
-              const Text(
-                "Lupa password? Hubungi Admin BGN.",
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey, fontSize: 12),
               ),
             ],
           ),
         ),
       ),
     );
+  }
+  
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
   }
 }
