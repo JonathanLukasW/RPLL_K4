@@ -7,12 +7,13 @@ import '../../admin_sppg/services/route_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import '../../../models/route_model.dart';
 
+// [PENTING] Import Halaman Detail Rute
+import 'route_detail_screen.dart'; 
+
 class DashboardKurirScreen extends StatelessWidget {
-  // [FIX]: Constructor bisa const karena tidak ada final fields non-const
+  // Constructor constant aman
   const DashboardKurirScreen({super.key}); 
   
-  // HILANGKAN deklarasi final RouteService _routeService = ... di sini.
-
   // --- FUNGSI LOGOUT ---
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -25,12 +26,11 @@ class DashboardKurirScreen extends StatelessWidget {
 
   // --- LOGIKA AMBIL & TAMPILKAN RUTE ---
   Widget _buildRouteList(BuildContext context) {
-    // [FIX UTAMA]: Service dibuat LOKAL di dalam method (bukan final field)
+    // Service dibuat LOKAL
     final RouteService routeService = RouteService();
 
-    // Memanggil fungsi yang memfilter berdasarkan ID Kurir
     return FutureBuilder<List<DeliveryRoute>>(
-      future: routeService.getRoutesByCourier(), // Panggil service lokal
+      future: routeService.getRoutesByCourier(), 
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -88,9 +88,16 @@ class DashboardKurirScreen extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Fitur Detail Rute akan dibuat!")),
-                    );
+                    // [FIX] NAVIGASI KE DETAIL RUTE
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => RouteDetailScreen(route: route),
+                      ),
+                    ).then((val) {
+                      // Refresh dashboard pas balik (biar status update jadi ACTIVE/COMPLETED)
+                      (context as Element).markNeedsBuild();
+                    });
                   },
                 ),
               );
@@ -108,7 +115,6 @@ class DashboardKurirScreen extends StatelessWidget {
       default: return Colors.orange; // pending
     }
   }
-
 
   @override
   Widget build(BuildContext context) {

@@ -1,7 +1,6 @@
 import os
 
 folders = [
-	"android/app/src/main"
     "lib"
 ]
 

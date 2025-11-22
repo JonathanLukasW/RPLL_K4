@@ -40,23 +40,27 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
       // 2. Ambil Koordinat Sekolah untuk marker & rute
       List<LatLng> points = [];
       
-      // (Opsional) Tambahkan Titik Awal (Dapur SPPG) jika punya datanya.
-      // Untuk sekarang kita mulai dari sekolah pertama.
-      
       for (var stop in stopsData) {
         final school = stop['schools'];
-        if (school['latitude'] != null && school['longitude'] != null) {
-          points.add(LatLng(school['latitude'], school['longitude']));
+        
+        // [CEK LOG]: Print data untuk memastikan koordinat ada
+        print("Sekolah: ${school['name']} -> Lat: ${school['gps_lat']}, Long: ${school['gps_long']}");
+
+        if (school['gps_lat'] != null && school['gps_long'] != null) {
+          try {
+            double lat = double.parse(school['gps_lat'].toString());
+            double long = double.parse(school['gps_long'].toString());
+            points.add(LatLng(lat, long));
+          } catch (e) {
+            print("Error parsing koordinat: $e");
+          }
         }
       }
 
-      // 3. Minta Garis Rute ke OSRM (Service yang baru kita buat)
+      // 3. Minta Garis Rute ke OSRM (Cuma kalau ada > 1 titik)
       List<LatLng> polyline = [];
-      if (points.isNotEmpty) {
-        // Kalau titiknya cuma 1, ga bisa bikin garis, jadi marker aja
-        if (points.length > 1) {
-          polyline = await _routeService.getRoutePolyline(points);
-        }
+      if (points.length > 1) {
+         polyline = await _routeService.getRoutePolyline(points);
       }
 
       if (!mounted) return;
@@ -66,17 +70,29 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         _isLoading = false;
       });
 
-      // 4. Fit Kamera Peta biar semua titik kelihatan
+      // [PERBAIKAN KRUSIAL]: Cek points.isNotEmpty DUA KALI (di luar & di dalam)
       if (points.isNotEmpty) {
-        // Kasih delay dikit biar peta render dulu
         Future.delayed(const Duration(milliseconds: 500), () {
-          _mapController.fitCamera(
-            CameraFit.bounds(
-              bounds: LatLngBounds.fromPoints(points),
-              padding: const EdgeInsets.all(50),
-            ),
-          );
+          if (!mounted) return;
+          try {
+             // Pastikan points tidak kosong saat dipanggil
+             if (points.isNotEmpty) {
+               _mapController.fitCamera(
+                CameraFit.bounds(
+                  bounds: LatLngBounds.fromPoints(points),
+                  padding: const EdgeInsets.all(50),
+                ),
+              );
+             }
+          } catch (e) {
+            print("Map Controller Error (Aman untuk diabaikan): $e"); 
+          }
         });
+      } else {
+        print("PERINGATAN: Tidak ada koordinat valid untuk ditampilkan di peta.");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Peta tidak tampil karena Sekolah belum punya lokasi GPS.")),
+        );
       }
 
     } catch (e) {
@@ -87,11 +103,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
   // --- BUKA GOOGLE MAPS (Navigasi) ---
   Future<void> _launchGoogleMaps(double lat, double long) async {
-    // Format URL untuk mode navigasi (turn-by-turn)
     final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$long&mode=d");
-    
-    // Fallback link browser kalau aplikasinya ga ada
-    final Uri browserUrl = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$long");
+    final Uri browserUrl = Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$long");
 
     try {
       if (await canLaunchUrl(googleMapsUrl)) {
@@ -105,7 +118,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     }
   }
 
-  // --- LOGIKA BUTTONS (Sama seperti sebelumnya) ---
+  // --- LOGIKA BUTTONS ---
   void _showValidationDialog() {
     showDialog(
       context: context,
@@ -150,7 +163,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
           // 1. PETA NAVIGASI (ATAS)
           // -------------------------------------------------------
           SizedBox(
-            height: 250, // Tinggi Peta
+            height: 250,
             child: FlutterMap(
               mapController: _mapController,
               options: const MapOptions(
@@ -177,10 +190,17 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                   markers: _stops.map((stop) {
                     final school = stop['schools'];
                     final isCompleted = stop['status'] == 'completed';
-                    if (school['latitude'] == null) return const Marker(point: LatLng(0,0), child: SizedBox()); // Skip if null
+                    
+                    // [FIX]: Cek null dengan nama kolom yang benar
+                    if (school['gps_lat'] == null || school['gps_long'] == null) {
+                        return const Marker(point: LatLng(0,0), child: SizedBox());
+                    }
+                    
+                    double lat = double.parse(school['gps_lat'].toString());
+                    double long = double.parse(school['gps_long'].toString());
 
                     return Marker(
-                      point: LatLng(school['latitude'], school['longitude']),
+                      point: LatLng(lat, long),
                       width: 40,
                       height: 40,
                       child: Icon(
@@ -208,8 +228,14 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       final stop = _stops[index];
                       final school = stop['schools'];
                       final bool isCompleted = stop['status'] == 'completed';
-                      final lat = school['latitude'];
-                      final long = school['longitude'];
+                      
+                      // [FIX]: Ambil koordinat dengan nama kolom yang benar
+                      double? lat;
+                      double? long;
+                      if (school['gps_lat'] != null) {
+                         lat = double.parse(school['gps_lat'].toString());
+                         long = double.parse(school['gps_long'].toString());
+                      }
 
                       return Card(
                         color: isCompleted ? Colors.green[50] : Colors.white,
@@ -229,7 +255,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                               if (lat != null && long != null)
                                 IconButton(
                                   icon: const Icon(Icons.directions, color: Colors.blue),
-                                  onPressed: () => _launchGoogleMaps(lat, long),
+                                  onPressed: () => _launchGoogleMaps(lat!, long!),
                                 ),
                               
                               // TOMBOL SELESAI
@@ -255,7 +281,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         ],
       ),
       
-      // Tombol Start (Muncul cuma pas Pending)
       bottomNavigationBar: _currentStatus == 'pending'
           ? Padding(
               padding: const EdgeInsets.all(16.0),

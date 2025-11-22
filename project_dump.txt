@@ -73,24 +73,33 @@ class _AddCourierScreenState extends State<AddCourierScreen> {
   
   bool _isSubmitting = false;
 
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
       try {
         await CourierService().createCourierAccount(
-          email: _emailController.text,
+          email: _emailController.text.trim(),   // TRIM untuk email
           password: _passwordController.text,
-          fullName: _nameController.text,
+          fullName: _nameController.text.trim(), // TRIM untuk nama
         );
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Akun Kurir Berhasil Dibuat!"), backgroundColor: Colors.green),
         );
-        Navigator.pop(context, true);
+        Navigator.pop(context, true); // Sukses
 
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }
@@ -693,11 +702,14 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
 === FILE: lib\features\admin_sppg\screens\create_route_screen.dart ===
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // Jangan lupa: flutter pub add intl
+import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
 
 // Import Models
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
+import '../../../models/courier_model.dart';
+
 // Import Services
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
@@ -718,12 +730,12 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
-  
+
   // --- Data Sources (List Pilihan) ---
   List<School> _availableSchools = [];
   List<Vehicle> _availableVehicles = [];
   List<CourierModel> _availableCouriers = [];
-  
+
   // --- Form State (Data yang dipilih user) ---
   DateTime _selectedDate = DateTime.now().add(const Duration(days: 1)); // Default Besok
   String? _selectedVehicleId;
@@ -866,7 +878,7 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             decoration: const InputDecoration(labelText: "Pilih Mobil", border: OutlineInputBorder()),
-                            initialValue: _selectedVehicleId,
+                            value: _selectedVehicleId,
                             items: _availableVehicles.map((v) {
                               return DropdownMenuItem(
                                 value: v.id,
@@ -882,7 +894,7 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
                         Expanded(
                           child: DropdownButtonFormField<String>(
                             decoration: const InputDecoration(labelText: "Pilih Kurir", border: OutlineInputBorder()),
-                            initialValue: _selectedCourierId,
+                            value: _selectedCourierId,
                             items: _availableCouriers.map((c) {
                               return DropdownMenuItem(
                                 value: c.id,
@@ -1474,15 +1486,18 @@ class _MenuManagementScreenState extends State<MenuManagementScreen> {
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../models/courier_model.dart'; // Import Model yang baru kita buat
+import '../../../models/courier_model.dart';
 
 class CourierService {
   final _supabase = Supabase.instance.client;
 
-  // Helper untuk mendapatkan SPPG ID Admin
   Future<String> _getMySppgId() async {
     final userId = _supabase.auth.currentUser!.id;
-    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+    final profile = await _supabase
+        .from('profiles')
+        .select('sppg_id')
+        .eq('id', userId)
+        .single();
     return profile['sppg_id'];
   }
 
@@ -1490,19 +1505,16 @@ class CourierService {
   Future<List<CourierModel>> getMyCouriers() async {
     try {
       final mySppgId = await _getMySppgId();
-      
+
       // Ambil data profile kurir (full_name, email) yang sppg_id-nya sama
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, sppg_id') // Kita perlu tambahkan 'email' di select() jika ada di tabel profiles, 
-                                                 // atau asumsikan email ada di tabel Auth dan harus di-join.
-                                                 // Untuk saat ini, kita asumsikan email ada di profiles untuk mempermudah.
-          .eq('sppg_id', mySppgId) 
-          .eq('role', 'kurir'); 
+          .select('id, full_name, email, sppg_id')
+          .eq('sppg_id', mySppgId) // <-- BARIS BEBAS KARAKTER 160
+          .eq('role', 'kurir'); // <-- BARIS BEBAS KARAKTER 160
 
       final List<dynamic> data = response;
       return data.map((json) => CourierModel.fromJson(json)).toList();
-      
     } catch (e) {
       throw Exception('Gagal ambil data kurir: $e');
     }
@@ -1514,13 +1526,18 @@ class CourierService {
     required String password,
     required String fullName,
   }) async {
-    // Kredensial Supabase (dari service sebelumnya)
+    // Kredensial Supabase (Pastikan sudah benar)
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
-    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+    const String anonKey =
+        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
 
     try {
       final myUserId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', myUserId).single();
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', myUserId)
+          .single();
       final String mySppgId = profile['sppg_id'];
 
       // A. Request Signup ke Supabase Auth
@@ -1531,13 +1548,13 @@ class CourierService {
         body: jsonEncode({
           'email': email.trim(),
           'password': password,
-          'data': { 'full_name': fullName }
+          'data': {'full_name': fullName},
         }),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
-        String? newUserId = responseData['id'] ?? responseData['user']['id']; 
+        String? newUserId = responseData['id'] ?? responseData['user']['id'];
 
         if (newUserId == null) throw Exception("Gagal dapat ID User Kurir.");
 
@@ -1545,12 +1562,11 @@ class CourierService {
         await _supabase.from('profiles').insert({
           'id': newUserId,
           'full_name': fullName,
-          'email': email.trim(), // [PENTING] Simpan email di profiles juga biar bisa ditampilkan
+          'email': email.trim(), // FIX: Simpan email di profiles
           'role': 'kurir',
           'sppg_id': mySppgId,
           'school_id': null,
         });
-
       } else {
         final errorData = jsonDecode(response.body);
         throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
@@ -1563,6 +1579,7 @@ class CourierService {
     }
   }
 }
+
 
 === FILE: lib\features\admin_sppg\services\menu_service.dart ===
 
@@ -1630,6 +1647,9 @@ class MenuService {
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/route_model.dart';
 import '../../../models/school_model.dart'; 
+import 'dart:convert'; // Buat decode JSON dari OSRM
+import 'package:http/http.dart' as http; // Buat request ke OSRM
+import 'package:latlong2/latlong.dart'; // Buat tipe data LatLng
 
 class RouteService {
   final _supabase = Supabase.instance.client;
@@ -1669,7 +1689,9 @@ class RouteService {
         stopsData.add({
           'route_id': newRouteId,
           'school_id': selectedSchools[i].id,
-          'sequence_order': i + 1, // Urutan default (tanpa optimasi VRP)
+          // Urutan saat ini: Masih Manual (Sesuai urutan array)
+          // Nanti di sini kita pasang logika VRP
+          'sequence_order': i + 1, 
           'status': 'pending',
         });
       }
@@ -1689,7 +1711,7 @@ class RouteService {
       final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // Ambil semua rute milik SPPG ini, gabung dengan data plat & nama kurir
+      // Ambil semua rute milik SPPG ini
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -1710,11 +1732,11 @@ class RouteService {
       // Ambil ID Kurir yang sedang login
       final currentCourierId = _supabase.auth.currentUser!.id;
 
-      // Query ke delivery_routes, filter berdasarkan ID Kurir
+      // Query filter berdasarkan courier_id
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
-          .eq('courier_id', currentCourierId) // FILTER PENTING
+          .eq('courier_id', currentCourierId) 
           .order('date', ascending: false);
 
       final List<dynamic> data = response;
@@ -1722,6 +1744,87 @@ class RouteService {
       
     } catch (e) {
       throw Exception("Gagal mengambil rute kurir: $e");
+    }
+  }
+
+  // --- 4. AMBIL DETAIL PERHENTIAN (STOPS) UNTUK SUATU RUTE ---
+  // Fungsi ini dipakai di halaman Detail Rute Kurir
+  Future<List<Map<String, dynamic>>> getRouteStops(String routeId) async {
+    try {
+      // Ambil data stops DAN join dengan tabel schools untuk dapat nama/alamat
+      final response = await _supabase
+          .from('delivery_stops')
+          // Kita ambil data sekolah terkait (name, address, dll)
+          .select('*, schools(name, address, latitude, longitude, student_count, menu_default)')
+          .eq('route_id', routeId)
+          .order('sequence_order', ascending: true);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception("Gagal ambil detail stop: $e");
+    }
+  }
+
+  // --- 5. UPDATE STATUS RUTE (Start/Finish Route) ---
+  Future<void> updateRouteStatus(String routeId, String newStatus) async {
+    try {
+      await _supabase.from('delivery_routes').update({
+        'status': newStatus
+      }).eq('id', routeId);
+    } catch (e) {
+      throw Exception("Gagal update status rute: $e");
+    }
+  }
+
+  // --- 6. UPDATE STATUS PERHENTIAN (Sekolah Selesai Dikirim) ---
+  Future<void> updateStopStatus(String stopId, String newStatus) async {
+    try {
+      await _supabase.from('delivery_stops').update({
+        'status': newStatus,
+        // Kalau statusnya 'completed', catat jam sekarang sebagai arrival_time
+        'arrival_time': newStatus == 'completed' ? DateTime.now().toIso8601String() : null,
+      }).eq('id', stopId);
+    } catch (e) {
+      throw Exception("Gagal update status stop: $e");
+    }
+  }
+
+  // --- 7. AMBIL GARIS RUTE (POLYLINE) DARI OSRM ---
+  Future<List<LatLng>> getRoutePolyline(List<LatLng> coordinates) async {
+    if (coordinates.length < 2) return []; // Butuh minimal 2 titik buat bikin garis
+
+    // 1. Susun String Koordinat untuk URL OSRM
+    // Format: {long},{lat};{long},{lat};...
+    String coordString = coordinates
+        .map((p) => "${p.longitude},${p.latitude}")
+        .join(';');
+
+    // 2. URL OSRM Public (Gratis)
+    final url = Uri.parse(
+        'http://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
+
+    try {
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        
+        // 3. Ambil geometri (garis) dari JSON
+        final List<dynamic> coords = 
+            data['routes'][0]['geometry']['coordinates'];
+
+        // 4. Konversi ke List<LatLng> untuk Flutter Map
+        // Note: OSRM balikin [Long, Lat], kita butuh [Lat, Long]
+        return coords
+            .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
+            .toList();
+      } else {
+        print("Gagal ambil rute OSRM: ${response.body}");
+        return []; // Balikin list kosong kalau gagal biar app ga crash
+      }
+    } catch (e) {
+      print("Error OSRM: $e");
+      return [];
     }
   }
 }
@@ -2208,6 +2311,285 @@ class DashboardKurirScreen extends StatelessWidget {
         ],
       ),
       body: _buildRouteList(context), 
+    );
+  }
+}
+
+=== FILE: lib\features\kurir\screens\route_detail_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart'; // Visualisasi Peta
+import 'package:latlong2/latlong.dart'; // Tipe data Koordinat
+import 'package:url_launcher/url_launcher.dart'; // Buka Google Maps
+
+import '../../admin_sppg/services/route_service.dart';
+import '../../../models/route_model.dart';
+
+class RouteDetailScreen extends StatefulWidget {
+  final DeliveryRoute route;
+
+  const RouteDetailScreen({super.key, required this.route});
+
+  @override
+  State<RouteDetailScreen> createState() => _RouteDetailScreenState();
+}
+
+class _RouteDetailScreenState extends State<RouteDetailScreen> {
+  final RouteService _routeService = RouteService();
+  final MapController _mapController = MapController();
+  
+  List<Map<String, dynamic>> _stops = [];
+  List<LatLng> _polylinePoints = []; // Titik-titik garis rute biru
+  bool _isLoading = true;
+  String _currentStatus = 'pending';
+
+  @override
+  void initState() {
+    super.initState();
+    _currentStatus = widget.route.status;
+    _fetchData();
+  }
+
+  // --- AMBIL DATA STOP & HITUNG JALUR ---
+  Future<void> _fetchData() async {
+    try {
+      // 1. Ambil daftar sekolah (Stops)
+      final stopsData = await _routeService.getRouteStops(widget.route.id);
+      
+      // 2. Ambil Koordinat Sekolah untuk marker & rute
+      List<LatLng> points = [];
+      
+      // (Opsional) Tambahkan Titik Awal (Dapur SPPG) jika punya datanya.
+      // Untuk sekarang kita mulai dari sekolah pertama.
+      
+      for (var stop in stopsData) {
+        final school = stop['schools'];
+        if (school['latitude'] != null && school['longitude'] != null) {
+          points.add(LatLng(school['latitude'], school['longitude']));
+        }
+      }
+
+      // 3. Minta Garis Rute ke OSRM (Service yang baru kita buat)
+      List<LatLng> polyline = [];
+      if (points.isNotEmpty) {
+        // Kalau titiknya cuma 1, ga bisa bikin garis, jadi marker aja
+        if (points.length > 1) {
+          polyline = await _routeService.getRoutePolyline(points);
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _stops = stopsData;
+        _polylinePoints = polyline;
+        _isLoading = false;
+      });
+
+      // 4. Fit Kamera Peta biar semua titik kelihatan
+      if (points.isNotEmpty) {
+        // Kasih delay dikit biar peta render dulu
+        Future.delayed(const Duration(milliseconds: 500), () {
+          _mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: LatLngBounds.fromPoints(points),
+              padding: const EdgeInsets.all(50),
+            ),
+          );
+        });
+      }
+
+    } catch (e) {
+      print("Error fetch data: $e");
+      if(mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- BUKA GOOGLE MAPS (Navigasi) ---
+  Future<void> _launchGoogleMaps(double lat, double long) async {
+    // Format URL untuk mode navigasi (turn-by-turn)
+    final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$long&mode=d");
+    
+    // Fallback link browser kalau aplikasinya ga ada
+    final Uri browserUrl = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$long");
+
+    try {
+      if (await canLaunchUrl(googleMapsUrl)) {
+        await launchUrl(googleMapsUrl);
+      } else {
+        await launchUrl(browserUrl, mode: LaunchMode.externalApplication);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal buka maps: $e")));
+    }
+  }
+
+  // --- LOGIKA BUTTONS (Sama seperti sebelumnya) ---
+  void _showValidationDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text("Validasi Muatan"),
+          content: const Text("Pastikan semua menu sudah sesuai SOP sebelum berangkat."),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _routeService.updateRouteStatus(widget.route.id, 'active');
+                setState(() => _currentStatus = 'active');
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+              child: const Text("Konfirmasi & Jalan"),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _completeStop(String stopId, String schoolName) async {
+    await _routeService.updateStopStatus(stopId, 'completed');
+    _fetchData(); // Refresh data
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Sampai di $schoolName!")));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Detail Pengiriman"),
+        backgroundColor: _currentStatus == 'active' ? Colors.green[700] : Colors.blue[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Column(
+        children: [
+          // -------------------------------------------------------
+          // 1. PETA NAVIGASI (ATAS)
+          // -------------------------------------------------------
+          SizedBox(
+            height: 250, // Tinggi Peta
+            child: FlutterMap(
+              mapController: _mapController,
+              options: const MapOptions(
+                initialCenter: LatLng(-6.9175, 107.6191), // Default Bandung
+                initialZoom: 13.0,
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.mbg_monitoring',
+                ),
+                // GARIS RUTE (BIRU)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: _polylinePoints,
+                      strokeWidth: 4.0,
+                      color: Colors.blue,
+                    ),
+                  ],
+                ),
+                // MARKER (PIN SEKOLAH)
+                MarkerLayer(
+                  markers: _stops.map((stop) {
+                    final school = stop['schools'];
+                    final isCompleted = stop['status'] == 'completed';
+                    if (school['latitude'] == null) return const Marker(point: LatLng(0,0), child: SizedBox()); // Skip if null
+
+                    return Marker(
+                      point: LatLng(school['latitude'], school['longitude']),
+                      width: 40,
+                      height: 40,
+                      child: Icon(
+                        Icons.location_on, 
+                        color: isCompleted ? Colors.green : Colors.red,
+                        size: 40,
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ],
+            ),
+          ),
+
+          // -------------------------------------------------------
+          // 2. LIST PENGIRIMAN (BAWAH)
+          // -------------------------------------------------------
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : ListView.builder(
+                    padding: const EdgeInsets.all(10),
+                    itemCount: _stops.length,
+                    itemBuilder: (context, index) {
+                      final stop = _stops[index];
+                      final school = stop['schools'];
+                      final bool isCompleted = stop['status'] == 'completed';
+                      final lat = school['latitude'];
+                      final long = school['longitude'];
+
+                      return Card(
+                        color: isCompleted ? Colors.green[50] : Colors.white,
+                        elevation: 2,
+                        margin: const EdgeInsets.only(bottom: 10),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: isCompleted ? Colors.green : Colors.grey[300],
+                            child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black)),
+                          ),
+                          title: Text(school['name']),
+                          subtitle: Text("Menu: ${school['menu_default'] ?? '-'} (${school['student_count']} pax)"),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // TOMBOL NAVIGASI (GOOGLE MAPS)
+                              if (lat != null && long != null)
+                                IconButton(
+                                  icon: const Icon(Icons.directions, color: Colors.blue),
+                                  onPressed: () => _launchGoogleMaps(lat, long),
+                                ),
+                              
+                              // TOMBOL SELESAI
+                              if (_currentStatus == 'active' && !isCompleted)
+                                ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green, 
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(horizontal: 10)
+                                  ),
+                                  onPressed: () => _completeStop(stop['id'], school['name']),
+                                  child: const Text("Tiba"),
+                                )
+                              else if (isCompleted)
+                                const Icon(Icons.check_circle, color: Colors.green),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
+      
+      // Tombol Start (Muncul cuma pas Pending)
+      bottomNavigationBar: _currentStatus == 'pending'
+          ? Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: ElevatedButton.icon(
+                onPressed: _showValidationDialog,
+                icon: const Icon(Icons.checklist),
+                label: const Text("VALIDASI MUATAN & MULAI"),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue[800],
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                ),
+              ),
+            )
+          : null,
     );
   }
 }
@@ -3582,7 +3964,7 @@ class Sppg {
   final String name;
   final String? address;
   final String? email;
-  final String? phone; // Tambahan No Telp
+  final String? phone; 
   final double? latitude;
   final double? longitude;
 
@@ -3600,13 +3982,12 @@ class Sppg {
   factory Sppg.fromJson(Map<String, dynamic> json) {
     return Sppg(
       id: json['id'].toString(),
-      name: json['nama'] ?? 'Tanpa Nama', // Sesuai nama kolom DB
-      address: json['alamat'],
+      name: json['name'] ?? 'Tanpa Nama',    // FIX: Menggunakan 'name'
+      address: json['address'],              // FIX: Menggunakan 'address'
       email: json['email'],
-      phone: json['no_telp'],
-      // Convert float8 Supabase ke double Dart
-      latitude: json['latitude'] != null ? double.parse(json['latitude'].toString()) : null,
-      longitude: json['longitude'] != null ? double.parse(json['longitude'].toString()) : null,
+      phone: json['phone'],                  // FIX: Menggunakan 'phone'
+      latitude: json['gps_lat'] != null ? double.parse(json['gps_lat'].toString()) : null,
+      longitude: json['gps_long'] != null ? double.parse(json['gps_long'].toString()) : null,
     );
   }
 }
@@ -3617,7 +3998,7 @@ class UserProfile {
   final String id;
   final String? email; // Email dari Auth Supabase
   final String? fullName;
-  final String role; // 'bgn', 'admin_sppg', 'kurir', 'koordinator', 'walikelas'
+  final String role; // 'bgn', 'admin_sppg', 'kurir', ...
   final String? sppgId;
   final String? schoolId;
 
@@ -3630,13 +4011,13 @@ class UserProfile {
     this.schoolId,
   });
 
-  // Fungsi untuk mengubah data JSON dari Supabase menjadi Objek Dart
-  factory UserProfile.fromJson(Map<String, dynamic> json, String? email) {
+  // FIX: Email dijadikan parameter opsional. Mengambil data dari profiles
+  factory UserProfile.fromJson(Map<String, dynamic> json, [String? email]) { 
     return UserProfile(
       id: json['id'],
-      email: email,
+      email: email, // Email dapet dari parameter opsional di AuthService
       fullName: json['full_name'],
-      role: json['role'] ?? 'unknown', // Default kalau kosong
+      role: json['role'] ?? 'unknown',
       sppgId: json['sppg_id'],
       schoolId: json['school_id'],
     );
@@ -3726,6 +4107,7 @@ dependencies:
   flutter_map: ^8.2.2
   latlong2: ^0.9.1
   http: ^1.6.0
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

@@ -105,11 +105,10 @@ class RouteService {
   // Fungsi ini dipakai di halaman Detail Rute Kurir
   Future<List<Map<String, dynamic>>> getRouteStops(String routeId) async {
     try {
-      // Ambil data stops DAN join dengan tabel schools untuk dapat nama/alamat
       final response = await _supabase
           .from('delivery_stops')
-          // Kita ambil data sekolah terkait (name, address, dll)
-          .select('*, schools(name, address, latitude, longitude, student_count, menu_default)')
+          // [FIX]: Ganti 'latitude, longitude' jadi 'gps_lat, gps_long' sesuai DB
+          .select('*, schools(name, address, gps_lat, gps_long, student_count, menu_default)')
           .eq('route_id', routeId)
           .order('sequence_order', ascending: true);
 
