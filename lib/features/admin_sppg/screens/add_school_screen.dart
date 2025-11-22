@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:latlong2/latlong.dart';
-// Import Peta yang kemarin kita buat (Lokasinya ada di folder pengawas)
+import 'package:latlong2/latlong.dart'; 
 import '../../pengawas/screens/location_picker_screen.dart';
 import '../services/school_service.dart';
 
@@ -18,15 +17,19 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   final TextEditingController _nameController = TextEditingController();
   final TextEditingController _addressController = TextEditingController();
   final TextEditingController _studentCountController = TextEditingController();
-  final TextEditingController _serviceTimeController = TextEditingController(text: "10"); // Default 10 menit
+  final TextEditingController _serviceTimeController = TextEditingController(text: "10"); 
+  
+  // [BARU] Controller untuk data VRP tambahan
+  final TextEditingController _toleranceController = TextEditingController(text: "45"); 
+  final TextEditingController _menuDefaultController = TextEditingController(); 
   
   final TextEditingController _latController = TextEditingController();
   final TextEditingController _longController = TextEditingController();
 
   // --- State Variables ---
-  bool _isHighRisk = false;     // Untuk Checkbox High Risk
-  TimeOfDay? _deadlineTime;     // Untuk nyimpen jam deadline
-  bool _isSubmitting = false;   // Loading state
+  bool _isHighRisk = false;     
+  TimeOfDay? _deadlineTime;     
+  bool _isSubmitting = false;   
 
   // --- 1. Fungsi Pilih Jam (Time Picker) ---
   Future<void> _pickTime() async {
@@ -41,7 +44,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     }
   }
 
-  // --- 2. Fungsi Buka Peta (Reuse Peta Kemarin) ---
+  // --- 2. Fungsi Buka Peta ---
   Future<void> _openMapPicker() async {
     double initialLat = double.tryParse(_latController.text) ?? -6.9175;
     double initialLong = double.tryParse(_longController.text) ?? 107.6191;
@@ -80,7 +83,6 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
       setState(() => _isSubmitting = true);
 
       try {
-        // Format TimeOfDay ke String "HH:mm:ss" buat Supabase
         final String formattedTime = 
             "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}:00";
 
@@ -93,7 +95,9 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
           'is_high_risk': _isHighRisk,
           'gps_lat': double.tryParse(_latController.text),
           'gps_long': double.tryParse(_longController.text),
-          // 'sppg_id' akan diisi otomatis oleh Service di backend
+          // [BARU] Data VRP Constraints
+          'tolerance_minutes': int.parse(_toleranceController.text), 
+          'menu_default': _menuDefaultController.text,
         };
 
         await SchoolService().createSchool(newSchoolData);
@@ -102,7 +106,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Sekolah berhasil ditambahkan!"), backgroundColor: Colors.green),
         );
-        Navigator.pop(context, true); // Balik bawa sinyal sukses
+        Navigator.pop(context, true); 
 
       } catch (e) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -115,10 +119,23 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   }
 
   @override
+  void dispose() {
+    _nameController.dispose();
+    _addressController.dispose();
+    _studentCountController.dispose();
+    _serviceTimeController.dispose();
+    _toleranceController.dispose();
+    _menuDefaultController.dispose();
+    _latController.dispose();
+    _longController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Tambah Sekolah Mitra"),
+        title: const Text("Tambah Lokasi Penerima Manfaat"),
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
       ),
@@ -129,33 +146,25 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("Data Sekolah", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text("Data Umum", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 15),
 
               // Nama Sekolah
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: "Nama Sekolah",
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.school),
-                ),
-                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
-              ),
+              TextFormField(controller: _nameController, decoration: const InputDecoration(labelText: "Nama Lokasi Penerima", prefixIcon: Icon(Icons.school)), validator: (v) => v!.isEmpty ? "Wajib diisi" : null),
               const SizedBox(height: 15),
 
-              // Jumlah Siswa & Service Time (Sebelah-sebelahan)
+              // Alamat Teks
+              TextFormField(controller: _addressController, maxLines: 2, decoration: const InputDecoration(labelText: "Alamat Lengkap", prefixIcon: Icon(Icons.home))),
+              const SizedBox(height: 15),
+
+              // Jumlah Siswa & Service Time
               Row(
                 children: [
                   Expanded(
                     child: TextFormField(
                       controller: _studentCountController,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: "Jml Siswa",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.people),
-                      ),
+                      decoration: const InputDecoration(labelText: "Jml Penerima", prefixIcon: Icon(Icons.people)),
                       validator: (v) => v!.isEmpty ? "Wajib" : null,
                     ),
                   ),
@@ -164,45 +173,57 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                     child: TextFormField(
                       controller: _serviceTimeController,
                       keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: "Waktu Layanan (Menit)",
-                        hintText: "10",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.timer),
-                      ),
+                      decoration: const InputDecoration(labelText: "Waktu Service (Menit)", prefixIcon: Icon(Icons.timer)),
                       validator: (v) => v!.isEmpty ? "Wajib" : null,
                     ),
                   ),
                 ],
               ),
+              const SizedBox(height: 25),
+              const Divider(thickness: 2),
+
+              // --- BAGIAN CONSTRAINTS VRP ---
+              const Text("Batasan Waktu (VRP Constraints)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
               const SizedBox(height: 15),
 
-              // Deadline Picker (Pilih Jam)
+              // Deadline Picker
               InkWell(
                 onTap: _pickTime,
                 child: InputDecorator(
-                  decoration: const InputDecoration(
-                    labelText: "Deadline Pengiriman (Jam Makan Siang)",
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.access_time),
-                  ),
-                  child: Text(
-                    _deadlineTime == null 
-                        ? "Pilih Jam..." 
-                        : "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}",
-                    style: TextStyle(
-                      color: _deadlineTime == null ? Colors.grey : Colors.black,
-                      fontSize: 16,
-                    ),
+                  decoration: const InputDecoration(labelText: "Deadline Konsumsi (Waktu Wajib Tiba)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
+                  child: Text(_deadlineTime == null ? "Pilih Jam..." : "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}",
+                    style: TextStyle(color: _deadlineTime == null ? Colors.grey : Colors.black, fontSize: 16),
                   ),
                 ),
               ),
               const SizedBox(height: 15),
 
+              // Toleransi Kedatangan Awal (Menit)
+              TextFormField(
+                controller: _toleranceController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: "Toleransi Kedatangan Awal (Menit)", hintText: "Misal: 45", prefixIcon: Icon(Icons.fast_forward)),
+                validator: (v) => v!.isEmpty ? "Wajib" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // [BARU] Menu Default
+              TextFormField(
+                controller: _menuDefaultController,
+                decoration: const InputDecoration(
+                  labelText: "Jenis Menu Default",
+                  hintText: "Contoh: Nasi, Ayam, Sayur",
+                  prefixIcon: Icon(Icons.restaurant_menu)
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+
+
               // High Risk Switch
               SwitchListTile(
-                title: const Text("Lokasi High Risk?"),
-                subtitle: const Text("Aktifkan jika akses sulit, rawan macet, atau butuh penanganan khusus."),
+                title: const Text("Status Risiko Tinggi (High Risk)"),
+                subtitle: const Text("Toleransi dan pengiriman akan diprioritaskan."),
                 value: _isHighRisk,
                 activeColor: Colors.red,
                 onChanged: (val) => setState(() => _isHighRisk = val),
@@ -212,11 +233,11 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               const Divider(thickness: 2),
               const SizedBox(height: 10),
 
-              // --- BAGIAN LOKASI ---
+              // --- BAGIAN LOKASI MAP ---
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("Lokasi Sekolah", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text("Titik GPS Lokasi", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ElevatedButton.icon(
                     onPressed: _openMapPicker,
                     icon: const Icon(Icons.map, size: 18),
@@ -227,24 +248,11 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               ),
               const SizedBox(height: 10),
               
-              // Alamat Teks
-              TextFormField(
-                controller: _addressController,
-                maxLines: 2,
-                decoration: const InputDecoration(
-                  labelText: "Alamat Lengkap",
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.home),
-                ),
-              ),
-              const SizedBox(height: 10),
-
-              // Koordinat
               Row(
                 children: [
-                  Expanded(child: TextFormField(controller: _latController, decoration: const InputDecoration(labelText: "Lat", border: OutlineInputBorder()))),
+                  Expanded(child: TextFormField(controller: _latController, decoration: const InputDecoration(labelText: "Latitude", hintText: "Harus diisi dari peta"), readOnly: true)),
                   const SizedBox(width: 10),
-                  Expanded(child: TextFormField(controller: _longController, decoration: const InputDecoration(labelText: "Long", border: OutlineInputBorder()))),
+                  Expanded(child: TextFormField(controller: _longController, decoration: const InputDecoration(labelText: "Longitude", hintText: "Harus diisi dari peta"), readOnly: true)),
                 ],
               ),
 
@@ -253,13 +261,10 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _isSubmitting ? null : _submitForm,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange[800], 
-                    padding: const EdgeInsets.symmetric(vertical: 15)
-                  ),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
                   child: _isSubmitting 
                     ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("SIMPAN DATA SEKOLAH", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    : const Text("SIMPAN DATA LOKASI", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(height: 20),

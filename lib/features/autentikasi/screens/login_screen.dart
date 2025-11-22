@@ -49,10 +49,6 @@ class _LoginScreenState extends State<LoginScreen> {
           .select()
           .eq('id', userId)
           .single();
-
-      if (profileData == null) {
-        throw Exception("Profil user tidak ditemukan di database.");
-      }
       
       // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
       final String rawRole = profileData['role'] ?? 'unknown';

@@ -2,7 +2,7 @@ class UserProfile {
   final String id;
   final String? email; // Email dari Auth Supabase
   final String? fullName;
-  final String role; // 'bgn', 'admin_sppg', 'kurir', 'koordinator', 'walikelas'
+  final String role; // 'bgn', 'admin_sppg', 'kurir', ...
   final String? sppgId;
   final String? schoolId;
 
@@ -15,13 +15,13 @@ class UserProfile {
     this.schoolId,
   });
 
-  // Fungsi untuk mengubah data JSON dari Supabase menjadi Objek Dart
-  factory UserProfile.fromJson(Map<String, dynamic> json, String? email) {
+  // FIX: Email dijadikan parameter opsional. Mengambil data dari profiles
+  factory UserProfile.fromJson(Map<String, dynamic> json, [String? email]) { 
     return UserProfile(
       id: json['id'],
-      email: email,
+      email: email, // Email dapet dari parameter opsional di AuthService
       fullName: json['full_name'],
-      role: json['role'] ?? 'unknown', // Default kalau kosong
+      role: json['role'] ?? 'unknown',
       sppgId: json['sppg_id'],
       schoolId: json['school_id'],
     );

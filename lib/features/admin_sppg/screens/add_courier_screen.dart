@@ -16,24 +16,33 @@ class _AddCourierScreenState extends State<AddCourierScreen> {
   
   bool _isSubmitting = false;
 
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
       try {
         await CourierService().createCourierAccount(
-          email: _emailController.text,
+          email: _emailController.text.trim(),   // TRIM untuk email
           password: _passwordController.text,
-          fullName: _nameController.text,
+          fullName: _nameController.text.trim(), // TRIM untuk nama
         );
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text("Akun Kurir Berhasil Dibuat!"), backgroundColor: Colors.green),
         );
-        Navigator.pop(context, true);
+        Navigator.pop(context, true); // Sukses
 
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }

@@ -1,0 +1,3740 @@
+
+
+=== FILE: lib\main.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+// [BARU] Import ini wajib biar format tanggal Indonesia jalan
+import 'package:intl/date_symbol_data_local.dart'; 
+
+// Import halaman login
+import 'features/autentikasi/screens/login_screen.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // 1. Muat file rahasia .env
+  await dotenv.load(fileName: ".env");
+
+  // 2. Nyalakan Koneksi Supabase
+  await Supabase.initialize(
+    url: dotenv.env['SUPABASE_URL']!,
+    anonKey: dotenv.env['SUPABASE_ANON_KEY']!,
+  );
+
+  // [BARU] 3. Inisialisasi Format Tanggal Bahasa Indonesia
+  // Ini biar DateFormat('EEEE, d MMMM yyyy', 'id_ID') gak error
+  await initializeDateFormatting('id_ID', null);
+
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'MBG Logistics', 
+      debugShowCheckedModeBanner: false, 
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.green),
+        useMaterial3: true,
+        inputDecorationTheme: const InputDecorationTheme(
+          border: OutlineInputBorder(),
+          filled: true,
+          fillColor: Colors.white,
+        ),
+      ),
+      home: const LoginScreen(),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\add_courier_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../services/courier_service.dart';
+
+class AddCourierScreen extends StatefulWidget {
+  const AddCourierScreen({super.key});
+
+  @override
+  State<AddCourierScreen> createState() => _AddCourierScreenState();
+}
+
+class _AddCourierScreenState extends State<AddCourierScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  
+  bool _isSubmitting = false;
+
+  Future<void> _submit() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isSubmitting = true);
+      try {
+        await CourierService().createCourierAccount(
+          email: _emailController.text,
+          password: _passwordController.text,
+          fullName: _nameController.text,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Akun Kurir Berhasil Dibuat!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true);
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Tambah Akun Kurir"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: "Nama Lengkap Kurir", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+                validator: (v) => v!.length < 6 ? "Minimal 6 karakter" : null,
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submit,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
+                  child: _isSubmitting 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : const Text("BUAT AKUN KURIR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\add_menu_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../../../models/menu_model.dart';
+import '../services/menu_service.dart';
+
+class AddMenuScreen extends StatefulWidget {
+  final Menu? menuToEdit; // Jika ini diisi, berarti mode Edit
+
+  const AddMenuScreen({super.key, this.menuToEdit});
+
+  @override
+  State<AddMenuScreen> createState() => _AddMenuScreenState();
+}
+
+class _AddMenuScreenState extends State<AddMenuScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final MenuService _menuService = MenuService();
+  
+  // Controllers
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _durationController = TextEditingController();
+
+  // Daftar Kategori Tetap (Untuk Dropdown)
+  final List<String> _categories = ['Nasi/Karbo', 'Lauk Protein', 'Sayur/Serat', 'Pelengkap'];
+  String? _selectedCategory;
+  
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.menuToEdit != null) {
+      // Mode Edit: Isi form dengan data yang sudah ada
+      _nameController.text = widget.menuToEdit!.name;
+      _durationController.text = widget.menuToEdit!.cookingDurationMinutes.toString();
+      _selectedCategory = widget.menuToEdit!.category;
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _durationController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submitForm() async {
+    if (_formKey.currentState!.validate() && _selectedCategory != null) {
+      setState(() => _isSubmitting = true);
+
+      final Map<String, dynamic> menuData = {
+        'name': _nameController.text,
+        'category': _selectedCategory,
+        'cooking_duration_minutes': int.tryParse(_durationController.text) ?? 0,
+      };
+
+      try {
+        if (widget.menuToEdit == null) {
+          // Mode Tambah (UC11)
+          await _menuService.createMenu(menuData);
+        } else {
+          // Mode Edit (UC12)
+          await _menuService.updateMenu(widget.menuToEdit!.id, menuData);
+        }
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Menu berhasil ${widget.menuToEdit == null ? 'ditambahkan' : 'diperbarui'}!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.pop(context, true); // Balik dan kirim sinyal sukses
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    } else {
+      if (_selectedCategory == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kategori wajib dipilih!")));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(widget.menuToEdit == null ? "Tambah Menu Baru" : "Edit Menu"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Nama Makanan
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: "Nama Makanan", prefixIcon: Icon(Icons.food_bank)),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // Dropdown Kategori
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: "Kategori Menu", prefixIcon: Icon(Icons.category)),
+                value: _selectedCategory,
+                items: _categories.map((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value),
+                  );
+                }).toList(),
+                onChanged: (String? newValue) => setState(() => _selectedCategory = newValue),
+                validator: (v) => v == null ? "Pilih kategori" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // Estimasi Durasi Masak
+              TextFormField(
+                controller: _durationController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Estimasi Durasi Masak (Menit)", 
+                  hintText: "Contoh: 60",
+                  prefixIcon: Icon(Icons.timer),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              
+              const SizedBox(height: 30),
+
+              // Tombol Simpan
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submitForm,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green[700], 
+                    padding: const EdgeInsets.symmetric(vertical: 15)
+                  ),
+                  child: _isSubmitting 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : Text(
+                        widget.menuToEdit == null ? "SIMPAN MENU" : "SIMPAN PERUBAHAN", 
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\add_school_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart'; 
+import '../../pengawas/screens/location_picker_screen.dart';
+import '../services/school_service.dart';
+
+class AddSchoolScreen extends StatefulWidget {
+  const AddSchoolScreen({super.key});
+
+  @override
+  State<AddSchoolScreen> createState() => _AddSchoolScreenState();
+}
+
+class _AddSchoolScreenState extends State<AddSchoolScreen> {
+  final _formKey = GlobalKey<FormState>();
+
+  // --- Controllers ---
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
+  final TextEditingController _studentCountController = TextEditingController();
+  final TextEditingController _serviceTimeController = TextEditingController(text: "10"); 
+  
+  // [BARU] Controller untuk data VRP tambahan
+  final TextEditingController _toleranceController = TextEditingController(text: "45"); 
+  final TextEditingController _menuDefaultController = TextEditingController(); 
+  
+  final TextEditingController _latController = TextEditingController();
+  final TextEditingController _longController = TextEditingController();
+
+  // --- State Variables ---
+  bool _isHighRisk = false;     
+  TimeOfDay? _deadlineTime;     
+  bool _isSubmitting = false;   
+
+  // --- 1. Fungsi Pilih Jam (Time Picker) ---
+  Future<void> _pickTime() async {
+    final TimeOfDay? picked = await showTimePicker(
+      context: context,
+      initialTime: const TimeOfDay(hour: 12, minute: 0),
+    );
+    if (picked != null) {
+      setState(() {
+        _deadlineTime = picked;
+      });
+    }
+  }
+
+  // --- 2. Fungsi Buka Peta ---
+  Future<void> _openMapPicker() async {
+    double initialLat = double.tryParse(_latController.text) ?? -6.9175;
+    double initialLong = double.tryParse(_longController.text) ?? 107.6191;
+
+    final LatLng? result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerScreen(
+          initialLat: initialLat,
+          initialLong: initialLong,
+        ),
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _latController.text = result.latitude.toString();
+        _longController.text = result.longitude.toString();
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Lokasi Sekolah terpilih!")),
+      );
+    }
+  }
+
+  // --- 3. Submit ke Database ---
+  Future<void> _submitForm() async {
+    if (_formKey.currentState!.validate()) {
+      if (_deadlineTime == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Harap tentukan Jam Deadline Pengiriman!")),
+        );
+        return;
+      }
+
+      setState(() => _isSubmitting = true);
+
+      try {
+        final String formattedTime = 
+            "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}:00";
+
+        final Map<String, dynamic> newSchoolData = {
+          'name': _nameController.text,
+          'address': _addressController.text,
+          'student_count': int.parse(_studentCountController.text),
+          'service_time_minutes': int.parse(_serviceTimeController.text),
+          'deadline_time': formattedTime,
+          'is_high_risk': _isHighRisk,
+          'gps_lat': double.tryParse(_latController.text),
+          'gps_long': double.tryParse(_longController.text),
+          // [BARU] Data VRP Constraints
+          'tolerance_minutes': int.parse(_toleranceController.text), 
+          'menu_default': _menuDefaultController.text,
+        };
+
+        await SchoolService().createSchool(newSchoolData);
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Sekolah berhasil ditambahkan!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true); 
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
+        );
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _addressController.dispose();
+    _studentCountController.dispose();
+    _serviceTimeController.dispose();
+    _toleranceController.dispose();
+    _menuDefaultController.dispose();
+    _latController.dispose();
+    _longController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Tambah Lokasi Penerima Manfaat"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Data Umum", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 15),
+
+              // Nama Sekolah
+              TextFormField(controller: _nameController, decoration: const InputDecoration(labelText: "Nama Lokasi Penerima", prefixIcon: Icon(Icons.school)), validator: (v) => v!.isEmpty ? "Wajib diisi" : null),
+              const SizedBox(height: 15),
+
+              // Alamat Teks
+              TextFormField(controller: _addressController, maxLines: 2, decoration: const InputDecoration(labelText: "Alamat Lengkap", prefixIcon: Icon(Icons.home))),
+              const SizedBox(height: 15),
+
+              // Jumlah Siswa & Service Time
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _studentCountController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: "Jml Penerima", prefixIcon: Icon(Icons.people)),
+                      validator: (v) => v!.isEmpty ? "Wajib" : null,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _serviceTimeController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: "Waktu Service (Menit)", prefixIcon: Icon(Icons.timer)),
+                      validator: (v) => v!.isEmpty ? "Wajib" : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 25),
+              const Divider(thickness: 2),
+
+              // --- BAGIAN CONSTRAINTS VRP ---
+              const Text("Batasan Waktu (VRP Constraints)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 15),
+
+              // Deadline Picker
+              InkWell(
+                onTap: _pickTime,
+                child: InputDecorator(
+                  decoration: const InputDecoration(labelText: "Deadline Konsumsi (Waktu Wajib Tiba)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
+                  child: Text(_deadlineTime == null ? "Pilih Jam..." : "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}",
+                    style: TextStyle(color: _deadlineTime == null ? Colors.grey : Colors.black, fontSize: 16),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 15),
+
+              // Toleransi Kedatangan Awal (Menit)
+              TextFormField(
+                controller: _toleranceController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: "Toleransi Kedatangan Awal (Menit)", hintText: "Misal: 45", prefixIcon: Icon(Icons.fast_forward)),
+                validator: (v) => v!.isEmpty ? "Wajib" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // [BARU] Menu Default
+              TextFormField(
+                controller: _menuDefaultController,
+                decoration: const InputDecoration(
+                  labelText: "Jenis Menu Default",
+                  hintText: "Contoh: Nasi, Ayam, Sayur",
+                  prefixIcon: Icon(Icons.restaurant_menu)
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+
+
+              // High Risk Switch
+              SwitchListTile(
+                title: const Text("Status Risiko Tinggi (High Risk)"),
+                subtitle: const Text("Toleransi dan pengiriman akan diprioritaskan."),
+                value: _isHighRisk,
+                activeColor: Colors.red,
+                onChanged: (val) => setState(() => _isHighRisk = val),
+                contentPadding: EdgeInsets.zero,
+              ),
+              
+              const Divider(thickness: 2),
+              const SizedBox(height: 10),
+
+              // --- BAGIAN LOKASI MAP ---
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Titik GPS Lokasi", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ElevatedButton.icon(
+                    onPressed: _openMapPicker,
+                    icon: const Icon(Icons.map, size: 18),
+                    label: const Text("Buka Peta"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[700], foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              
+              Row(
+                children: [
+                  Expanded(child: TextFormField(controller: _latController, decoration: const InputDecoration(labelText: "Latitude", hintText: "Harus diisi dari peta"), readOnly: true)),
+                  const SizedBox(width: 10),
+                  Expanded(child: TextFormField(controller: _longController, decoration: const InputDecoration(labelText: "Longitude", hintText: "Harus diisi dari peta"), readOnly: true)),
+                ],
+              ),
+
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submitForm,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
+                  child: _isSubmitting 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : const Text("SIMPAN DATA LOKASI", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\add_transport_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../services/vehicle_service.dart';
+
+class AddTransportScreen extends StatefulWidget {
+  const AddTransportScreen({super.key});
+
+  @override
+  State<AddTransportScreen> createState() => _AddTransportScreenState();
+}
+
+class _AddTransportScreenState extends State<AddTransportScreen> {
+  final _formKey = GlobalKey<FormState>();
+  
+  final TextEditingController _plateController = TextEditingController();
+  final TextEditingController _driverController = TextEditingController();
+  final TextEditingController _capacityController = TextEditingController();
+  
+  bool _isSubmitting = false;
+
+  Future<void> _submit() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isSubmitting = true);
+      try {
+        await VehicleService().createVehicle({
+          'plate_number': _plateController.text,
+          'driver_name': _driverController.text,
+          'capacity_limit': int.parse(_capacityController.text),
+          'is_active': true,
+        });
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Transportasi berhasil ditambahkan!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true); // Sukses
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Tambah Transportasi"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _plateController,
+                decoration: const InputDecoration(labelText: "Plat Nomor (Misal: D 1234 ABC)", border: OutlineInputBorder()),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _driverController,
+                decoration: const InputDecoration(labelText: "Nama Supir / Kurir", border: OutlineInputBorder()),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _capacityController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(labelText: "Kapasitas Angkut (Box/Porsi)", border: OutlineInputBorder(), hintText: "Misal: 500"),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submit,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
+                  child: _isSubmitting 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : const Text("SIMPAN", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\create_route_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart'; // Jangan lupa: flutter pub add intl
+
+// Import Models
+import '../../../models/school_model.dart';
+import '../../../models/vehicle_model.dart';
+// Import Services
+import '../services/school_service.dart';
+import '../services/vehicle_service.dart';
+import '../services/courier_service.dart';
+import '../services/route_service.dart';
+
+class CreateRouteScreen extends StatefulWidget {
+  const CreateRouteScreen({super.key});
+
+  @override
+  State<CreateRouteScreen> createState() => _CreateRouteScreenState();
+}
+
+class _CreateRouteScreenState extends State<CreateRouteScreen> {
+  final _formKey = GlobalKey<FormState>();
+
+  // --- Services ---
+  final SchoolService _schoolService = SchoolService();
+  final VehicleService _vehicleService = VehicleService();
+  final CourierService _courierService = CourierService();
+  
+  // --- Data Sources (List Pilihan) ---
+  List<School> _availableSchools = [];
+  List<Vehicle> _availableVehicles = [];
+  List<CourierModel> _availableCouriers = [];
+  
+  // --- Form State (Data yang dipilih user) ---
+  DateTime _selectedDate = DateTime.now().add(const Duration(days: 1)); // Default Besok
+  String? _selectedVehicleId;
+  String? _selectedCourierId;
+  final List<School> _selectedSchools = []; // Sekolah yang dicentang
+
+  bool _isLoadingData = true; // Loading awal (ambil data dropdown)
+  bool _isSubmitting = false; // Loading saat simpan
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchAllData();
+  }
+
+  // 1. AMBIL SEMUA DATA (Mobil, Kurir, Sekolah) SEKALIGUS
+  Future<void> _fetchAllData() async {
+    try {
+      // Future.wait biar jalan paralel (lebih cepat)
+      final results = await Future.wait([
+        _schoolService.getMySchools(),
+        _vehicleService.getMyVehicles(),
+        _courierService.getMyCouriers(),
+      ]);
+
+      if (!mounted) return;
+
+      setState(() {
+        _availableSchools = results[0] as List<School>;
+        _availableVehicles = results[1] as List<Vehicle>;
+        _availableCouriers = results[2] as List<CourierModel>;
+        _isLoadingData = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal memuat data: $e")));
+      setState(() => _isLoadingData = false);
+    }
+  }
+
+  // 2. FUNGSI PILIH TANGGAL
+  Future<void> _pickDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 30)),
+    );
+    if (picked != null) {
+      setState(() => _selectedDate = picked);
+    }
+  }
+
+  // 3. LOGIKA CENTANG SEKOLAH
+  void _toggleSchool(School school, bool? isChecked) {
+    setState(() {
+      if (isChecked == true) {
+        _selectedSchools.add(school);
+      } else {
+        _selectedSchools.removeWhere((element) => element.id == school.id);
+      }
+    });
+  }
+
+  // 4. SIMPAN RUTE
+  Future<void> _submitRoute() async {
+    if (_formKey.currentState!.validate()) {
+      // Validasi Manual: Sekolah harus dipilih minimal 1
+      if (_selectedSchools.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Pilih minimal satu sekolah tujuan!")),
+        );
+        return;
+      }
+
+      setState(() => _isSubmitting = true);
+
+      try {
+        await RouteService().createRoute(
+          vehicleId: _selectedVehicleId!,
+          courierId: _selectedCourierId!,
+          date: _selectedDate,
+          selectedSchools: _selectedSchools,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Rute Pengiriman Berhasil Dibuat!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true); // Balik ke dashboard bawa sinyal sukses
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Buat Rute Pengiriman"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: _isLoadingData
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(16.0),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // --- BAGIAN 1: TANGGAL ---
+                    const Text("Tanggal Pengiriman", style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: _pickDate,
+                      child: InputDecorator(
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.calendar_today),
+                        ),
+                        child: Text(
+                          DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(_selectedDate), // Pake library intl
+                          style: const TextStyle(fontSize: 16),
+                        ),
+                      ),
+                    ),
+                    
+                    const SizedBox(height: 20),
+
+                    // --- BAGIAN 2: ARMADA & KURIR ---
+                    Row(
+                      children: [
+                        // Dropdown Mobil
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            decoration: const InputDecoration(labelText: "Pilih Mobil", border: OutlineInputBorder()),
+                            initialValue: _selectedVehicleId,
+                            items: _availableVehicles.map((v) {
+                              return DropdownMenuItem(
+                                value: v.id,
+                                child: Text(v.plateNumber, overflow: TextOverflow.ellipsis),
+                              );
+                            }).toList(),
+                            onChanged: (val) => setState(() => _selectedVehicleId = val),
+                            validator: (val) => val == null ? "Wajib isi" : null,
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        // Dropdown Kurir
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            decoration: const InputDecoration(labelText: "Pilih Kurir", border: OutlineInputBorder()),
+                            initialValue: _selectedCourierId,
+                            items: _availableCouriers.map((c) {
+                              return DropdownMenuItem(
+                                value: c.id,
+                                child: Text(c.name, overflow: TextOverflow.ellipsis),
+                              );
+                            }).toList(),
+                            onChanged: (val) => setState(() => _selectedCourierId = val),
+                            validator: (val) => val == null ? "Wajib isi" : null,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 25),
+                    const Divider(thickness: 2),
+                    
+                    // --- BAGIAN 3: PILIH SEKOLAH ---
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text("Pilih Sekolah Tujuan", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        Text("${_selectedSchools.length} Dipilih", style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    
+                    Container(
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey.shade400),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      height: 300, // Tinggi fixed biar bisa discroll list sekolahnya
+                      child: _availableSchools.isEmpty 
+                        ? const Center(child: Text("Belum ada data sekolah."))
+                        : ListView.separated(
+                            itemCount: _availableSchools.length,
+                            separatorBuilder: (ctx, i) => const Divider(height: 1),
+                            itemBuilder: (context, index) {
+                              final school = _availableSchools[index];
+                              final isSelected = _selectedSchools.any((s) => s.id == school.id);
+                              
+                              return CheckboxListTile(
+                                title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                subtitle: Text("Siswa: ${school.studentCount} | Alamat: ${school.address ?? '-'}"),
+                                value: isSelected,
+                                activeColor: Colors.orange[800],
+                                onChanged: (bool? val) => _toggleSchool(school, val),
+                                secondary: isSelected 
+                                    ? const Icon(Icons.check_circle, color: Colors.orange) 
+                                    : const Icon(Icons.circle_outlined, color: Colors.grey),
+                              );
+                            },
+                          ),
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    // --- TOMBOL SIMPAN ---
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _isSubmitting ? null : _submitRoute,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green[700],
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: _isSubmitting
+                            ? const CircularProgressIndicator(color: Colors.white)
+                            : const Text(
+                                "SIMPAN RUTE & TUGASKAN KURIR",
+                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                      ),
+                    ),
+                    const SizedBox(height: 30),
+                  ],
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\dashboard_admin_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart'; 
+
+// Import Auth & Login
+import '../../../features/autentikasi/services/auth_service.dart';
+import '../../../features/autentikasi/screens/login_screen.dart';
+
+// Import Model
+import '../../../models/school_model.dart';
+import '../../../models/vehicle_model.dart';
+import '../../../models/route_model.dart';
+import '../../../models/courier_model.dart'; // Pastikan model ini ada jika dipakai di Kurir list
+
+// Import Services
+import '../services/school_service.dart';
+import '../services/vehicle_service.dart';
+import '../services/courier_service.dart';
+import '../services/route_service.dart';
+
+// Import Forms
+import 'add_school_screen.dart';
+import 'add_transport_screen.dart';
+import 'add_courier_screen.dart';
+import 'create_route_screen.dart';
+import 'menu_management_screen.dart'; // Import Halaman Manajemen Menu
+
+class DashboardAdminScreen extends StatefulWidget {
+  const DashboardAdminScreen({super.key});
+
+  @override
+  State<DashboardAdminScreen> createState() => _DashboardAdminScreenState();
+}
+
+class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
+  int _selectedIndex = 0; // 0=Sekolah, 1=Transport, 2=Kurir, 3=Rute
+
+  // Inisialisasi Service
+  final SchoolService _schoolService = SchoolService();
+  final VehicleService _vehicleService = VehicleService();
+  final CourierService _courierService = CourierService();
+  final RouteService _routeService = RouteService(); 
+
+  // --- FUNGSI LOGOUT ---
+  Future<void> _logout() async {
+    await AuthService().signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  // --- JUDUL APP BAR ---
+  String _getAppBarTitle() {
+    switch (_selectedIndex) {
+      case 0: return "Kelola Sekolah";
+      case 1: return "Kelola Armada";
+      case 2: return "Kelola Kurir";
+      case 3: return "Jadwal & Rute";
+      default: return "Admin SPPG";
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(_getAppBarTitle()),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+        actions: [
+          // [BARU] Tombol Manajemen Menu
+          IconButton(
+            icon: const Icon(Icons.restaurant_menu),
+            tooltip: "Manajemen Menu",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MenuManagementScreen()),
+              );
+            },
+          ),
+          // Tombol Logout
+          IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
+        ],
+      ),
+      
+      // --- ISI BODY (4 TAB) ---
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildSchoolList(),    // Index 0
+          _buildTransportList(), // Index 1
+          _buildCourierList(),   // Index 2
+          _buildRouteList(),     // Index 3 
+        ],
+      ),
+
+      // --- TOMBOL TAMBAH (+) PINTAR ---
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: Text(
+          _selectedIndex == 0 ? "Sekolah" : 
+          _selectedIndex == 1 ? "Mobil" : 
+          _selectedIndex == 2 ? "Kurir" : "Buat Rute"
+        ),
+        onPressed: () {
+          Widget nextPage;
+          if (_selectedIndex == 0) {
+            nextPage = const AddSchoolScreen();
+          } else if (_selectedIndex == 1) {
+            nextPage = const AddTransportScreen();
+          } else if (_selectedIndex == 2) {
+            nextPage = const AddCourierScreen();
+          } else {
+            nextPage = const CreateRouteScreen();
+          }
+
+          // Navigasi & Refresh setelah kembali
+          Navigator.push(context, MaterialPageRoute(builder: (_) => nextPage))
+              .then((val) { if (val == true) setState(() {}); });
+        },
+      ),
+
+      // --- MENU BAWAH (4 ITEM) ---
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        type: BottomNavigationBarType.fixed, 
+        selectedItemColor: Colors.orange[800],
+        unselectedItemColor: Colors.grey,
+        onTap: (index) => setState(() => _selectedIndex = index),
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.school), label: "Sekolah"),
+          BottomNavigationBarItem(icon: Icon(Icons.local_shipping), label: "Armada"),
+          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Kurir"),
+          BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: "Rute"),
+        ],
+      ),
+    );
+  }
+
+  // ===========================================================================
+  // TAB 1: DAFTAR SEKOLAH
+  // ===========================================================================
+  Widget _buildSchoolList() {
+    return FutureBuilder<List<School>>(
+      future: _schoolService.getMySchools(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final schools = snapshot.data ?? [];
+        
+        if (schools.isEmpty) {
+          return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: schools.length,
+          itemBuilder: (context, index) {
+            final school = schools[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.orange,
+                  child: Icon(Icons.school, color: Colors.white),
+                ),
+                title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}"),
+                trailing: school.isHighRisk 
+                    ? const Icon(Icons.warning, color: Colors.red) 
+                    : const Icon(Icons.check_circle, color: Colors.green, size: 16),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 2: DAFTAR TRANSPORTASI
+  // ===========================================================================
+  Widget _buildTransportList() {
+    return FutureBuilder<List<Vehicle>>(
+      future: _vehicleService.getMyVehicles(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final vehicles = snapshot.data ?? [];
+
+        if (vehicles.isEmpty) {
+          return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: vehicles.length,
+          itemBuilder: (context, index) {
+            final vehicle = vehicles[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: Icon(
+                  Icons.directions_car, 
+                  color: vehicle.isActive ? Colors.green : Colors.grey,
+                  size: 32,
+                ),
+                title: Text(vehicle.plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kapasitas: ${vehicle.capacityLimit}"),
+                trailing: Switch(
+                  value: vehicle.isActive,
+                  activeColor: Colors.green,
+                  onChanged: (val) async {
+                    await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
+                    setState(() {}); 
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 3: DAFTAR KURIR
+  // ===========================================================================
+  Widget _buildCourierList() {
+    return FutureBuilder<List<CourierModel>>(
+      future: _courierService.getMyCouriers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final couriers = snapshot.data ?? [];
+
+        if (couriers.isEmpty) {
+          return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: couriers.length,
+          itemBuilder: (context, index) {
+            final courier = couriers[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.blueGrey,
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                title: Text(courier.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(courier.email), 
+                trailing: const Icon(Icons.edit, size: 20),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 4: DAFTAR RUTE PENGIRIMAN
+  // ===========================================================================
+  Widget _buildRouteList() {
+    return FutureBuilder<List<DeliveryRoute>>(
+      future: _routeService.getMyRoutes(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        
+        final routes = snapshot.data ?? [];
+        if (routes.isEmpty) {
+          return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(12),
+          itemCount: routes.length,
+          itemBuilder: (context, index) {
+            final route = routes[index];
+            final date = DateTime.tryParse(route.date) ?? DateTime.now();
+            final dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
+
+            return Card(
+              elevation: 3,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Column(
+                  children: [
+                    // Header Card: Tanggal & Status
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(dateStr, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _getStatusColor(route.status).withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: _getStatusColor(route.status)),
+                          ),
+                          child: Text(
+                            route.status.toUpperCase(),
+                            style: TextStyle(
+                              color: _getStatusColor(route.status), 
+                              fontSize: 10, 
+                              fontWeight: FontWeight.bold
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Divider(),
+                    // Info Kurir & Mobil
+                    Row(
+                      children: [
+                        const Icon(Icons.person, size: 16, color: Colors.grey),
+                        const SizedBox(width: 5),
+                        Text(route.courierName ?? "Kurir Hapus", style: const TextStyle(fontSize: 14)),
+                        const Spacer(),
+                        const Icon(Icons.local_shipping, size: 16, color: Colors.grey),
+                        const SizedBox(width: 5),
+                        Text(route.vehiclePlate ?? "-", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // Widget Helper untuk Tampilan Kosong
+  Widget _buildEmptyState(String text, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 70, color: Colors.grey[300]),
+          const SizedBox(height: 10),
+          Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
+          const SizedBox(height: 5),
+          const Text("Tekan tombol (+) di bawah.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed': return Colors.green;
+      case 'active': return Colors.blue;
+      default: return Colors.orange; // pending
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\menu_management_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../../../models/menu_model.dart';
+import '../services/menu_service.dart';
+import 'add_menu_screen.dart'; 
+
+class MenuManagementScreen extends StatefulWidget {
+  const MenuManagementScreen({super.key});
+
+  @override
+  State<MenuManagementScreen> createState() => _MenuManagementScreenState();
+}
+
+class _MenuManagementScreenState extends State<MenuManagementScreen> {
+  final MenuService _menuService = MenuService();
+  
+  // Method untuk mengambil data menu
+  Future<List<Menu>> _fetchMenus() async {
+    return await _menuService.getMyMenus();
+  }
+
+  // Fungsi navigasi ke form tambah/edit
+  void _navigateToAddEdit(BuildContext context, {Menu? menu}) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddMenuScreen(menuToEdit: menu), // Jika menu null, berarti tambah
+      ),
+    ).then((result) {
+      if (result == true) {
+        // Refresh tampilan list setelah kembali dari form
+        setState(() {}); 
+      }
+    });
+  }
+
+  // Fungsi hapus menu
+  Future<void> _deleteMenu(BuildContext context, String menuId) async {
+    await _menuService.deleteMenu(menuId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Menu berhasil dihapus!"), backgroundColor: Colors.green),
+    );
+    setState(() {}); // Refresh list
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Manajemen Menu Produksi"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: FutureBuilder<List<Menu>>(
+        future: _fetchMenus(), // Panggil data menu
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return Center(child: Text("Error: ${snapshot.error}"));
+          }
+          final menus = snapshot.data ?? [];
+          
+          if (menus.isEmpty) {
+            return const Center(child: Text("Belum ada menu yang terdaftar."));
+          }
+
+          return ListView.builder(
+            padding: const EdgeInsets.all(10),
+            itemCount: menus.length,
+            itemBuilder: (context, index) {
+              final menu = menus[index];
+              return Card(
+                elevation: 2,
+                child: ListTile(
+                  title: Text(menu.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  subtitle: Text("${menu.category} | Durasi Masak: ${menu.cookingDurationMinutes} menit"),
+                  leading: const Icon(Icons.restaurant_menu, color: Colors.orange),
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Tombol Edit (UC12)
+                      IconButton(
+                        icon: const Icon(Icons.edit, size: 20),
+                        onPressed: () => _navigateToAddEdit(context, menu: menu),
+                      ),
+                      // Tombol Hapus (UC13)
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red, size: 20),
+                        onPressed: () => _deleteMenu(context, menu.id),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text("Tambah Menu Baru"), // UC11
+        onPressed: () => _navigateToAddEdit(context),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\courier_service.dart ===
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/courier_model.dart'; // Import Model yang baru kita buat
+
+class CourierService {
+  final _supabase = Supabase.instance.client;
+
+  // Helper untuk mendapatkan SPPG ID Admin
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+    return profile['sppg_id'];
+  }
+
+  // 1. AMBIL LIST KURIR
+  Future<List<CourierModel>> getMyCouriers() async {
+    try {
+      final mySppgId = await _getMySppgId();
+      
+      // Ambil data profile kurir (full_name, email) yang sppg_id-nya sama
+      final response = await _supabase
+          .from('profiles')
+          .select('id, full_name, email, sppg_id') // Kita perlu tambahkan 'email' di select() jika ada di tabel profiles, 
+                                                 // atau asumsikan email ada di tabel Auth dan harus di-join.
+                                                 // Untuk saat ini, kita asumsikan email ada di profiles untuk mempermudah.
+          .eq('sppg_id', mySppgId) 
+          .eq('role', 'kurir'); 
+
+      final List<dynamic> data = response;
+      return data.map((json) => CourierModel.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception('Gagal ambil data kurir: $e');
+    }
+  }
+
+  // 2. BUAT AKUN KURIR BARU (HTTP Request Aman)
+  Future<void> createCourierAccount({
+    required String email,
+    required String password,
+    required String fullName,
+  }) async {
+    // Kredensial Supabase (dari service sebelumnya)
+    const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
+    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+
+    try {
+      final myUserId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', myUserId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      // A. Request Signup ke Supabase Auth
+      final url = Uri.parse('$projectUrl/auth/v1/signup');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json', 'apikey': anonKey},
+        body: jsonEncode({
+          'email': email.trim(),
+          'password': password,
+          'data': { 'full_name': fullName }
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        String? newUserId = responseData['id'] ?? responseData['user']['id']; 
+
+        if (newUserId == null) throw Exception("Gagal dapat ID User Kurir.");
+
+        // B. Simpan ke Tabel Profiles sebagai 'kurir'
+        await _supabase.from('profiles').insert({
+          'id': newUserId,
+          'full_name': fullName,
+          'email': email.trim(), // [PENTING] Simpan email di profiles juga biar bisa ditampilkan
+          'role': 'kurir',
+          'sppg_id': mySppgId,
+          'school_id': null,
+        });
+
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
+      }
+    } catch (e) {
+      if (e.toString().contains("User already registered")) {
+        throw Exception("Email kurir sudah terdaftar!");
+      }
+      throw Exception('Gagal buat akun kurir: $e');
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\menu_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/menu_model.dart';
+import '../../../models/sppg_model.dart';
+
+class MenuService {
+  final _supabase = Supabase.instance.client;
+
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+    return profile['sppg_id'];
+  }
+
+  Future<List<Menu>> getMyMenus() async {
+    try {
+      final mySppgId = await _getMySppgId();
+      
+      final response = await _supabase
+          .from('menus')
+          .select()
+          .eq('sppg_id', mySppgId) 
+          .order('category', ascending: true);
+
+      final List<dynamic> data = response;
+      return data.map((json) => Menu.fromJson(json)).toList();
+    } catch (e) {
+      throw Exception('Gagal mengambil daftar menu: $e');
+    }
+  }
+
+  Future<void> createMenu(Map<String, dynamic> menuData) async {
+    try {
+      final mySppgId = await _getMySppgId();
+      
+      menuData['sppg_id'] = mySppgId;
+      
+      await _supabase.from('menus').insert(menuData);
+    } catch (e) {
+      throw Exception('Gagal menambah menu: $e');
+    }
+  }
+
+  Future<void> updateMenu(String menuId, Map<String, dynamic> menuData) async {
+    try {
+      await _supabase.from('menus').update(menuData).eq('id', menuId);
+    } catch (e) {
+      throw Exception('Gagal mengedit menu: $e');
+    }
+  }
+
+  Future<void> deleteMenu(String menuId) async {
+    try {
+      await _supabase.from('menus').delete().eq('id', menuId);
+    } catch (e) {
+      throw Exception('Gagal menghapus menu: $e');
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\route_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/route_model.dart';
+import '../../../models/school_model.dart'; 
+
+class RouteService {
+  final _supabase = Supabase.instance.client;
+
+  // --- 1. BUAT RUTE BARU (OLEH ADMIN SPPG) ---
+  Future<void> createRoute({
+    required String vehicleId,
+    required String courierId,
+    required DateTime date,
+    required List<School> selectedSchools,
+  }) async {
+    try {
+      // A. Ambil SPPG ID Admin yang sedang login
+      final userId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+      final String mySppgId = profile['sppg_id'];
+
+      // B. Insert Header (delivery_routes)
+      final routeResponse = await _supabase.from('delivery_routes').insert({
+        'date': date.toIso8601String().split('T')[0], // YYYY-MM-DD
+        'sppg_id': mySppgId,
+        'vehicle_id': vehicleId,
+        'courier_id': courierId,
+        'status': 'pending', 
+      }).select().single();
+
+      final String newRouteId = routeResponse['id'];
+
+      // C. Siapkan & Insert Detail Perhentian (delivery_stops)
+      List<Map<String, dynamic>> stopsData = [];
+      
+      for (int i = 0; i < selectedSchools.length; i++) {
+        stopsData.add({
+          'route_id': newRouteId,
+          'school_id': selectedSchools[i].id,
+          'sequence_order': i + 1, // Urutan default (tanpa optimasi VRP)
+          'status': 'pending',
+        });
+      }
+
+      await _supabase.from('delivery_stops').insert(stopsData);
+
+    } catch (e) {
+      throw Exception("Gagal membuat rute: $e");
+    }
+  }
+
+  // --- 2. AMBIL DAFTAR RUTE (UNTUK ADMIN SPPG - HISTORY) ---
+  Future<List<DeliveryRoute>> getMyRoutes() async {
+    try {
+      // Ambil SPPG ID Admin
+      final userId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      // Ambil semua rute milik SPPG ini, gabung dengan data plat & nama kurir
+      final response = await _supabase
+          .from('delivery_routes')
+          .select('*, vehicles(plate_number), profiles(full_name)') 
+          .eq('sppg_id', mySppgId)
+          .order('date', ascending: false);
+
+      final List<dynamic> data = response;
+      return data.map((json) => DeliveryRoute.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception("Gagal mengambil data rute Admin: $e");
+    }
+  }
+
+  // --- 3. AMBIL DAFTAR RUTE (UNTUK KURIR YANG SEDANG LOGIN) ---
+  Future<List<DeliveryRoute>> getRoutesByCourier() async {
+    try {
+      // Ambil ID Kurir yang sedang login
+      final currentCourierId = _supabase.auth.currentUser!.id;
+
+      // Query ke delivery_routes, filter berdasarkan ID Kurir
+      final response = await _supabase
+          .from('delivery_routes')
+          .select('*, vehicles(plate_number), profiles(full_name)') 
+          .eq('courier_id', currentCourierId) // FILTER PENTING
+          .order('date', ascending: false);
+
+      final List<dynamic> data = response;
+      return data.map((json) => DeliveryRoute.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception("Gagal mengambil rute kurir: $e");
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\school_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/school_model.dart'; // Sesuaikan path import ini
+
+class SchoolService {
+  final _supabase = Supabase.instance.client;
+
+  // --- 1. AMBIL DATA SEKOLAH (KHUSUS SPPG YG LOGIN) ---
+  Future<List<School>> getMySchools() async {
+    try {
+      // Langkah A: Kita harus tau dulu, siapa User yg lagi login?
+      final userId = _supabase.auth.currentUser!.id;
+
+      // Langkah B: Cek di tabel profiles, user ini kerja di SPPG mana?
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+
+      final String mySppgId = profile['sppg_id'];
+
+      // Langkah C: Ambil sekolah yang sppg_id nya SAMA dengan punya user
+      final response = await _supabase
+          .from('schools')
+          .select()
+          .eq('sppg_id', mySppgId) // Filter penting!
+          .order('name', ascending: true); // Urutkan abjad
+
+      final List<dynamic> data = response;
+      return data.map((json) => School.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception('Gagal mengambil data sekolah: $e');
+    }
+  }
+
+  // --- 2. TAMBAH SEKOLAH BARU ---
+  Future<void> createSchool(Map<String, dynamic> schoolData) async {
+    try {
+      // Kita perlu inject 'sppg_id' otomatis biar admin gak perlu input manual
+      final userId = _supabase.auth.currentUser!.id;
+      
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+      
+      // Masukkan ID SPPG ke dalam data yang mau dikirim
+      schoolData['sppg_id'] = profile['sppg_id'];
+
+      // Kirim ke tabel 'schools'
+      await _supabase.from('schools').insert(schoolData);
+
+    } catch (e) {
+      throw Exception('Gagal menambah sekolah: $e');
+    }
+  }
+  
+  // --- 3. HAPUS SEKOLAH ---
+  Future<void> deleteSchool(String schoolId) async {
+    try {
+      await _supabase.from('schools').delete().eq('id', schoolId);
+    } catch (e) {
+      throw Exception('Gagal menghapus sekolah: $e');
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\vehicle_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/vehicle_model.dart';
+
+class VehicleService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL LIST TRANSPORTASI
+  Future<List<Vehicle>> getMyVehicles() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+
+      // Cek user ini kerja di SPPG mana?
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+
+      final String mySppgId = profile['sppg_id'];
+
+      // Ambil kendaraan milik SPPG ini
+      final response = await _supabase
+          .from('vehicles')
+          .select()
+          .eq('sppg_id', mySppgId)
+          .order('is_active', ascending: false); // Yg aktif paling atas
+
+      final List<dynamic> data = response;
+      return data.map((json) => Vehicle.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception('Gagal ambil data transportasi: $e');
+    }
+  }
+
+  // 2. TAMBAH TRANSPORTASI BARU
+  Future<void> createVehicle(Map<String, dynamic> data) async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      
+      // Inject ID SPPG otomatis
+      data['sppg_id'] = profile['sppg_id'];
+
+      await _supabase.from('vehicles').insert(data);
+    } catch (e) {
+      throw Exception('Gagal menambah transportasi: $e');
+    }
+  }
+  
+  // 3. UPDATE STATUS (Aktif/Nonaktif)
+  Future<void> toggleStatus(String vehicleId, bool currentStatus) async {
+    try {
+      await _supabase.from('vehicles').update({
+        'is_active': !currentStatus
+      }).eq('id', vehicleId);
+    } catch (e) {
+       throw Exception('Gagal update status: $e');
+    }
+  }
+}
+
+=== FILE: lib\features\autentikasi\screens\login_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+// Import Dashboard
+import '../../pengawas/screens/dashboard_bgn_screen.dart';
+import '../../admin_sppg/screens/dashboard_admin_screen.dart';
+import '../../kurir/screens/dashboard_kurir_screen.dart'; // Import Dashboard Kurir
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  // --- FUNGSI LOGIN UTAMA ---
+  Future<void> _login() async {
+    setState(() { _isLoading = true; });
+
+    try {
+      final email = _emailController.text.trim();
+      final password = _passwordController.text.trim();
+
+      if (email.isEmpty || password.isEmpty) {
+        throw Exception("Email dan Password harus diisi.");
+      }
+
+      // 1. Proses Login Auth Supabase
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      if (res.user == null) {
+        throw Exception("Login gagal. Periksa kembali email & password Anda.");
+      }
+
+      if (!mounted) return;
+
+      // 2. Ambil Data Profile User untuk Cek Role
+      final userId = res.user!.id;
+      final profileData = await Supabase.instance.client
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+      
+      // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
+      final String rawRole = profileData['role'] ?? 'unknown';
+      final String role = rawRole.toLowerCase().trim(); // <-- FIX RLS ERROR DISINI
+
+      print("Role yang Diterima dari DB: $rawRole");
+      print("Role yang Digunakan (Normalized): $role");
+
+
+      // 3. Resepsionis Pintar Mengarahkan User
+      if (!mounted) return;
+
+      if (role == 'bgn') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardBgnScreen()),
+        );
+      } else if (role == 'admin_sppg') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardAdminScreen()),
+        );
+      } else if (role == 'kurir') { // <-- Sekarang comparison lebih aman
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardKurirScreen()),
+        );
+      } else {
+        // Role tidak dikenali
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Akses Ditolak: Role '$rawRole' tidak dikenali."),
+            backgroundColor: Colors.red,
+          ),
+        );
+        // Logout lagi agar sesi yang salah terhapus
+        await Supabase.instance.client.auth.signOut();
+      }
+
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}"),
+          backgroundColor: Colors.red,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
+  }
+  // ... (kode dispose dan build tetap sama) ...
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            // ... (kode UI form) ...
+            children: [
+              const Icon(Icons.security, size: 80, color: Colors.blue),
+              const SizedBox(height: 20),
+              const Text("MBG Monitoring", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              const Text("Silakan masuk untuk melanjutkan", style: TextStyle(color: Colors.grey)),
+              const SizedBox(height: 40),
+              
+              TextField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _isLoading ? null : _login,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  child: _isLoading
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text("MASUK", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+}
+
+=== FILE: lib\features\autentikasi\services\auth_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../models/user_profile.dart';
+
+class AuthService {
+  final SupabaseClient _supabase = Supabase.instance.client;
+
+  // Fungsi Login
+  Future<UserProfile?> signIn({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      // 1. Login ke Auth Supabase (Cek Email & Password)
+      final AuthResponse response = await _supabase.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
+
+      if (response.user == null) {
+        throw 'Login gagal: User tidak ditemukan';
+      }
+
+      final userId = response.user!.id;
+      final userEmail = response.user!.email;
+
+      // 2. Ambil Data Profil & Role dari Tabel 'profiles'
+      // Kita select data berdasarkan ID user yang barusan login
+      final data = await _supabase
+          .from('profiles')
+          .select()
+          .eq('id', userId)
+          .single();
+
+      // 3. Kembalikan sebagai objek UserProfile
+      return UserProfile.fromJson(data, userEmail);
+
+    } on AuthException catch (e) {
+      // Error khusus Supabase (misal: password salah)
+      throw e.message;
+    } catch (e) {
+      // Error umum lainnya
+      throw 'Terjadi kesalahan: $e';
+    }
+  }
+
+  // Fungsi Logout
+  Future<void> signOut() async {
+    await _supabase.auth.signOut();
+  }
+
+  // Cek apakah ada user yang sedang login (untuk auto-login)
+  User? getCurrentUser() {
+    return _supabase.auth.currentUser;
+  }
+}
+
+=== FILE: lib\features\kurir\screens\dashboard_kurir_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart'; 
+
+// Import Services & Models
+import '../../admin_sppg/services/route_service.dart';
+import '../../autentikasi/screens/login_screen.dart';
+import '../../../models/route_model.dart';
+
+class DashboardKurirScreen extends StatelessWidget {
+  // [FIX]: Constructor bisa const karena tidak ada final fields non-const
+  const DashboardKurirScreen({super.key}); 
+  
+  // HILANGKAN deklarasi final RouteService _routeService = ... di sini.
+
+  // --- FUNGSI LOGOUT ---
+  Future<void> _logout(BuildContext context) async {
+    await Supabase.instance.client.auth.signOut();
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  // --- LOGIKA AMBIL & TAMPILKAN RUTE ---
+  Widget _buildRouteList(BuildContext context) {
+    // [FIX UTAMA]: Service dibuat LOKAL di dalam method (bukan final field)
+    final RouteService routeService = RouteService();
+
+    // Memanggil fungsi yang memfilter berdasarkan ID Kurir
+    return FutureBuilder<List<DeliveryRoute>>(
+      future: routeService.getRoutesByCourier(), // Panggil service lokal
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+
+        final routes = snapshot.data ?? [];
+
+        if (routes.isEmpty) {
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.assignment_turned_in_outlined, size: 80, color: Colors.blue[100]),
+                const SizedBox(height: 16),
+                const Text("Belum ada tugas pengiriman hari ini.", style: TextStyle(fontSize: 16)),
+              ],
+            ),
+          );
+        }
+
+        return RefreshIndicator(
+          onRefresh: () async {
+            (context as Element).markNeedsBuild(); 
+          },
+          child: ListView.builder(
+            padding: const EdgeInsets.all(12),
+            itemCount: routes.length,
+            itemBuilder: (context, index) {
+              final route = routes[index];
+              final date = DateTime.tryParse(route.date) ?? DateTime.now();
+              final dateStr = DateFormat('EEEE, d MMM', 'id_ID').format(date);
+
+              return Card(
+                elevation: 3,
+                margin: const EdgeInsets.only(bottom: 12),
+                child: ListTile(
+                  leading: const Icon(Icons.delivery_dining, color: Colors.blue),
+                  title: Text(
+                    "Tugas Tgl: $dateStr",
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  subtitle: Text("Armada: ${route.vehiclePlate ?? '-'}"),
+                  trailing: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: _getStatusColor(route.status).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      route.status.toUpperCase(),
+                      style: TextStyle(color: _getStatusColor(route.status), fontWeight: FontWeight.bold, fontSize: 11),
+                    ),
+                  ),
+                  onTap: () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text("Fitur Detail Rute akan dibuat!")),
+                    );
+                  },
+                ),
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed': return Colors.green;
+      case 'active': return Colors.blue;
+      default: return Colors.orange; // pending
+    }
+  }
+
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Jadwal Pengiriman"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(icon: const Icon(Icons.logout), onPressed: () => _logout(context)),
+        ],
+      ),
+      body: _buildRouteList(context), 
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\screens\add_sppg_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:latlong2/latlong.dart';
+// Pastikan file ini ada di folder yang sama
+import 'location_picker_screen.dart'; 
+// Pastikan path ini benar menuju service yang baru diperbaiki di atas
+import '../services/sppg_service.dart'; 
+
+class AddSppgScreen extends StatefulWidget {
+  const AddSppgScreen({super.key});
+
+  @override
+  State<AddSppgScreen> createState() => _AddSppgScreenState();
+}
+
+class _AddSppgScreenState extends State<AddSppgScreen> {
+  final _formKey = GlobalKey<FormState>();
+
+  final TextEditingController _nameController = TextEditingController();
+  final TextEditingController _emailController = TextEditingController();
+  final TextEditingController _phoneController = TextEditingController();
+  final TextEditingController _addressController = TextEditingController();
+  
+  final TextEditingController _latController = TextEditingController();
+  final TextEditingController _longController = TextEditingController();
+
+  bool _isSubmitting = false;
+
+  Future<void> _openMapPicker() async {
+    double initialLat = double.tryParse(_latController.text) ?? -6.9175; 
+    double initialLong = double.tryParse(_longController.text) ?? 107.6191;
+
+    final LatLng? result = await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => LocationPickerScreen(
+          initialLat: initialLat,
+          initialLong: initialLong,
+        ),
+      ),
+    );
+
+    if (result != null) {
+      setState(() {
+        _latController.text = result.latitude.toString();
+        _longController.text = result.longitude.toString();
+      });
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Koordinat berhasil diambil dari Peta!")),
+      );
+    }
+  }
+
+  Future<void> _submitForm() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isSubmitting = true); 
+
+      try {
+        final Map<String, dynamic> newData = {
+          "name": _nameController.text,
+          "email": _emailController.text,
+          "phone": _phoneController.text,
+          "address": _addressController.text,
+          "gps_lat": double.tryParse(_latController.text),
+          "gps_long": double.tryParse(_longController.text),
+        };
+
+        // Memanggil fungsi createSppg yang sudah ada lagi di Service
+        await SppgService().createSppg(newData);
+
+        if (!mounted) return;
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Berhasil Mendaftarkan SPPG Baru!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        Navigator.pop(context, true);
+
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Gagal menyimpan: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _emailController.dispose();
+    _phoneController.dispose();
+    _addressController.dispose();
+    _latController.dispose();
+    _longController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Registrasi SPPG Baru"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Informasi Dasar", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: "Nama SPPG / Dapur", border: OutlineInputBorder(), prefixIcon: Icon(Icons.store)),
+                validator: (value) => value!.isEmpty ? "Nama wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: "Email Admin SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _phoneController,
+                decoration: const InputDecoration(labelText: "Nomor Telepon / WA", border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone)),
+                keyboardType: TextInputType.phone,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _addressController,
+                decoration: const InputDecoration(labelText: "Alamat Lengkap", border: OutlineInputBorder(), prefixIcon: Icon(Icons.home)),
+                maxLines: 3,
+                validator: (value) => value!.isEmpty ? "Alamat wajib diisi" : null,
+              ),
+              const SizedBox(height: 30),
+              const Divider(thickness: 2),
+              const SizedBox(height: 10),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text("Titik Koordinat", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  ElevatedButton.icon(
+                    onPressed: _openMapPicker,
+                    icon: const Icon(Icons.map, size: 18),
+                    label: const Text("Buka Peta"),
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[700], foregroundColor: Colors.white),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 15),
+              Row(
+                children: [
+                  Expanded(
+                    child: TextFormField(
+                      controller: _latController,
+                      decoration: const InputDecoration(labelText: "Latitude", border: OutlineInputBorder()),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      validator: (value) => value!.isEmpty ? "Wajib diisi" : null,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: TextFormField(
+                      controller: _longController,
+                      decoration: const InputDecoration(labelText: "Longitude", border: OutlineInputBorder()),
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      validator: (value) => value!.isEmpty ? "Wajib diisi" : null,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 40),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submitForm,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], padding: const EdgeInsets.symmetric(vertical: 16)),
+                  child: _isSubmitting
+                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text("SIMPAN AKUN SPPG", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\screens\dashboard_bgn_screen.dart ===
+
+import 'package:flutter/material.dart';
+// Sesuaikan path import ini dengan struktur foldermu
+import '../../autentikasi/services/auth_service.dart';
+import '../../autentikasi/screens/login_screen.dart';
+// Nanti kita buat halaman ini di langkah selanjutnya:
+import 'list_sppg_screen.dart'; 
+
+class DashboardBgnScreen extends StatelessWidget {
+  const DashboardBgnScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("BGN Monitoring"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Selamat Datang, Pengawas",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const Text("Pilih menu di bawah untuk memulai:"),
+            const SizedBox(height: 20),
+
+            // Grid Menu
+            Expanded(
+              child: GridView.count(
+                crossAxisCount: 2,
+                crossAxisSpacing: 16,
+                mainAxisSpacing: 16,
+                children: [
+                  // Menu 1: Data Master SPPG
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.business_outlined,
+                    title: "Data Master SPPG",
+                    color: Colors.blue,
+                    onTap: () {
+                      // Navigasi ke Halaman List SPPG
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => const ListSppgScreen()),
+                      );
+                    },
+                  ),
+
+                  // Menu 2: Peta Tracking
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.map_outlined,
+                    title: "Peta Tracking Live",
+                    color: Colors.green,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Fitur Peta akan dibuat...")),
+                      );
+                    },
+                  ),
+
+                  // Menu 3: Laporan Insiden
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.warning_amber_rounded,
+                    title: "Laporan Insiden",
+                    color: Colors.redAccent,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Fitur Laporan akan dibuat...")),
+                      );
+                    },
+                  ),
+
+                  // Menu 4: Statistik
+                  _buildMenuCard(
+                    context,
+                    icon: Icons.bar_chart,
+                    title: "Statistik Kinerja",
+                    color: Colors.purple,
+                    onTap: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text("Fitur Statistik akan dibuat...")),
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      
+      // Tombol Logout
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          // Logout logic
+          await AuthService().signOut();
+          if (!context.mounted) return;
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+          );
+        },
+        label: const Text("Logout"),
+        icon: const Icon(Icons.logout),
+        backgroundColor: Colors.grey[800],
+        foregroundColor: Colors.white,
+      ),
+    );
+  }
+
+  // --- FUNGSI INI HARUS ADA DI DALAM KELAS, TAPI DI LUAR 'build' ---
+  Widget _buildMenuCard(BuildContext context, {
+    required IconData icon,
+    required String title,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 30,
+              backgroundColor: color.withOpacity(0.1),
+              child: Icon(icon, size: 30, color: color),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\screens\detail_sppg_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+// Import Model
+import '../../../models/sppg_model.dart';
+// Import Service yang sudah ada fitur Ghost Client-nya
+import '../services/sppg_service.dart';
+
+class DetailSppgScreen extends StatelessWidget {
+  final Sppg sppg;
+
+  const DetailSppgScreen({super.key, required this.sppg});
+
+  // ---------------------------------------------------------------------------
+  // LOGIKA DIALOG "BUAT AKUN"
+  // ---------------------------------------------------------------------------
+  void _showCreateAccountDialog(BuildContext context) {
+    final TextEditingController passwordController = TextEditingController();
+    bool isLoading = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false, // User gabisa tutup dialog sembarangan
+      builder: (context) {
+        // Kita butuh StatefulBuilder DI DALAM Dialog agar bisa update state loading
+        // khusus untuk tampilan dialog ini saja.
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: const Text("Buat Akun Login"),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    "Akun ini akan digunakan oleh Admin SPPG untuk login ke aplikasi mobile.",
+                    style: TextStyle(fontSize: 13, color: Colors.grey),
+                  ),
+                  const SizedBox(height: 15),
+                  
+                  // Tampilkan Email (Read Only)
+                  const Text("Email Login:", style: TextStyle(fontWeight: FontWeight.bold)),
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Text(
+                      sppg.email ?? "Email belum diatur!",
+                      style: TextStyle(color: sppg.email == null ? Colors.red : Colors.black),
+                    ),
+                  ),
+                  const SizedBox(height: 15),
+
+                  // Input Password Baru
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: "Password Baru",
+                      hintText: "Minimal 6 karakter",
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.lock),
+                    ),
+                  ),
+                  
+                  // Loading Indicator
+                  if (isLoading)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 20),
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                ],
+              ),
+              actions: [
+                // Tombol Batal (Hilang kalau lagi loading)
+                if (!isLoading)
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text("Batal", style: TextStyle(color: Colors.grey)),
+                  ),
+                
+                // Tombol Eksekusi
+                if (!isLoading)
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green[700], 
+                      foregroundColor: Colors.white
+                    ),
+                    onPressed: () async {
+                      // 1. Validasi Input
+                      if (sppg.email == null || sppg.email!.isEmpty) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Error: SPPG ini tidak punya email. Edit data dulu!")),
+                        );
+                        return;
+                      }
+                      if (passwordController.text.length < 6) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text("Password minimal 6 karakter!")),
+                        );
+                        return;
+                      }
+
+                      // 2. Mulai Loading
+                      setState(() => isLoading = true);
+
+                      try {
+                        // 3. Panggil Service (Ghost Client)
+                        await SppgService().createSppgUser(
+                          email: sppg.email!,
+                          password: passwordController.text,
+                          sppgId: sppg.id,
+                          sppgName: sppg.name,
+                        );
+
+                        if (!context.mounted) return;
+                        
+                        // 4. Sukses
+                        Navigator.pop(context); // Tutup Dialog
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text("SUKSES! Akun Admin SPPG berhasil dibuat."),
+                            backgroundColor: Colors.green,
+                            duration: Duration(seconds: 4),
+                          ),
+                        );
+
+                      } catch (e) {
+                        // 5. Gagal
+                        setState(() => isLoading = false);
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
+                        );
+                      }
+                    },
+                    child: const Text("Buat Akun"),
+                  ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Validasi lokasi untuk peta
+    bool hasLocation = sppg.latitude != null && sppg.longitude != null;
+    
+    // Titik tengah peta (Default Bandung kalau kosong)
+    final centerLocation = hasLocation 
+        ? LatLng(sppg.latitude!, sppg.longitude!) 
+        : const LatLng(-6.9175, 107.6191);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Detail SPPG"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // -----------------------------------------------------------------
+            // 1. PETA LOKASI (Visualisasi OSM)
+            // -----------------------------------------------------------------
+            SizedBox(
+              height: 250,
+              width: double.infinity,
+              child: Stack(
+                children: [
+                  FlutterMap(
+                    options: MapOptions(
+                      initialCenter: centerLocation,
+                      initialZoom: 16.0, // Zoom level dekat
+                    ),
+                    children: [
+                      TileLayer(
+                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'com.example.mbg_monitoring',
+                      ),
+                      // Attribution (Wajib Legalitas)
+                      const RichAttributionWidget(
+                        attributions: [TextSourceAttribution('OpenStreetMap contributors')],
+                      ),
+                      // Pin Merah Lokasi
+                      if (hasLocation)
+                        MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: centerLocation,
+                              width: 50,
+                              height: 50,
+                              child: const Icon(Icons.location_pin, color: Colors.red, size: 40),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                  // Gradient shadow di bawah
+                  Positioned(
+                    bottom: 0, left: 0, right: 0,
+                    child: Container(
+                      height: 30,
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.bottomCenter,
+                          end: Alignment.topCenter,
+                          colors: [Colors.black.withOpacity(0.1), Colors.transparent],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            // -----------------------------------------------------------------
+            // 2. INFORMASI TEKS
+            // -----------------------------------------------------------------
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Nama SPPG
+                  Text(
+                    sppg.name,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 8),
+                  
+                  // Badge ID
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.blue[50],
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: Colors.blue.shade100),
+                    ),
+                    child: Text(
+                      "ID: ${sppg.id.split('-').first}...", // Tampilkan ID pendek aja
+                      style: TextStyle(fontSize: 12, color: Colors.blue[800]),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Card Detail Kontak
+                  Card(
+                    elevation: 2,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    child: Padding(
+                      padding: const EdgeInsets.all(16.0),
+                      child: Column(
+                        children: [
+                          _buildInfoRow(Icons.email, "Email Admin", sppg.email ?? "-"),
+                          const Divider(),
+                          _buildInfoRow(Icons.phone, "Telepon", sppg.phone ?? "-"),
+                          const Divider(),
+                          _buildInfoRow(Icons.map, "Alamat", sppg.address ?? "-"),
+                        ],
+                      ),
+                    ),
+                  ),
+
+                  const SizedBox(height: 20),
+                  const Text("Lokasi GPS", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 5),
+                  Card(
+                    color: Colors.grey[100],
+                    elevation: 0,
+                    child: ListTile(
+                      leading: const Icon(Icons.gps_fixed, color: Colors.orange),
+                      title: Text(hasLocation 
+                          ? "${sppg.latitude}, ${sppg.longitude}" 
+                          : "Koordinat belum diatur"),
+                      subtitle: const Text("Latitude, Longitude"),
+                    ),
+                  ),
+
+                  const SizedBox(height: 30),
+
+                  // -------------------------------------------------------------
+                  // 3. TOMBOL AKSI
+                  // -------------------------------------------------------------
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showCreateAccountDialog(context),
+                      icon: const Icon(Icons.person_add),
+                      label: const Text("BUAT AKUN LOGIN ADMIN"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.green[700],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  
+                  // Tombol Edit (Placeholder)
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                         ScaffoldMessenger.of(context).showSnackBar(
+                           const SnackBar(content: Text("Fitur Edit Data akan dibuat nanti")),
+                         );
+                      },
+                      icon: const Icon(Icons.edit),
+                      label: const Text("EDIT DATA SPPG"),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 15),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 30),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Widget kecil buat baris info
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20, color: Colors.grey[600]),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+                const SizedBox(height: 2),
+                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\screens\list_sppg_screen.dart ===
+
+import 'package:flutter/material.dart';
+// Pastikan service ini sudah diperbaiki dengan langkah nomor 1
+import '../services/sppg_service.dart';
+// Sesuaikan path model
+import '../../../models/sppg_model.dart';
+import 'add_sppg_screen.dart'; 
+// IMPORT INI PENTING (file detail yang kita buat sebelumnya)
+import 'detail_sppg_screen.dart';
+
+class ListSppgScreen extends StatefulWidget {
+  const ListSppgScreen({super.key});
+
+  @override
+  State<ListSppgScreen> createState() => _ListSppgScreenState();
+}
+
+class _ListSppgScreenState extends State<ListSppgScreen> {
+  final SppgService _sppgService = SppgService();
+
+  List<Sppg> _sppgList = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // Ini tidak akan merah lagi kalau SppgService sudah diperbaiki
+      final data = await _sppgService.getAllSppgs();
+      if (!mounted) return;
+      setState(() {
+        _sppgList = data;
+        _isLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Data Master SPPG"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+      ),
+      body: RefreshIndicator(
+        onRefresh: _fetchData,
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _sppgList.isEmpty
+                ? _buildEmptyState()
+                : ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _sppgList.length,
+                    itemBuilder: (context, index) {
+                      final sppg = _sppgList[index];
+                      return Card(
+                        elevation: 2,
+                        margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                        child: ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: Colors.blue[50],
+                            child: Icon(Icons.kitchen, color: Colors.blue[800]),
+                          ),
+                          title: Text(
+                            sppg.name,
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            sppg.address ?? "Alamat belum diisi",
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                          onTap: () {
+                            // Navigasi ke Detail
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => DetailSppgScreen(sppg: sppg),
+                              ),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          final result = await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const AddSppgScreen()),
+          );
+          if (result == true) {
+            _fetchData();
+          }
+        },
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+        icon: const Icon(Icons.add),
+        label: const Text("Tambah SPPG"),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.business_outlined, size: 80, color: Colors.grey),
+          const SizedBox(height: 16),
+          const Text("Belum ada data SPPG.", style: TextStyle(fontSize: 16, color: Colors.grey)),
+          TextButton(onPressed: _fetchData, child: const Text("Refresh")),
+        ],
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\screens\location_picker_screen.dart ===
+
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
+
+class LocationPickerScreen extends StatefulWidget {
+  final double initialLat;
+  final double initialLong;
+
+  const LocationPickerScreen({
+    super.key,
+    this.initialLat = -6.9175, // Default Bandung
+    this.initialLong = 107.6191,
+  });
+
+  @override
+  State<LocationPickerScreen> createState() => _LocationPickerScreenState();
+}
+
+class _LocationPickerScreenState extends State<LocationPickerScreen> {
+  late LatLng _pickedLocation;
+  final MapController _mapController = MapController();
+  final TextEditingController _searchController = TextEditingController();
+  
+  double _currentZoom = 15.0; 
+  bool _isSearching = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _pickedLocation = LatLng(widget.initialLat, widget.initialLong);
+  }
+
+  Future<void> _searchAddress() async {
+    final query = _searchController.text;
+    if (query.isEmpty) return;
+
+    setState(() => _isSearching = true);
+    FocusScope.of(context).unfocus();
+
+    try {
+      final url = Uri.parse('https://photon.komoot.io/api/?q=$query&limit=1');
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final features = data['features'] as List;
+
+        if (features.isNotEmpty) {
+          final coordinates = features[0]['geometry']['coordinates'];
+          final double lon = coordinates[0];
+          final double lat = coordinates[1];
+          final newLocation = LatLng(lat, lon);
+
+          setState(() {
+            _pickedLocation = newLocation;
+          });
+          _mapController.move(newLocation, 16.0);
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text("Lokasi tidak ditemukan.")),
+          );
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    } finally {
+      setState(() => _isSearching = false);
+    }
+  }
+
+  void _zoomMap(double change) {
+    setState(() {
+      _currentZoom = (_currentZoom + change).clamp(3.0, 18.0);
+      _mapController.move(_pickedLocation, _currentZoom);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      resizeToAvoidBottomInset: false,
+      appBar: AppBar(
+        title: const Text("Pilih Lokasi"),
+        backgroundColor: Colors.blue[800],
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.check),
+            onPressed: () {
+              Navigator.pop(context, _pickedLocation);
+            },
+          )
+        ],
+      ),
+      body: Stack(
+        children: [
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: _pickedLocation,
+              initialZoom: _currentZoom,
+              onPositionChanged: (camera, hasGesture) {
+                if (hasGesture) {
+                  setState(() {
+                    _pickedLocation = camera.center;
+                    _currentZoom = camera.zoom;
+                  });
+                }
+              },
+            ),
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.mbg_monitoring',
+              ),
+              // [PENTING] Attribution OSM (Biar Legal)
+              const RichAttributionWidget(
+                attributions: [TextSourceAttribution('OpenStreetMap contributors')],
+              ),
+            ],
+          ),
+          const Center(
+            child: Padding(
+              padding: EdgeInsets.only(bottom: 40.0),
+              child: Icon(Icons.location_pin, color: Colors.red, size: 50),
+            ),
+          ),
+          Positioned(
+            top: 10, left: 15, right: 15,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _searchController,
+                        decoration: const InputDecoration(
+                          hintText: "Cari lokasi...", border: InputBorder.none,
+                        ),
+                        onSubmitted: (_) => _searchAddress(),
+                      ),
+                    ),
+                    IconButton(
+                      icon: _isSearching 
+                        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)) 
+                        : const Icon(Icons.search),
+                      onPressed: _searchAddress,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 20, bottom: 160,
+            child: Column(
+              children: [
+                FloatingActionButton.small(
+                  heroTag: "zoom_in", onPressed: () => _zoomMap(1.0),
+                  backgroundColor: Colors.white, child: const Icon(Icons.add, color: Colors.black),
+                ),
+                const SizedBox(height: 10),
+                FloatingActionButton.small(
+                  heroTag: "zoom_out", onPressed: () => _zoomMap(-1.0),
+                  backgroundColor: Colors.white, child: const Icon(Icons.remove, color: Colors.black),
+                ),
+              ],
+            ),
+          ),
+          Positioned(
+            bottom: 30, left: 20, right: 20,
+            child: Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    Text("Lat: ${_pickedLocation.latitude.toStringAsFixed(5)}, Long: ${_pickedLocation.longitude.toStringAsFixed(5)}"),
+                    const SizedBox(height: 10),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white),
+                        onPressed: () => Navigator.pop(context, _pickedLocation),
+                        child: const Text("PILIH LOKASI INI"),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\pengawas\services\sppg_service.dart ===
+
+import 'dart:convert'; // Wajib ada buat JSON
+import 'package:http/http.dart' as http; // Wajib ada buat Request
+import 'package:supabase_flutter/supabase_flutter.dart';
+// Pastikan path ini benar. Kalau merah, hapus baris ini lalu ketik ulang biar auto-import
+import '../../../models/sppg_model.dart'; 
+
+class SppgService {
+  // Client utama (Admin BGN)
+  final _supabase = Supabase.instance.client;
+
+  // --- FUNGSI A: DATABASE (CRUD DATA KANTOR SPPG) ---
+  
+  Future<void> createSppg(Map<String, dynamic> data) async {
+    try {
+      await _supabase.from('sppgs').insert(data);
+    } catch (e) {
+      throw Exception('Gagal simpan ke DB: $e');
+    }
+  }
+
+  Future<List<Sppg>> getAllSppgs() async {
+    try {
+      final response = await _supabase
+          .from('sppgs')
+          .select()
+          .order('created_at', ascending: false);
+
+      final List<dynamic> data = response;
+      
+      return data.map((json) {
+        return Sppg(
+          id: json['id'].toString(),
+          name: json['name'] ?? 'Tanpa Nama',
+          address: json['address'],
+          email: json['email'],
+          phone: json['phone'],
+          latitude: json['gps_lat'] != null ? double.tryParse(json['gps_lat'].toString()) : null,
+          longitude: json['gps_long'] != null ? double.tryParse(json['gps_long'].toString()) : null,
+        );
+      }).toList();
+    } catch (e) {
+      throw Exception('Gagal ambil data: $e');
+    }
+  }
+
+  // --- FUNGSI B: AUTH (VERSI HTTP AMAN) ---
+  
+  Future<void> createSppgUser({
+    required String email,
+    required String password,
+    required String sppgId,
+    required String sppgName,
+  }) async {
+    // 1. KREDENSIAL SUPABASE (Pastikan tidak ada spasi di url/key)
+    const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
+    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+
+    final url = Uri.parse('$projectUrl/auth/v1/signup');
+    
+    try {
+      print("--- Melakukan Request HTTP ke Supabase Auth ---"); // Debugging
+
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': anonKey,
+        },
+        body: jsonEncode({
+          'email': email.trim(), // Trim biar ga ada spasi gak sengaja
+          'password': password,
+          'data': { 
+             'full_name': 'Admin $sppgName' 
+          }
+        }),
+      );
+
+      print("Status Code: ${response.statusCode}"); // Debugging
+      print("Response: ${response.body}"); // Debugging
+
+      // 2. CEK HASIL
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        
+        // --- [ANTI ERROR NULL] ---
+        // Supabase kadang balikin ID di root, kadang di dalam user object
+        // Kita cek satu-satu
+        String? newUserId;
+
+        if (responseData['id'] != null) {
+          newUserId = responseData['id'].toString();
+        } else if (responseData['user'] != null && responseData['user']['id'] != null) {
+          newUserId = responseData['user']['id'].toString();
+        }
+
+        // Kalau masih null juga, kita paksa error biar ga lanjut
+        if (newUserId == null) {
+          throw Exception("Gagal dapat ID User (Format JSON tidak dikenali).");
+        }
+
+        // 3. SIMPAN KE TABEL PROFILES
+        await _supabase.from('profiles').insert({
+          'id': newUserId,
+          'full_name': 'Admin $sppgName',
+          'role': 'admin_sppg',
+          'sppg_id': sppgId,
+          'school_id': null,
+        });
+
+      } else {
+        // GAGAL DARI SERVER
+        final errorData = jsonDecode(response.body);
+        String msg = errorData['msg'] ?? errorData['message'] ?? 'Gagal mendaftar';
+        throw Exception(msg);
+      }
+    } catch (e) {
+      // Tangkap error spesifik
+       if (e.toString().contains("User already registered") || e.toString().contains("already been registered")) {
+        throw Exception("Email ini sudah terdaftar! Cek menu Authentication Supabase.");
+      }
+      throw Exception('Error Create User: $e');
+    }
+  }
+}
+
+=== FILE: lib\models\courier_model.dart ===
+
+class CourierModel {
+  final String id;
+  final String name; // Dipetakan dari full_name di tabel profiles
+  final String email; 
+  final String? sppgId; // SPPG tempat kurir bertugas
+
+  CourierModel({
+    required this.id,
+    required this.name,
+    required this.email,
+    this.sppgId,
+  });
+
+  factory CourierModel.fromJson(Map<String, dynamic> json) {
+    return CourierModel(
+      id: json['id'].toString(),
+      name: json['full_name'] ?? 'Kurir Tanpa Nama',
+      email: json['email'] ?? 'Email tidak tersedia',
+      sppgId: json['sppg_id'],
+    );
+  }
+}
+
+=== FILE: lib\models\menu_model.dart ===
+
+class Menu {
+  final String id;
+  final String sppgId;
+  final String name;
+  final String category; 
+  final int cookingDurationMinutes;
+
+  Menu({
+    required this.id,
+    required this.sppgId,
+    required this.name,
+    required this.category,
+    required this.cookingDurationMinutes,
+  });
+
+  factory Menu.fromJson(Map<String, dynamic> json) {
+    return Menu(
+      id: json['id'].toString(),
+      sppgId: json['sppg_id'].toString(),
+      name: json['name'] ?? 'Menu Baru',
+      category: json['category'] ?? 'Lain-lain',
+      cookingDurationMinutes: json['cooking_duration_minutes'] != null 
+          ? int.parse(json['cooking_duration_minutes'].toString()) 
+          : 0,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sppg_id': sppgId,
+      'name': name,
+      'category': category,
+      'cooking_duration_minutes': cookingDurationMinutes,
+    };
+  }
+}
+
+=== FILE: lib\models\route_model.dart ===
+
+class DeliveryRoute {
+  final String id;
+  final String date; // Format YYYY-MM-DD
+  final String vehicleId;
+  final String courierId;
+  final String status; // pending, active, completed
+
+  // Variabel tambahan untuk join (opsional, buat tampilan nanti)
+  final String? vehiclePlate; 
+  final String? courierName;
+
+  DeliveryRoute({
+    required this.id,
+    required this.date,
+    required this.vehicleId,
+    required this.courierId,
+    this.status = 'pending',
+    this.vehiclePlate,
+    this.courierName,
+  });
+
+  factory DeliveryRoute.fromJson(Map<String, dynamic> json) {
+    return DeliveryRoute(
+      id: json['id'].toString(),
+      date: json['date'],
+      vehicleId: json['vehicle_id'].toString(),
+      courierId: json['courier_id'].toString(),
+      status: json['status'] ?? 'pending',
+      // Supabase bisa return nested object kalau kita select join
+      vehiclePlate: json['vehicles']?['plate_number'], 
+      courierName: json['profiles']?['full_name'],
+    );
+  }
+}
+
+=== FILE: lib\models\school_model.dart ===
+
+class School {
+  final String id;
+  final String sppgId; 
+  final String name;
+  final String? address;
+  final double? latitude;  
+  final double? longitude; 
+  final int studentCount;  
+  final String? deadlineTime; 
+  final int serviceTimeMinutes; 
+  final bool isHighRisk; 
+  
+  // [BARU] Field untuk VRP Constraints
+  final int toleranceMinutes;  
+  final String? menuDefault;     
+
+  School({
+    required this.id,
+    required this.sppgId,
+    required this.name,
+    this.address,
+    this.latitude,
+    this.longitude,
+    this.studentCount = 0,
+    this.deadlineTime,
+    this.serviceTimeMinutes = 10,
+    this.isHighRisk = false,
+    this.toleranceMinutes = 45, // Default 45 menit
+    this.menuDefault,
+  });
+
+  factory School.fromJson(Map<String, dynamic> json) {
+    return School(
+      id: json['id'].toString(),
+      sppgId: json['sppg_id'].toString(),
+      name: json['name'] ?? 'Tanpa Nama Sekolah',
+      address: json['address'],
+      latitude: json['gps_lat'] != null ? double.tryParse(json['gps_lat'].toString()) : null,
+      longitude: json['gps_long'] != null ? double.tryParse(json['gps_long'].toString()) : null,
+      studentCount: json['student_count'] != null ? int.parse(json['student_count'].toString()) : 0,
+      serviceTimeMinutes: json['service_time_minutes'] != null ? int.parse(json['service_time_minutes'].toString()) : 10,
+      isHighRisk: json['is_high_risk'] ?? false,
+      deadlineTime: json['deadline_time'],
+      // [BARU] Parsing kolom tambahan
+      toleranceMinutes: json['tolerance_minutes'] != null ? int.parse(json['tolerance_minutes'].toString()) : 45,
+      menuDefault: json['menu_default'],
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sppg_id': sppgId,
+      'name': name,
+      'address': address,
+      'gps_lat': latitude,
+      'gps_long': longitude,
+      'student_count': studentCount,
+      'deadline_time': deadlineTime,
+      'service_time_minutes': serviceTimeMinutes,
+      'is_high_risk': isHighRisk,
+      // [BARU] Properti tambahan
+      'tolerance_minutes': toleranceMinutes,
+      'menu_default': menuDefault,
+    };
+  }
+}
+
+=== FILE: lib\models\sppg_model.dart ===
+
+class Sppg {
+  final String id;
+  final String name;
+  final String? address;
+  final String? email;
+  final String? phone; // Tambahan No Telp
+  final double? latitude;
+  final double? longitude;
+
+  Sppg({
+    required this.id,
+    required this.name,
+    this.address,
+    this.email,
+    this.phone,
+    this.latitude,
+    this.longitude,
+  });
+
+  // Menerima data JSON dari Supabase
+  factory Sppg.fromJson(Map<String, dynamic> json) {
+    return Sppg(
+      id: json['id'].toString(),
+      name: json['nama'] ?? 'Tanpa Nama', // Sesuai nama kolom DB
+      address: json['alamat'],
+      email: json['email'],
+      phone: json['no_telp'],
+      // Convert float8 Supabase ke double Dart
+      latitude: json['latitude'] != null ? double.parse(json['latitude'].toString()) : null,
+      longitude: json['longitude'] != null ? double.parse(json['longitude'].toString()) : null,
+    );
+  }
+}
+
+=== FILE: lib\models\user_profile.dart ===
+
+class UserProfile {
+  final String id;
+  final String? email; // Email dari Auth Supabase
+  final String? fullName;
+  final String role; // 'bgn', 'admin_sppg', 'kurir', 'koordinator', 'walikelas'
+  final String? sppgId;
+  final String? schoolId;
+
+  UserProfile({
+    required this.id,
+    this.email,
+    this.fullName,
+    required this.role,
+    this.sppgId,
+    this.schoolId,
+  });
+
+  // Fungsi untuk mengubah data JSON dari Supabase menjadi Objek Dart
+  factory UserProfile.fromJson(Map<String, dynamic> json, String? email) {
+    return UserProfile(
+      id: json['id'],
+      email: email,
+      fullName: json['full_name'],
+      role: json['role'] ?? 'unknown', // Default kalau kosong
+      sppgId: json['sppg_id'],
+      schoolId: json['school_id'],
+    );
+  }
+}
+
+=== FILE: lib\models\vehicle_model.dart ===
+
+class Vehicle {
+  final String id;
+  final String sppgId;
+  final String plateNumber; // Plat Nomor
+  final String? driverName; // Nama Supir
+  final int capacityLimit;  // Kapasitas Angkut (Porsi)
+  final bool isActive;      // Status Siap Jalan?
+
+  Vehicle({
+    required this.id,
+    required this.sppgId,
+    required this.plateNumber,
+    this.driverName,
+    this.capacityLimit = 0,
+    this.isActive = true,
+  });
+
+  factory Vehicle.fromJson(Map<String, dynamic> json) {
+    return Vehicle(
+      id: json['id'].toString(),
+      sppgId: json['sppg_id'].toString(),
+      plateNumber: json['plate_number'] ?? 'Tanpa Plat',
+      driverName: json['driver_name'],
+      capacityLimit: json['capacity_limit'] != null ? int.parse(json['capacity_limit'].toString()) : 0,
+      isActive: json['is_active'] ?? true,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'sppg_id': sppgId,
+      'plate_number': plateNumber,
+      'driver_name': driverName,
+      'capacity_limit': capacityLimit,
+      'is_active': isActive,
+    };
+  }
+}
+
+=== FILE: .env ===
+
+SUPABASE_URL=https://mqyfrqgfpqwlrloqtpvi.supabase.co
+SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ
+
+=== FILE: pubspec.yaml ===
+
+name: rpll
+description: "A new Flutter project."
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+ # Icons
+  cupertino_icons: ^1.0.8
+
+  # Backend & Database
+  supabase_flutter: ^2.10.3
+  
+  # Fitur Hardware & Lokasi
+  google_maps_flutter: ^2.14.0
+  geolocator: ^14.0.2
+  camera: ^0.11.3
+  image_picker: ^1.2.1
+  
+  # State Management & Routing
+  provider: ^6.1.5+1
+  go_router: ^17.0.0
+  
+  # Utilitas
+  intl: ^0.20.2
+  flutter_dotenv: ^6.0.0
+  flutter_map: ^8.2.2
+  latlong2: ^0.9.1
+  http: ^1.6.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Bagian ini yang paling PENTING spasinya harus pas
+  assets:
+    - .env

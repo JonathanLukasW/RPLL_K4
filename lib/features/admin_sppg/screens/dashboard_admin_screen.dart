@@ -1,26 +1,28 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; // Untuk format tanggal di list rute
+import 'package:intl/intl.dart'; 
 
-// Import Auth
+// Import Auth & Login
 import '../../../features/autentikasi/services/auth_service.dart';
 import '../../../features/autentikasi/screens/login_screen.dart';
 
-// Import Models
+// Import Model
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
-import '../../../models/route_model.dart'; // Model Rute
+import '../../../models/route_model.dart';
+import '../../../models/courier_model.dart'; // Pastikan model ini ada jika dipakai di Kurir list
 
 // Import Services
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
-import '../services/route_service.dart'; // Service Rute
+import '../services/route_service.dart';
 
 // Import Forms
 import 'add_school_screen.dart';
 import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
-import 'create_route_screen.dart'; // Layar Buat Rute
+import 'create_route_screen.dart';
+import 'menu_management_screen.dart'; // Import Halaman Manajemen Menu
 
 class DashboardAdminScreen extends StatefulWidget {
   const DashboardAdminScreen({super.key});
@@ -30,13 +32,13 @@ class DashboardAdminScreen extends StatefulWidget {
 }
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
-  int _selectedIndex = 0; // 0=Sekolah, 1=Mobil, 2=Kurir, 3=Rute
+  int _selectedIndex = 0; // 0=Sekolah, 1=Transport, 2=Kurir, 3=Rute
 
-  // Inisialisasi Semua Service
+  // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
-  final RouteService _routeService = RouteService(); // Service Rute
+  final RouteService _routeService = RouteService(); 
 
   // --- FUNGSI LOGOUT ---
   Future<void> _logout() async {
@@ -67,18 +69,30 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
+          // [BARU] Tombol Manajemen Menu
+          IconButton(
+            icon: const Icon(Icons.restaurant_menu),
+            tooltip: "Manajemen Menu",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const MenuManagementScreen()),
+              );
+            },
+          ),
+          // Tombol Logout
           IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
         ],
       ),
       
-      // --- ISI DASHBOARD (4 TAB) ---
+      // --- ISI BODY (4 TAB) ---
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildSchoolList(),    // 0
-          _buildTransportList(), // 1
-          _buildCourierList(),   // 2
-          _buildRouteList(),     // 3 (TAB BARU)
+          _buildSchoolList(),    // Index 0
+          _buildTransportList(), // Index 1
+          _buildCourierList(),   // Index 2
+          _buildRouteList(),     // Index 3 
         ],
       ),
 
@@ -87,7 +101,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        // Label tombol berubah sesuai tab
         label: Text(
           _selectedIndex == 0 ? "Sekolah" : 
           _selectedIndex == 1 ? "Mobil" : 
@@ -95,7 +108,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         ),
         onPressed: () {
           Widget nextPage;
-          // Tentukan mau buka halaman apa
           if (_selectedIndex == 0) {
             nextPage = const AddSchoolScreen();
           } else if (_selectedIndex == 1) {
@@ -103,7 +115,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           } else if (_selectedIndex == 2) {
             nextPage = const AddCourierScreen();
           } else {
-            // Tab 3: Buka Halaman Buat Rute
             nextPage = const CreateRouteScreen();
           }
 
@@ -116,7 +127,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       // --- MENU BAWAH (4 ITEM) ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
-        type: BottomNavigationBarType.fixed, // Wajib fixed kalau item > 3
+        type: BottomNavigationBarType.fixed, 
         selectedItemColor: Colors.orange[800],
         unselectedItemColor: Colors.grey,
         onTap: (index) => setState(() => _selectedIndex = index),
@@ -130,79 +141,147 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // ... Widget List Sekolah, Transport, & Kurir SAMA SEPERTI SEBELUMNYA ...
-  // (Bisa dicopy dari jawaban sebelumnya, atau biarkan kode lama di bagian ini)
-  // Biar hemat tempat, aku tulis ulang yang SchoolList dkk secara ringkas,
-  // TAPI YANG PENTING ADALAH FUNGSI _buildRouteList DI BAWAH INI 👇
-
+  // ===========================================================================
+  // TAB 1: DAFTAR SEKOLAH
+  // ===========================================================================
   Widget _buildSchoolList() {
-     return FutureBuilder<List<School>>(
+    return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada sekolah.", Icons.school);
-        return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) => Card(
-            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: ListTile(
-              title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text("Siswa: ${data[i].studentCount}"),
-              leading: const Icon(Icons.school, color: Colors.orange),
-            ),
-          ),
-        );
-      },
-    );
-  }
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final schools = snapshot.data ?? [];
+        
+        if (schools.isEmpty) {
+          return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
+        }
 
-  Widget _buildTransportList() {
-     return FutureBuilder<List<Vehicle>>(
-      future: _vehicleService.getMyVehicles(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping);
         return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) => Card(
-            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: ListTile(
-              title: Text(data[i].plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(data[i].driverName ?? "-"),
-              leading: const Icon(Icons.directions_car, color: Colors.blueGrey),
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCourierList() {
-     return FutureBuilder<List<CourierModel>>(
-      future: _courierService.getMyCouriers(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada kurir.", Icons.person);
-        return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) => Card(
-            margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-            child: ListTile(
-              title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
-              subtitle: Text(data[i].email),
-              leading: const Icon(Icons.person, color: Colors.green),
-            ),
-          ),
+          padding: const EdgeInsets.all(10),
+          itemCount: schools.length,
+          itemBuilder: (context, index) {
+            final school = schools[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.orange,
+                  child: Icon(Icons.school, color: Colors.white),
+                ),
+                title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}"),
+                trailing: school.isHighRisk 
+                    ? const Icon(Icons.warning, color: Colors.red) 
+                    : const Icon(Icons.check_circle, color: Colors.green, size: 16),
+              ),
+            );
+          },
         );
       },
     );
   }
 
   // ===========================================================================
-  // [BARU] TAB 4: DAFTAR RUTE PENGIRIMAN
+  // TAB 2: DAFTAR TRANSPORTASI
+  // ===========================================================================
+  Widget _buildTransportList() {
+    return FutureBuilder<List<Vehicle>>(
+      future: _vehicleService.getMyVehicles(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final vehicles = snapshot.data ?? [];
+
+        if (vehicles.isEmpty) {
+          return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: vehicles.length,
+          itemBuilder: (context, index) {
+            final vehicle = vehicles[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: Icon(
+                  Icons.directions_car, 
+                  color: vehicle.isActive ? Colors.green : Colors.grey,
+                  size: 32,
+                ),
+                title: Text(vehicle.plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kapasitas: ${vehicle.capacityLimit}"),
+                trailing: Switch(
+                  value: vehicle.isActive,
+                  activeColor: Colors.green,
+                  onChanged: (val) async {
+                    await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
+                    setState(() {}); 
+                  },
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 3: DAFTAR KURIR
+  // ===========================================================================
+  Widget _buildCourierList() {
+    return FutureBuilder<List<CourierModel>>(
+      future: _courierService.getMyCouriers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        if (snapshot.hasError) {
+          return Center(child: Text("Error: ${snapshot.error}"));
+        }
+        final couriers = snapshot.data ?? [];
+
+        if (couriers.isEmpty) {
+          return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
+        }
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: couriers.length,
+          itemBuilder: (context, index) {
+            final courier = couriers[index];
+            return Card(
+              elevation: 2,
+              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+              child: ListTile(
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.blueGrey,
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                title: Text(courier.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Text(courier.email), 
+                trailing: const Icon(Icons.edit, size: 20),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 4: DAFTAR RUTE PENGIRIMAN
   // ===========================================================================
   Widget _buildRouteList() {
     return FutureBuilder<List<DeliveryRoute>>(
@@ -225,10 +304,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           itemCount: routes.length,
           itemBuilder: (context, index) {
             final route = routes[index];
-            
-            // Format Tanggal biar cantik (Misal: Senin, 20 Nov 2025)
-            // Kalau 'id_ID' error, hapus parameter locale-nya
-            final dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(DateTime.parse(route.date));
+            final date = DateTime.tryParse(route.date) ?? DateTime.now();
+            final dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
 
             return Card(
               elevation: 3,
@@ -284,14 +361,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'completed': return Colors.green;
-      case 'active': return Colors.blue;
-      default: return Colors.orange; // pending
-    }
-  }
-
+  // Widget Helper untuk Tampilan Kosong
   Widget _buildEmptyState(String text, IconData icon) {
     return Center(
       child: Column(
@@ -305,5 +375,13 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         ],
       ),
     );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed': return Colors.green;
+      case 'active': return Colors.blue;
+      default: return Colors.orange; // pending
+    }
   }
 }
