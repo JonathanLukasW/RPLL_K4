@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// Import Dashboard
+// --- IMPORT SEMUA DASHBOARD ---
 import '../../pengawas/screens/dashboard_bgn_screen.dart';
 import '../../admin_sppg/screens/dashboard_admin_screen.dart';
 import '../../kurir/screens/dashboard_kurir_screen.dart';
 import '../../koordinator/screens/dashboard_koordinator_screen.dart';
+import '../../walikelas/screens/dashboard_teacher_screen.dart'; // [BARU] Dashboard Wali Kelas
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -34,8 +35,10 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // 1. Proses Login Auth Supabase
-      final AuthResponse res = await Supabase.instance.client.auth
-          .signInWithPassword(email: email, password: password);
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
 
       if (res.user == null) {
         throw Exception("Login gagal. Periksa kembali email & password Anda.");
@@ -51,39 +54,49 @@ class _LoginScreenState extends State<LoginScreen> {
           .eq('id', userId)
           .single();
 
-      // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
-      final String rawRole = profileData['role'] ?? 'unknown';
-      final String role = rawRole
-          .toLowerCase()
-          .trim(); // <-- FIX RLS ERROR DISINI
+      if (profileData == null) {
+        throw Exception("Profil user tidak ditemukan di database.");
+      }
 
-      print("Role yang Diterima dari DB: $rawRole");
-      print("Role yang Digunakan (Normalized): $role");
+      // Normalisasi string role: kecilkan dan buang spasi (PENTING)
+      final String rawRole = profileData['role'] ?? 'unknown';
+      final String role = rawRole.toLowerCase().trim(); 
+
+      print("Login User: $email");
+      print("Role Detected: $role");
 
       // 3. Resepsionis Pintar Mengarahkan User
       if (!mounted) return;
 
       if (role == 'bgn') {
+        // Arahkan ke Dashboard Pengawas
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardBgnScreen()),
         );
       } else if (role == 'admin_sppg') {
+        // Arahkan ke Dashboard Admin SPPG
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardAdminScreen()),
         );
       } else if (role == 'kurir') {
-        // <-- Sekarang comparison lebih aman
+        // Arahkan ke Dashboard Kurir
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKurirScreen()),
         );
       } else if (role == 'koordinator') {
-        // <--- TAMBAH INI
+        // Arahkan ke Dashboard Koordinator
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKoordinatorScreen()),
+        );
+      } else if (role == 'walikelas') { 
+        // [BARU] Arahkan ke Dashboard Wali Kelas
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardTeacherScreen()),
         );
       } else {
         // Role tidak dikenali
@@ -96,13 +109,12 @@ class _LoginScreenState extends State<LoginScreen> {
         // Logout lagi agar sesi yang salah terhapus
         await Supabase.instance.client.auth.signOut();
       }
+
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            "Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}",
-          ),
+          content: Text("Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}"),
           backgroundColor: Colors.red,
         ),
       );
@@ -114,7 +126,13 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
   }
-  // ... (kode dispose dan build tetap sama) ...
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -123,10 +141,11 @@ class _LoginScreenState extends State<LoginScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            // ... (kode UI form) ...
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(Icons.security, size: 80, color: Colors.blue),
               const SizedBox(height: 20),
+              
               const Text(
                 "MBG Monitoring",
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
@@ -137,6 +156,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
+              // Input Email
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
@@ -147,6 +167,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+
+              // Input Password
               TextField(
                 controller: _passwordController,
                 obscureText: true,
@@ -157,6 +179,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 30),
+
+              // Tombol Masuk
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -173,10 +197,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const CircularProgressIndicator(color: Colors.white)
                       : const Text(
                           "MASUK",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 ),
               ),
@@ -185,12 +206,5 @@ class _LoginScreenState extends State<LoginScreen> {
         ),
       ),
     );
-  }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
   }
 }

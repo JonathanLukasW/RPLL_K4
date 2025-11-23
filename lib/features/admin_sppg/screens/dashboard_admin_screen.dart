@@ -16,14 +16,15 @@ import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
 import '../services/route_service.dart';
-// Note: CoordinatorModel ada di dalam file service ini berdasarkan langkah sebelumnya
 import '../services/coordinator_service.dart'; 
+import '../services/teacher_service.dart'; // [BARU] Service Wali Kelas
 
-// Import Forms (Halaman Tambah)
+// Import Forms
 import 'add_school_screen.dart';
 import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
-import 'add_coordinator_screen.dart'; // Import Form Koordinator
+import 'add_coordinator_screen.dart'; 
+import 'add_teacher_screen.dart'; // [BARU] Form Wali Kelas
 import 'create_route_screen.dart';
 import 'menu_management_screen.dart'; 
 
@@ -36,16 +37,16 @@ class DashboardAdminScreen extends StatefulWidget {
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   int _selectedIndex = 0; 
-  // Index: 0=Sekolah, 1=Armada, 2=Kurir, 3=Koordinator, 4=Rute
+  // 0:Sekolah, 1:Armada, 2:Kurir, 3:Koordinator, 4:Wali Kelas, 5:Rute
 
   // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
   final CoordinatorService _coordinatorService = CoordinatorService();
+  final TeacherService _teacherService = TeacherService(); // [BARU]
   final RouteService _routeService = RouteService(); 
 
-  // --- FUNGSI LOGOUT ---
   Future<void> _logout() async {
     await AuthService().signOut();
     if (!mounted) return;
@@ -55,14 +56,14 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // --- JUDUL APP BAR ---
   String _getAppBarTitle() {
     switch (_selectedIndex) {
       case 0: return "Kelola Sekolah";
       case 1: return "Kelola Armada";
       case 2: return "Kelola Kurir";
       case 3: return "Kelola Koordinator";
-      case 4: return "Jadwal & Rute";
+      case 4: return "Kelola Wali Kelas"; // [BARU]
+      case 5: return "Jadwal & Rute";
       default: return "Admin SPPG";
     }
   }
@@ -75,7 +76,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
-          // Tombol Manajemen Menu
           IconButton(
             icon: const Icon(Icons.restaurant_menu),
             tooltip: "Manajemen Menu",
@@ -86,52 +86,41 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               );
             },
           ),
-          // Tombol Logout
           IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
         ],
       ),
       
-      // --- ISI BODY (5 TAB) ---
       body: IndexedStack(
         index: _selectedIndex,
         children: [
           _buildSchoolList(),      // 0
           _buildTransportList(),   // 1
           _buildCourierList(),     // 2
-          _buildCoordinatorList(), // 3 (BARU)
-          _buildRouteList(),       // 4
+          _buildCoordinatorList(), // 3
+          _buildTeacherList(),     // 4 [BARU]
+          _buildRouteList(),       // 5
         ],
       ),
 
-      // --- TOMBOL TAMBAH (+) PINTAR ---
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        // Label dinamis sesuai tab
         label: Text(_getFabLabel()),
         onPressed: () {
           Widget nextPage;
-          // Tentukan halaman tujuan berdasarkan tab
-          if (_selectedIndex == 0) {
-            nextPage = const AddSchoolScreen();
-          } else if (_selectedIndex == 1) {
-            nextPage = const AddTransportScreen();
-          } else if (_selectedIndex == 2) {
-            nextPage = const AddCourierScreen();
-          } else if (_selectedIndex == 3) {
-            nextPage = const AddCoordinatorScreen(); // Halaman Tambah Koordinator
-          } else {
-            nextPage = const CreateRouteScreen();
-          }
+          if (_selectedIndex == 0) nextPage = const AddSchoolScreen();
+          else if (_selectedIndex == 1) nextPage = const AddTransportScreen();
+          else if (_selectedIndex == 2) nextPage = const AddCourierScreen();
+          else if (_selectedIndex == 3) nextPage = const AddCoordinatorScreen();
+          else if (_selectedIndex == 4) nextPage = const AddTeacherScreen(); // [BARU]
+          else nextPage = const CreateRouteScreen();
 
-          // Navigasi & Refresh setelah kembali
           Navigator.push(context, MaterialPageRoute(builder: (_) => nextPage))
               .then((val) { if (val == true) setState(() {}); });
         },
       ),
 
-      // --- MENU BAWAH (5 ITEM) ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed, 
@@ -143,6 +132,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           BottomNavigationBarItem(icon: Icon(Icons.local_shipping), label: "Armada"),
           BottomNavigationBarItem(icon: Icon(Icons.person_pin_circle), label: "Kurir"),
           BottomNavigationBarItem(icon: Icon(Icons.supervisor_account), label: "Koord"),
+          BottomNavigationBarItem(icon: Icon(Icons.class_), label: "Wali"), // [BARU]
           BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: "Rute"),
         ],
       ),
@@ -155,14 +145,14 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       case 1: return "Mobil";
       case 2: return "Kurir";
       case 3: return "Koord";
-      case 4: return "Buat Rute";
+      case 4: return "Wali";
+      case 5: return "Buat Rute";
       default: return "Tambah";
     }
   }
 
-  // ===========================================================================
-  // TAB 1: DAFTAR SEKOLAH
-  // ===========================================================================
+  // --- BUILDER WIDGETS ---
+
   Widget _buildSchoolList() {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
@@ -183,18 +173,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                 leading: const CircleAvatar(backgroundColor: Colors.orange, child: Icon(Icons.school, color: Colors.white)),
                 title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}"),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (school.isHighRisk) const Padding(padding: EdgeInsets.only(right:8), child: Icon(Icons.warning, color: Colors.red)),
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => AddSchoolScreen(schoolToEdit: school)))
-                            .then((val) { if (val == true) setState(() {}); });
-                      },
-                    ),
-                  ],
+                trailing: IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  onPressed: () {
+                    Navigator.push(context, MaterialPageRoute(builder: (_) => AddSchoolScreen(schoolToEdit: school)))
+                        .then((val) { if (val == true) setState(() {}); });
+                  },
                 ),
               ),
             );
@@ -204,9 +188,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // ===========================================================================
-  // TAB 2: DAFTAR TRANSPORTASI
-  // ===========================================================================
   Widget _buildTransportList() {
     return FutureBuilder<List<Vehicle>>(
       future: _vehicleService.getMyVehicles(),
@@ -227,25 +208,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                 leading: Icon(Icons.directions_car, color: vehicle.isActive ? Colors.green : Colors.grey, size: 32),
                 title: Text(vehicle.plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}"),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () {
-                         Navigator.push(context, MaterialPageRoute(builder: (_) => AddTransportScreen(vehicleToEdit: vehicle)))
-                            .then((val) { if (val == true) setState(() {}); });
-                      },
-                    ),
-                    Switch(
-                      value: vehicle.isActive,
-                      activeColor: Colors.green,
-                      onChanged: (val) async {
-                        await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
-                        setState(() {}); 
-                      },
-                    ),
-                  ],
+                trailing: IconButton(
+                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  onPressed: () {
+                      Navigator.push(context, MaterialPageRoute(builder: (_) => AddTransportScreen(vehicleToEdit: vehicle)))
+                        .then((val) { if (val == true) setState(() {}); });
+                  },
                 ),
               ),
             );
@@ -255,9 +223,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // ===========================================================================
-  // TAB 3: DAFTAR KURIR
-  // ===========================================================================
   Widget _buildCourierList() {
     return FutureBuilder<List<CourierModel>>(
       future: _courierService.getMyCouriers(),
@@ -269,28 +234,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: couriers.length,
-          itemBuilder: (ctx, i) {
-            final courier = couriers[i];
-            return Card(
-              elevation: 2,
-              margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
-              child: ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.blueGrey, child: Icon(Icons.person, color: Colors.white)),
-                title: Text(courier.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(courier.email), 
-              ),
-            );
-          },
+          itemBuilder: (ctx, i) => Card(
+            child: ListTile(
+              leading: const CircleAvatar(backgroundColor: Colors.blueGrey, child: Icon(Icons.person, color: Colors.white)),
+              title: Text(couriers[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text(couriers[i].email),
+            ),
+          ),
         );
       },
     );
   }
 
-  // ===========================================================================
-  // TAB 4: DAFTAR KOORDINATOR (BARU)
-  // ===========================================================================
   Widget _buildCoordinatorList() {
-    return FutureBuilder<List<CoordinatorModel>>(
+    return FutureBuilder(
       future: _coordinatorService.getMyCoordinators(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
@@ -301,8 +258,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           padding: const EdgeInsets.all(10),
           itemCount: data.length,
           itemBuilder: (ctx, i) => Card(
-            elevation: 2,
-            margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
             child: ListTile(
               leading: const CircleAvatar(backgroundColor: Colors.teal, child: Icon(Icons.person, color: Colors.white)),
               title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -315,15 +270,36 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // ===========================================================================
-  // TAB 5: DAFTAR RUTE PENGIRIMAN
-  // ===========================================================================
+  // [BARU] WIDGET LIST WALI KELAS
+  Widget _buildTeacherList() {
+    return FutureBuilder<List<TeacherModel>>(
+      future: _teacherService.getMyTeachers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return _buildEmptyState("Belum ada wali kelas.", Icons.class_);
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: data.length,
+          itemBuilder: (ctx, i) => Card(
+            child: ListTile(
+              leading: const CircleAvatar(backgroundColor: Colors.indigo, child: Icon(Icons.class_, color: Colors.white)),
+              title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text("${data[i].schoolName} - Kelas ${data[i].className}\n${data[i].email}"),
+              isThreeLine: true,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildRouteList() {
     return FutureBuilder<List<DeliveryRoute>>(
       future: _routeService.getMyRoutes(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        
         final routes = snapshot.data ?? [];
         if (routes.isEmpty) return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
 
@@ -333,11 +309,11 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           itemBuilder: (context, index) {
             final route = routes[index];
             final date = DateTime.tryParse(route.date) ?? DateTime.now();
-            final dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
+            String dateStr = route.date;
+            try { dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date); } catch (_) {}
 
             return Card(
               elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               margin: const EdgeInsets.only(bottom: 12),
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -347,32 +323,11 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(dateStr, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _getStatusColor(route.status).withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _getStatusColor(route.status)),
-                          ),
-                          child: Text(
-                            route.status.toUpperCase(),
-                            style: TextStyle(color: _getStatusColor(route.status), fontSize: 10, fontWeight: FontWeight.bold),
-                          ),
-                        ),
+                        Text(route.status.toUpperCase(), style: TextStyle(color: _getStatusColor(route.status), fontWeight: FontWeight.bold)),
                       ],
                     ),
                     const Divider(),
-                    Row(
-                      children: [
-                        const Icon(Icons.person, size: 16, color: Colors.grey),
-                        const SizedBox(width: 5),
-                        Text(route.courierName ?? "Kurir Hapus", style: const TextStyle(fontSize: 14)),
-                        const Spacer(),
-                        const Icon(Icons.local_shipping, size: 16, color: Colors.grey),
-                        const SizedBox(width: 5),
-                        Text(route.vehiclePlate ?? "-", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
-                      ],
-                    ),
+                    Text("Kurir: ${route.courierName ?? '-'} | Mobil: ${route.vehiclePlate ?? '-'}"),
                   ],
                 ),
               ),
@@ -391,8 +346,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           Icon(icon, size: 70, color: Colors.grey[300]),
           const SizedBox(height: 10),
           Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-          const SizedBox(height: 5),
-          const Text("Tekan tombol (+) di bawah.", style: TextStyle(fontSize: 12, color: Colors.grey)),
         ],
       ),
     );
@@ -402,7 +355,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     switch (status) {
       case 'completed': return Colors.green;
       case 'active': return Colors.blue;
-      default: return Colors.orange; // pending
+      default: return Colors.orange;
     }
   }
 }

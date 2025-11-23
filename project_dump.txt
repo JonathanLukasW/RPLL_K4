@@ -53,6 +53,143 @@ class MyApp extends StatelessWidget {
   }
 }
 
+=== FILE: lib\features\admin_sppg\screens\add_coordinator_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../services/coordinator_service.dart';
+import '../services/school_service.dart'; // Butuh ini buat list sekolah
+import '../../../models/school_model.dart';
+
+class AddCoordinatorScreen extends StatefulWidget {
+  const AddCoordinatorScreen({super.key});
+
+  @override
+  State<AddCoordinatorScreen> createState() => _AddCoordinatorScreenState();
+}
+
+class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  
+  // Service
+  final SchoolService _schoolService = SchoolService();
+  
+  List<School> _schools = [];
+  String? _selectedSchoolId;
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSchools();
+  }
+
+  Future<void> _fetchSchools() async {
+    try {
+      final data = await _schoolService.getMySchools();
+      setState(() {
+        _schools = data;
+      });
+    } catch (e) {
+      // Handle error diam-diam atau snackbar
+    }
+  }
+
+  Future<void> _submit() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isSubmitting = true);
+      try {
+        await CoordinatorService().createCoordinatorAccount(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          fullName: _nameController.text.trim(),
+          schoolId: _selectedSchoolId!,
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Akun Koordinator Berhasil Dibuat!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true);
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Tambah Koordinator Sekolah"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            children: [
+              TextFormField(
+                controller: _nameController,
+                decoration: const InputDecoration(labelText: "Nama Koordinator", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              
+              // DROPDOWN PILIH SEKOLAH
+              DropdownButtonFormField<String>(
+                decoration: const InputDecoration(labelText: "Tugaskan di Sekolah", border: OutlineInputBorder(), prefixIcon: Icon(Icons.school)),
+                value: _selectedSchoolId,
+                items: _schools.map((school) {
+                  return DropdownMenuItem(
+                    value: school.id,
+                    child: Text(school.name, overflow: TextOverflow.ellipsis),
+                  );
+                }).toList(),
+                onChanged: (val) => setState(() => _selectedSchoolId = val),
+                validator: (val) => val == null ? "Wajib pilih sekolah" : null,
+              ),
+              const SizedBox(height: 15),
+
+              TextFormField(
+                controller: _emailController,
+                decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                keyboardType: TextInputType.emailAddress,
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+              TextFormField(
+                controller: _passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+                validator: (v) => v!.length < 6 ? "Minimal 6 karakter" : null,
+              ),
+              const SizedBox(height: 30),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: _isSubmitting ? null : _submit,
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
+                  child: _isSubmitting 
+                    ? const CircularProgressIndicator(color: Colors.white) 
+                    : const Text("BUAT AKUN KOORDINATOR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 === FILE: lib\features\admin_sppg\screens\add_courier_screen.dart ===
 
 import 'package:flutter/material.dart';
@@ -328,9 +465,12 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart'; 
 import '../../pengawas/screens/location_picker_screen.dart';
 import '../services/school_service.dart';
+import '../../../models/school_model.dart'; // Import Model Sekolah
 
 class AddSchoolScreen extends StatefulWidget {
-  const AddSchoolScreen({super.key});
+  final School? schoolToEdit; // Data sekolah (Kalau null = Mode Tambah)
+
+  const AddSchoolScreen({super.key, this.schoolToEdit});
 
   @override
   State<AddSchoolScreen> createState() => _AddSchoolScreenState();
@@ -345,7 +485,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   final TextEditingController _studentCountController = TextEditingController();
   final TextEditingController _serviceTimeController = TextEditingController(text: "10"); 
   
-  // [BARU] Controller untuk data VRP tambahan
+  // Controller VRP
   final TextEditingController _toleranceController = TextEditingController(text: "45"); 
   final TextEditingController _menuDefaultController = TextEditingController(); 
   
@@ -357,16 +497,39 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   TimeOfDay? _deadlineTime;     
   bool _isSubmitting = false;   
 
-  // --- 1. Fungsi Pilih Jam (Time Picker) ---
+  @override
+  void initState() {
+    super.initState();
+    // [LOGIKA EDIT]: Kalau ada data schoolToEdit, isi form-nya
+    if (widget.schoolToEdit != null) {
+      final s = widget.schoolToEdit!;
+      _nameController.text = s.name;
+      _addressController.text = s.address ?? '';
+      _studentCountController.text = s.studentCount.toString();
+      _serviceTimeController.text = s.serviceTimeMinutes.toString();
+      _toleranceController.text = s.toleranceMinutes.toString();
+      _menuDefaultController.text = s.menuDefault ?? '';
+      _isHighRisk = s.isHighRisk;
+      
+      if (s.latitude != null) _latController.text = s.latitude.toString();
+      if (s.longitude != null) _longController.text = s.longitude.toString();
+
+      // Parsing Jam (String "12:00:00" -> TimeOfDay)
+      if (s.deadlineTime != null) {
+        final parts = s.deadlineTime!.split(':');
+        _deadlineTime = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+      }
+    }
+  }
+
+  // --- 1. Fungsi Pilih Jam ---
   Future<void> _pickTime() async {
     final TimeOfDay? picked = await showTimePicker(
       context: context,
-      initialTime: const TimeOfDay(hour: 12, minute: 0),
+      initialTime: _deadlineTime ?? const TimeOfDay(hour: 12, minute: 0),
     );
     if (picked != null) {
-      setState(() {
-        _deadlineTime = picked;
-      });
+      setState(() => _deadlineTime = picked);
     }
   }
 
@@ -396,7 +559,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     }
   }
 
-  // --- 3. Submit ke Database ---
+  // --- 3. Submit ke Database (Bisa Create atau Update) ---
   Future<void> _submitForm() async {
     if (_formKey.currentState!.validate()) {
       if (_deadlineTime == null) {
@@ -412,7 +575,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
         final String formattedTime = 
             "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}:00";
 
-        final Map<String, dynamic> newSchoolData = {
+        final Map<String, dynamic> data = {
           'name': _nameController.text,
           'address': _addressController.text,
           'student_count': int.parse(_studentCountController.text),
@@ -421,16 +584,24 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
           'is_high_risk': _isHighRisk,
           'gps_lat': double.tryParse(_latController.text),
           'gps_long': double.tryParse(_longController.text),
-          // [BARU] Data VRP Constraints
           'tolerance_minutes': int.parse(_toleranceController.text), 
           'menu_default': _menuDefaultController.text,
         };
 
-        await SchoolService().createSchool(newSchoolData);
+        if (widget.schoolToEdit == null) {
+          // Mode TAMBAH
+          await SchoolService().createSchool(data);
+        } else {
+          // Mode EDIT
+          await SchoolService().updateSchool(widget.schoolToEdit!.id, data);
+        }
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Sekolah berhasil ditambahkan!"), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text("Data Sekolah berhasil ${widget.schoolToEdit == null ? 'ditambahkan' : 'diperbarui'}!"), 
+            backgroundColor: Colors.green
+          ),
         );
         Navigator.pop(context, true); 
 
@@ -459,9 +630,11 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEdit = widget.schoolToEdit != null;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Tambah Lokasi Penerima Manfaat"),
+        title: Text(isEdit ? "Edit Sekolah" : "Tambah Sekolah"),
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
       ),
@@ -516,7 +689,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               InkWell(
                 onTap: _pickTime,
                 child: InputDecorator(
-                  decoration: const InputDecoration(labelText: "Deadline Konsumsi (Waktu Wajib Tiba)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
+                  decoration: const InputDecoration(labelText: "Deadline Konsumsi", border: OutlineInputBorder(), prefixIcon: Icon(Icons.access_time)),
                   child: Text(_deadlineTime == null ? "Pilih Jam..." : "${_deadlineTime!.hour.toString().padLeft(2, '0')}:${_deadlineTime!.minute.toString().padLeft(2, '0')}",
                     style: TextStyle(color: _deadlineTime == null ? Colors.grey : Colors.black, fontSize: 16),
                   ),
@@ -524,32 +697,25 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               ),
               const SizedBox(height: 15),
 
-              // Toleransi Kedatangan Awal (Menit)
+              // Toleransi
               TextFormField(
                 controller: _toleranceController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Toleransi Kedatangan Awal (Menit)", hintText: "Misal: 45", prefixIcon: Icon(Icons.fast_forward)),
+                decoration: const InputDecoration(labelText: "Toleransi Awal (Menit)", hintText: "45", prefixIcon: Icon(Icons.fast_forward)),
                 validator: (v) => v!.isEmpty ? "Wajib" : null,
               ),
               const SizedBox(height: 15),
 
-              // [BARU] Menu Default
+              // Menu Default
               TextFormField(
                 controller: _menuDefaultController,
-                decoration: const InputDecoration(
-                  labelText: "Jenis Menu Default",
-                  hintText: "Contoh: Nasi, Ayam, Sayur",
-                  prefixIcon: Icon(Icons.restaurant_menu)
-                ),
-                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                decoration: const InputDecoration(labelText: "Menu Default", hintText: "Nasi, Ayam", prefixIcon: Icon(Icons.restaurant_menu)),
               ),
               const SizedBox(height: 15),
 
-
-              // High Risk Switch
+              // High Risk
               SwitchListTile(
-                title: const Text("Status Risiko Tinggi (High Risk)"),
-                subtitle: const Text("Toleransi dan pengiriman akan diprioritaskan."),
+                title: const Text("Status High Risk"),
                 value: _isHighRisk,
                 activeColor: Colors.red,
                 onChanged: (val) => setState(() => _isHighRisk = val),
@@ -563,7 +729,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text("Titik GPS Lokasi", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text("Titik GPS", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   ElevatedButton.icon(
                     onPressed: _openMapPicker,
                     icon: const Icon(Icons.map, size: 18),
@@ -576,9 +742,9 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
               
               Row(
                 children: [
-                  Expanded(child: TextFormField(controller: _latController, decoration: const InputDecoration(labelText: "Latitude", hintText: "Harus diisi dari peta"), readOnly: true)),
+                  Expanded(child: TextFormField(controller: _latController, decoration: const InputDecoration(labelText: "Lat", hintText: "Wajib dari Peta"), readOnly: true)),
                   const SizedBox(width: 10),
-                  Expanded(child: TextFormField(controller: _longController, decoration: const InputDecoration(labelText: "Longitude", hintText: "Harus diisi dari peta"), readOnly: true)),
+                  Expanded(child: TextFormField(controller: _longController, decoration: const InputDecoration(labelText: "Long", hintText: "Wajib dari Peta"), readOnly: true)),
                 ],
               ),
 
@@ -590,7 +756,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
                   child: _isSubmitting 
                     ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("SIMPAN DATA LOKASI", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    : Text(isEdit ? "SIMPAN PERUBAHAN" : "SIMPAN DATA BARU", style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
               const SizedBox(height: 20),
@@ -606,9 +772,12 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
 
 import 'package:flutter/material.dart';
 import '../services/vehicle_service.dart';
+import '../../../models/vehicle_model.dart'; // Import Model
 
 class AddTransportScreen extends StatefulWidget {
-  const AddTransportScreen({super.key});
+  final Vehicle? vehicleToEdit; // Data untuk diedit
+
+  const AddTransportScreen({super.key, this.vehicleToEdit});
 
   @override
   State<AddTransportScreen> createState() => _AddTransportScreenState();
@@ -623,20 +792,43 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
   
   bool _isSubmitting = false;
 
+  @override
+  void initState() {
+    super.initState();
+    // [LOGIKA EDIT] Isi form jika ada data
+    if (widget.vehicleToEdit != null) {
+      _plateController.text = widget.vehicleToEdit!.plateNumber;
+      _driverController.text = widget.vehicleToEdit!.driverName ?? '';
+      _capacityController.text = widget.vehicleToEdit!.capacityLimit.toString();
+    }
+  }
+
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
+      
+      final data = {
+        'plate_number': _plateController.text,
+        'driver_name': _driverController.text,
+        'capacity_limit': int.parse(_capacityController.text),
+        'is_active': true, // Default aktif
+      };
+
       try {
-        await VehicleService().createVehicle({
-          'plate_number': _plateController.text,
-          'driver_name': _driverController.text,
-          'capacity_limit': int.parse(_capacityController.text),
-          'is_active': true,
-        });
+        if (widget.vehicleToEdit == null) {
+          // Mode Tambah
+          await VehicleService().createVehicle(data);
+        } else {
+          // Mode Edit
+          await VehicleService().updateVehicle(widget.vehicleToEdit!.id, data);
+        }
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Transportasi berhasil ditambahkan!"), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text(widget.vehicleToEdit == null ? "Berhasil ditambah!" : "Berhasil diperbarui!"), 
+            backgroundColor: Colors.green
+          ),
         );
         Navigator.pop(context, true); // Sukses
 
@@ -652,7 +844,7 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Tambah Transportasi"),
+        title: Text(widget.vehicleToEdit == null ? "Tambah Transportasi" : "Edit Transportasi"),
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
       ),
@@ -664,7 +856,7 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
             children: [
               TextFormField(
                 controller: _plateController,
-                decoration: const InputDecoration(labelText: "Plat Nomor (Misal: D 1234 ABC)", border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: "Plat Nomor", border: OutlineInputBorder()),
                 validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
               ),
               const SizedBox(height: 15),
@@ -677,7 +869,7 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
               TextFormField(
                 controller: _capacityController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: "Kapasitas Angkut (Box/Porsi)", border: OutlineInputBorder(), hintText: "Misal: 500"),
+                decoration: const InputDecoration(labelText: "Kapasitas Angkut (Box)", border: OutlineInputBorder()),
                 validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
               ),
               const SizedBox(height: 30),
@@ -688,7 +880,10 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
                   child: _isSubmitting 
                     ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("SIMPAN", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    : Text(
+                        widget.vehicleToEdit == null ? "SIMPAN" : "SIMPAN PERUBAHAN", 
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
+                      ),
                 ),
               )
             ],
@@ -991,20 +1186,23 @@ import '../../../features/autentikasi/screens/login_screen.dart';
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
 import '../../../models/route_model.dart';
-import '../../../models/courier_model.dart'; // Pastikan model ini ada jika dipakai di Kurir list
+import '../../../models/courier_model.dart';
 
 // Import Services
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
 import '../services/route_service.dart';
+// Note: CoordinatorModel ada di dalam file service ini berdasarkan langkah sebelumnya
+import '../services/coordinator_service.dart'; 
 
-// Import Forms
+// Import Forms (Halaman Tambah)
 import 'add_school_screen.dart';
 import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
+import 'add_coordinator_screen.dart'; // Import Form Koordinator
 import 'create_route_screen.dart';
-import 'menu_management_screen.dart'; // Import Halaman Manajemen Menu
+import 'menu_management_screen.dart'; 
 
 class DashboardAdminScreen extends StatefulWidget {
   const DashboardAdminScreen({super.key});
@@ -1014,12 +1212,14 @@ class DashboardAdminScreen extends StatefulWidget {
 }
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
-  int _selectedIndex = 0; // 0=Sekolah, 1=Transport, 2=Kurir, 3=Rute
+  int _selectedIndex = 0; 
+  // Index: 0=Sekolah, 1=Armada, 2=Kurir, 3=Koordinator, 4=Rute
 
   // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
+  final CoordinatorService _coordinatorService = CoordinatorService();
   final RouteService _routeService = RouteService(); 
 
   // --- FUNGSI LOGOUT ---
@@ -1038,7 +1238,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       case 0: return "Kelola Sekolah";
       case 1: return "Kelola Armada";
       case 2: return "Kelola Kurir";
-      case 3: return "Jadwal & Rute";
+      case 3: return "Kelola Koordinator";
+      case 4: return "Jadwal & Rute";
       default: return "Admin SPPG";
     }
   }
@@ -1051,7 +1252,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
-          // [BARU] Tombol Manajemen Menu
+          // Tombol Manajemen Menu
           IconButton(
             icon: const Icon(Icons.restaurant_menu),
             tooltip: "Manajemen Menu",
@@ -1067,14 +1268,15 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         ],
       ),
       
-      // --- ISI BODY (4 TAB) ---
+      // --- ISI BODY (5 TAB) ---
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildSchoolList(),    // Index 0
-          _buildTransportList(), // Index 1
-          _buildCourierList(),   // Index 2
-          _buildRouteList(),     // Index 3 
+          _buildSchoolList(),      // 0
+          _buildTransportList(),   // 1
+          _buildCourierList(),     // 2
+          _buildCoordinatorList(), // 3 (BARU)
+          _buildRouteList(),       // 4
         ],
       ),
 
@@ -1083,19 +1285,19 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        label: Text(
-          _selectedIndex == 0 ? "Sekolah" : 
-          _selectedIndex == 1 ? "Mobil" : 
-          _selectedIndex == 2 ? "Kurir" : "Buat Rute"
-        ),
+        // Label dinamis sesuai tab
+        label: Text(_getFabLabel()),
         onPressed: () {
           Widget nextPage;
+          // Tentukan halaman tujuan berdasarkan tab
           if (_selectedIndex == 0) {
             nextPage = const AddSchoolScreen();
           } else if (_selectedIndex == 1) {
             nextPage = const AddTransportScreen();
           } else if (_selectedIndex == 2) {
             nextPage = const AddCourierScreen();
+          } else if (_selectedIndex == 3) {
+            nextPage = const AddCoordinatorScreen(); // Halaman Tambah Koordinator
           } else {
             nextPage = const CreateRouteScreen();
           }
@@ -1106,7 +1308,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         },
       ),
 
-      // --- MENU BAWAH (4 ITEM) ---
+      // --- MENU BAWAH (5 ITEM) ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed, 
@@ -1116,11 +1318,23 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.school), label: "Sekolah"),
           BottomNavigationBarItem(icon: Icon(Icons.local_shipping), label: "Armada"),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Kurir"),
+          BottomNavigationBarItem(icon: Icon(Icons.person_pin_circle), label: "Kurir"),
+          BottomNavigationBarItem(icon: Icon(Icons.supervisor_account), label: "Koord"),
           BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: "Rute"),
         ],
       ),
     );
+  }
+
+  String _getFabLabel() {
+    switch (_selectedIndex) {
+      case 0: return "Sekolah";
+      case 1: return "Mobil";
+      case 2: return "Kurir";
+      case 3: return "Koord";
+      case 4: return "Buat Rute";
+      default: return "Tambah";
+    }
   }
 
   // ===========================================================================
@@ -1130,36 +1344,35 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final schools = snapshot.data ?? [];
-        
-        if (schools.isEmpty) {
-          return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
-        }
+        if (schools.isEmpty) return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: schools.length,
-          itemBuilder: (context, index) {
-            final school = schools[index];
+          itemBuilder: (ctx, i) {
+            final school = schools[i];
             return Card(
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.orange,
-                  child: Icon(Icons.school, color: Colors.white),
-                ),
+                leading: const CircleAvatar(backgroundColor: Colors.orange, child: Icon(Icons.school, color: Colors.white)),
                 title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text("Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}"),
-                trailing: school.isHighRisk 
-                    ? const Icon(Icons.warning, color: Colors.red) 
-                    : const Icon(Icons.check_circle, color: Colors.green, size: 16),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (school.isHighRisk) const Padding(padding: EdgeInsets.only(right:8), child: Icon(Icons.warning, color: Colors.red)),
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () {
+                        Navigator.push(context, MaterialPageRoute(builder: (_) => AddSchoolScreen(schoolToEdit: school)))
+                            .then((val) { if (val == true) setState(() {}); });
+                      },
+                    ),
+                  ],
+                ),
               ),
             );
           },
@@ -1175,41 +1388,41 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<Vehicle>>(
       future: _vehicleService.getMyVehicles(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final vehicles = snapshot.data ?? [];
-
-        if (vehicles.isEmpty) {
-          return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
-        }
+        if (vehicles.isEmpty) return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: vehicles.length,
-          itemBuilder: (context, index) {
-            final vehicle = vehicles[index];
+          itemBuilder: (ctx, i) {
+            final vehicle = vehicles[i];
             return Card(
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: Icon(
-                  Icons.directions_car, 
-                  color: vehicle.isActive ? Colors.green : Colors.grey,
-                  size: 32,
-                ),
+                leading: Icon(Icons.directions_car, color: vehicle.isActive ? Colors.green : Colors.grey, size: 32),
                 title: Text(vehicle.plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kapasitas: ${vehicle.capacityLimit}"),
-                trailing: Switch(
-                  value: vehicle.isActive,
-                  activeColor: Colors.green,
-                  onChanged: (val) async {
-                    await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
-                    setState(() {}); 
-                  },
+                subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}"),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () {
+                         Navigator.push(context, MaterialPageRoute(builder: (_) => AddTransportScreen(vehicleToEdit: vehicle)))
+                            .then((val) { if (val == true) setState(() {}); });
+                      },
+                    ),
+                    Switch(
+                      value: vehicle.isActive,
+                      activeColor: Colors.green,
+                      onChanged: (val) async {
+                        await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
+                        setState(() {}); 
+                      },
+                    ),
+                  ],
                 ),
               ),
             );
@@ -1226,34 +1439,22 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<CourierModel>>(
       future: _courierService.getMyCouriers(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final couriers = snapshot.data ?? [];
-
-        if (couriers.isEmpty) {
-          return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
-        }
+        if (couriers.isEmpty) return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: couriers.length,
-          itemBuilder: (context, index) {
-            final courier = couriers[index];
+          itemBuilder: (ctx, i) {
+            final courier = couriers[i];
             return Card(
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.blueGrey,
-                  child: Icon(Icons.person, color: Colors.white),
-                ),
+                leading: const CircleAvatar(backgroundColor: Colors.blueGrey, child: Icon(Icons.person, color: Colors.white)),
                 title: Text(courier.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(courier.email), 
-                trailing: const Icon(Icons.edit, size: 20),
               ),
             );
           },
@@ -1263,23 +1464,45 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   }
 
   // ===========================================================================
-  // TAB 4: DAFTAR RUTE PENGIRIMAN
+  // TAB 4: DAFTAR KOORDINATOR (BARU)
+  // ===========================================================================
+  Widget _buildCoordinatorList() {
+    return FutureBuilder<List<CoordinatorModel>>(
+      future: _coordinatorService.getMyCoordinators(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return _buildEmptyState("Belum ada koordinator.", Icons.supervised_user_circle);
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: data.length,
+          itemBuilder: (ctx, i) => Card(
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+            child: ListTile(
+              leading: const CircleAvatar(backgroundColor: Colors.teal, child: Icon(Icons.person, color: Colors.white)),
+              title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              subtitle: Text("${data[i].schoolName}\n${data[i].email}"),
+              isThreeLine: true,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 5: DAFTAR RUTE PENGIRIMAN
   // ===========================================================================
   Widget _buildRouteList() {
     return FutureBuilder<List<DeliveryRoute>>(
       future: _routeService.getMyRoutes(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         
         final routes = snapshot.data ?? [];
-        if (routes.isEmpty) {
-          return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
-        }
+        if (routes.isEmpty) return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(12),
@@ -1297,7 +1520,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                 padding: const EdgeInsets.all(12),
                 child: Column(
                   children: [
-                    // Header Card: Tanggal & Status
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
@@ -1311,17 +1533,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                           ),
                           child: Text(
                             route.status.toUpperCase(),
-                            style: TextStyle(
-                              color: _getStatusColor(route.status), 
-                              fontSize: 10, 
-                              fontWeight: FontWeight.bold
-                            ),
+                            style: TextStyle(color: _getStatusColor(route.status), fontSize: 10, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ],
                     ),
                     const Divider(),
-                    // Info Kurir & Mobil
                     Row(
                       children: [
                         const Icon(Icons.person, size: 16, color: Colors.grey),
@@ -1343,7 +1560,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // Widget Helper untuk Tampilan Kosong
   Widget _buildEmptyState(String text, IconData icon) {
     return Center(
       child: Column(
@@ -1481,6 +1697,122 @@ class _MenuManagementScreenState extends State<MenuManagementScreen> {
   }
 }
 
+=== FILE: lib\features\admin_sppg\services\coordinator_service.dart ===
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class CoordinatorModel {
+  final String id;
+  final String name;
+  final String email;
+  final String schoolName; // Biar kita tau dia jaga di sekolah mana
+
+  CoordinatorModel({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.schoolName,
+  });
+
+  factory CoordinatorModel.fromJson(Map<String, dynamic> json) {
+    // Ambil nama sekolah dari relasi (join)
+    final school = json['schools'] != null ? json['schools']['name'] : 'Belum ditentukan';
+    
+    return CoordinatorModel(
+      id: json['id'].toString(),
+      name: json['full_name'] ?? 'Tanpa Nama',
+      email: json['email'] ?? '-',
+      schoolName: school,
+    );
+  }
+}
+
+class CoordinatorService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL LIST KOORDINATOR (Milik SPPG Ini)
+  Future<List<CoordinatorModel>> getMyCoordinators() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      
+      // Cek SPPG ID Admin
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      // Ambil profil role 'koordinator', join dengan tabel schools untuk dapat nama sekolahnya
+      final response = await _supabase
+          .from('profiles')
+          .select('id, full_name, email, school_id, schools(name)') 
+          .eq('sppg_id', mySppgId) 
+          .eq('role', 'koordinator'); 
+
+      final List<dynamic> data = response;
+      return data.map((json) => CoordinatorModel.fromJson(json)).toList();
+      
+    } catch (e) {
+      throw Exception('Gagal ambil data koordinator: $e');
+    }
+  }
+
+  // 2. BUAT AKUN KOORDINATOR BARU
+  Future<void> createCoordinatorAccount({
+    required String email,
+    required String password,
+    required String fullName,
+    required String schoolId, // Wajib ada
+  }) async {
+    // Kredensial Supabase (Sama kayak courier service)
+    const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
+    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+
+    try {
+      final myUserId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', myUserId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      // A. Request Signup
+      final url = Uri.parse('$projectUrl/auth/v1/signup');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json', 'apikey': anonKey},
+        body: jsonEncode({
+          'email': email.trim(),
+          'password': password,
+          'data': { 'full_name': fullName }
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        String? newUserId = responseData['id'] ?? responseData['user']['id']; 
+
+        if (newUserId == null) throw Exception("Gagal dapat ID User.");
+
+        // B. Simpan ke Profiles (Role: koordinator, School ID: terisi)
+        await _supabase.from('profiles').insert({
+          'id': newUserId,
+          'full_name': fullName,
+          'email': email.trim(),
+          'role': 'koordinator',
+          'sppg_id': mySppgId,
+          'school_id': schoolId, // <-- PENTING
+        });
+
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
+      }
+    } catch (e) {
+      if (e.toString().contains("User already registered")) {
+        throw Exception("Email sudah terdaftar!");
+      }
+      throw Exception('Gagal buat akun: $e');
+    }
+  }
+}
+
 === FILE: lib\features\admin_sppg\services\courier_service.dart ===
 
 import 'dart:convert';
@@ -1491,6 +1823,7 @@ import '../../../models/courier_model.dart';
 class CourierService {
   final _supabase = Supabase.instance.client;
 
+  // Helper untuk mendapatkan SPPG ID Admin
   Future<String> _getMySppgId() async {
     final userId = _supabase.auth.currentUser!.id;
     final profile = await _supabase
@@ -1505,16 +1838,18 @@ class CourierService {
   Future<List<CourierModel>> getMyCouriers() async {
     try {
       final mySppgId = await _getMySppgId();
-
+      
       // Ambil data profile kurir (full_name, email) yang sppg_id-nya sama
+      // Pastikan kolom 'email' sudah ada di tabel profiles
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, sppg_id')
-          .eq('sppg_id', mySppgId) // <-- BARIS BEBAS KARAKTER 160
-          .eq('role', 'kurir'); // <-- BARIS BEBAS KARAKTER 160
+          .select('id, full_name, email, sppg_id') 
+          .eq('sppg_id', mySppgId)
+          .eq('role', 'kurir');
 
       final List<dynamic> data = response;
       return data.map((json) => CourierModel.fromJson(json)).toList();
+      
     } catch (e) {
       throw Exception('Gagal ambil data kurir: $e');
     }
@@ -1526,21 +1861,14 @@ class CourierService {
     required String password,
     required String fullName,
   }) async {
-    // Kredensial Supabase (Pastikan sudah benar)
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
-    const String anonKey =
-        'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
 
     try {
       final myUserId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase
-          .from('profiles')
-          .select('sppg_id')
-          .eq('id', myUserId)
-          .single();
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', myUserId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // A. Request Signup ke Supabase Auth
       final url = Uri.parse('$projectUrl/auth/v1/signup');
       final response = await http.post(
         url,
@@ -1548,25 +1876,25 @@ class CourierService {
         body: jsonEncode({
           'email': email.trim(),
           'password': password,
-          'data': {'full_name': fullName},
+          'data': { 'full_name': fullName }
         }),
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
-        String? newUserId = responseData['id'] ?? responseData['user']['id'];
+        String? newUserId = responseData['id'] ?? responseData['user']['id']; 
 
         if (newUserId == null) throw Exception("Gagal dapat ID User Kurir.");
 
-        // B. Simpan ke Tabel Profiles sebagai 'kurir'
         await _supabase.from('profiles').insert({
           'id': newUserId,
           'full_name': fullName,
-          'email': email.trim(), // FIX: Simpan email di profiles
+          'email': email.trim(),
           'role': 'kurir',
           'sppg_id': mySppgId,
           'school_id': null,
         });
+
       } else {
         final errorData = jsonDecode(response.body);
         throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
@@ -1579,7 +1907,6 @@ class CourierService {
     }
   }
 }
-
 
 === FILE: lib\features\admin_sppg\services\menu_service.dart ===
 
@@ -1654,7 +1981,7 @@ import 'package:latlong2/latlong.dart'; // Buat tipe data LatLng
 class RouteService {
   final _supabase = Supabase.instance.client;
 
-  // --- 1. BUAT RUTE BARU (OLEH ADMIN SPPG) ---
+  // --- 1. BUAT RUTE BARU ---
   Future<void> createRoute({
     required String vehicleId,
     required String courierId,
@@ -1662,18 +1989,12 @@ class RouteService {
     required List<School> selectedSchools,
   }) async {
     try {
-      // A. Ambil SPPG ID Admin yang sedang login
       final userId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase
-          .from('profiles')
-          .select('sppg_id')
-          .eq('id', userId)
-          .single();
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // B. Insert Header (delivery_routes)
       final routeResponse = await _supabase.from('delivery_routes').insert({
-        'date': date.toIso8601String().split('T')[0], // YYYY-MM-DD
+        'date': date.toIso8601String().split('T')[0], 
         'sppg_id': mySppgId,
         'vehicle_id': vehicleId,
         'courier_id': courierId,
@@ -1682,15 +2003,11 @@ class RouteService {
 
       final String newRouteId = routeResponse['id'];
 
-      // C. Siapkan & Insert Detail Perhentian (delivery_stops)
       List<Map<String, dynamic>> stopsData = [];
-      
       for (int i = 0; i < selectedSchools.length; i++) {
         stopsData.add({
           'route_id': newRouteId,
           'school_id': selectedSchools[i].id,
-          // Urutan saat ini: Masih Manual (Sesuai urutan array)
-          // Nanti di sini kita pasang logika VRP
           'sequence_order': i + 1, 
           'status': 'pending',
         });
@@ -1703,15 +2020,13 @@ class RouteService {
     }
   }
 
-  // --- 2. AMBIL DAFTAR RUTE (UNTUK ADMIN SPPG - HISTORY) ---
+  // --- 2. AMBIL DAFTAR RUTE (ADMIN) ---
   Future<List<DeliveryRoute>> getMyRoutes() async {
     try {
-      // Ambil SPPG ID Admin
       final userId = _supabase.auth.currentUser!.id;
       final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // Ambil semua rute milik SPPG ini
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -1720,19 +2035,16 @@ class RouteService {
 
       final List<dynamic> data = response;
       return data.map((json) => DeliveryRoute.fromJson(json)).toList();
-      
     } catch (e) {
-      throw Exception("Gagal mengambil data rute Admin: $e");
+      throw Exception("Gagal ambil rute admin: $e");
     }
   }
 
-  // --- 3. AMBIL DAFTAR RUTE (UNTUK KURIR YANG SEDANG LOGIN) ---
+  // --- 3. AMBIL DAFTAR RUTE (KURIR) ---
   Future<List<DeliveryRoute>> getRoutesByCourier() async {
     try {
-      // Ambil ID Kurir yang sedang login
       final currentCourierId = _supabase.auth.currentUser!.id;
 
-      // Query filter berdasarkan courier_id
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -1741,21 +2053,17 @@ class RouteService {
 
       final List<dynamic> data = response;
       return data.map((json) => DeliveryRoute.fromJson(json)).toList();
-      
     } catch (e) {
-      throw Exception("Gagal mengambil rute kurir: $e");
+      throw Exception("Gagal ambil rute kurir: $e");
     }
   }
 
-  // --- 4. AMBIL DETAIL PERHENTIAN (STOPS) UNTUK SUATU RUTE ---
-  // Fungsi ini dipakai di halaman Detail Rute Kurir
+  // --- 4. AMBIL DETAIL PERHENTIAN (STOPS) ---
   Future<List<Map<String, dynamic>>> getRouteStops(String routeId) async {
     try {
-      // Ambil data stops DAN join dengan tabel schools untuk dapat nama/alamat
       final response = await _supabase
           .from('delivery_stops')
-          // Kita ambil data sekolah terkait (name, address, dll)
-          .select('*, schools(name, address, latitude, longitude, student_count, menu_default)')
+          .select('*, schools(name, address, gps_lat, gps_long, student_count, menu_default)')
           .eq('route_id', routeId)
           .order('sequence_order', ascending: true);
 
@@ -1765,23 +2073,20 @@ class RouteService {
     }
   }
 
-  // --- 5. UPDATE STATUS RUTE (Start/Finish Route) ---
+  // --- 5. UPDATE STATUS RUTE ---
   Future<void> updateRouteStatus(String routeId, String newStatus) async {
     try {
-      await _supabase.from('delivery_routes').update({
-        'status': newStatus
-      }).eq('id', routeId);
+      await _supabase.from('delivery_routes').update({'status': newStatus}).eq('id', routeId);
     } catch (e) {
       throw Exception("Gagal update status rute: $e");
     }
   }
 
-  // --- 6. UPDATE STATUS PERHENTIAN (Sekolah Selesai Dikirim) ---
+  // --- 6. UPDATE STATUS PERHENTIAN ---
   Future<void> updateStopStatus(String stopId, String newStatus) async {
     try {
       await _supabase.from('delivery_stops').update({
         'status': newStatus,
-        // Kalau statusnya 'completed', catat jam sekarang sebagai arrival_time
         'arrival_time': newStatus == 'completed' ? DateTime.now().toIso8601String() : null,
       }).eq('id', stopId);
     } catch (e) {
@@ -1791,40 +2096,72 @@ class RouteService {
 
   // --- 7. AMBIL GARIS RUTE (POLYLINE) DARI OSRM ---
   Future<List<LatLng>> getRoutePolyline(List<LatLng> coordinates) async {
-    if (coordinates.length < 2) return []; // Butuh minimal 2 titik buat bikin garis
+    print("OSRM Request: Mencoba hitung rute untuk ${coordinates.length} titik.");
+    if (coordinates.length < 2) {
+       return []; 
+    }
 
-    // 1. Susun String Koordinat untuk URL OSRM
-    // Format: {long},{lat};{long},{lat};...
     String coordString = coordinates
         .map((p) => "${p.longitude},${p.latitude}")
         .join(';');
 
-    // 2. URL OSRM Public (Gratis)
     final url = Uri.parse(
-        'http://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
+        'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
 
     try {
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
-        // 3. Ambil geometri (garis) dari JSON
+        if (data['code'] != 'Ok') return [];
+
         final List<dynamic> coords = 
             data['routes'][0]['geometry']['coordinates'];
-
-        // 4. Konversi ke List<LatLng> untuk Flutter Map
-        // Note: OSRM balikin [Long, Lat], kita butuh [Lat, Long]
+        
         return coords
             .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
             .toList();
       } else {
-        print("Gagal ambil rute OSRM: ${response.body}");
-        return []; // Balikin list kosong kalau gagal biar app ga crash
+        return [];
       }
     } catch (e) {
-      print("Error OSRM: $e");
+      print("OSRM Exception: $e");
       return [];
+    }
+  }
+
+  // --- 8. AMBIL LOKASI DAPUR (SPPG) ---
+  // Fungsi ini mencari koordinat SPPG milik user yang sedang login
+  Future<LatLng?> getSppgLocation() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      
+      // 1. Cari SPPG ID dari Profile Kurir
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+          
+      final String sppgId = profile['sppg_id'];
+
+      // 2. Ambil Koordinat dari Tabel SPPG
+      final sppgData = await _supabase
+          .from('sppgs')
+          .select('gps_lat, gps_long')
+          .eq('id', sppgId)
+          .single();
+
+      if (sppgData['gps_lat'] != null && sppgData['gps_long'] != null) {
+        return LatLng(
+          double.parse(sppgData['gps_lat'].toString()),
+          double.parse(sppgData['gps_long'].toString()),
+        );
+      }
+      return null; 
+    } catch (e) {
+      print("Gagal ambil lokasi SPPG: $e");
+      return null;
     }
   }
 }
@@ -1898,6 +2235,16 @@ class SchoolService {
       throw Exception('Gagal menghapus sekolah: $e');
     }
   }
+
+  // --- 4. UPDATE DATA SEKOLAH (BARU) ---
+  Future<void> updateSchool(String schoolId, Map<String, dynamic> schoolData) async {
+    try {
+      // Kita tidak perlu update sppg_id karena itu tidak berubah
+      await _supabase.from('schools').update(schoolData).eq('id', schoolId);
+    } catch (e) {
+      throw Exception('Gagal mengupdate sekolah: $e');
+    }
+  }
 }
 
 === FILE: lib\features\admin_sppg\services\vehicle_service.dart ===
@@ -1962,6 +2309,14 @@ class VehicleService {
        throw Exception('Gagal update status: $e');
     }
   }
+  
+  Future<void> updateVehicle(String id, Map<String, dynamic> data) async {
+    try {
+      await _supabase.from('vehicles').update(data).eq('id', id);
+    } catch (e) {
+      throw Exception('Gagal update kendaraan: $e');
+    }
+  }
 }
 
 === FILE: lib\features\autentikasi\screens\login_screen.dart ===
@@ -1972,7 +2327,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 // Import Dashboard
 import '../../pengawas/screens/dashboard_bgn_screen.dart';
 import '../../admin_sppg/screens/dashboard_admin_screen.dart';
-import '../../kurir/screens/dashboard_kurir_screen.dart'; // Import Dashboard Kurir
+import '../../kurir/screens/dashboard_kurir_screen.dart';
+import '../../koordinator/screens/dashboard_koordinator_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -1988,7 +2344,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
   // --- FUNGSI LOGIN UTAMA ---
   Future<void> _login() async {
-    setState(() { _isLoading = true; });
+    setState(() {
+      _isLoading = true;
+    });
 
     try {
       final email = _emailController.text.trim();
@@ -1999,10 +2357,8 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // 1. Proses Login Auth Supabase
-      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
-        email: email,
-        password: password,
-      );
+      final AuthResponse res = await Supabase.instance.client.auth
+          .signInWithPassword(email: email, password: password);
 
       if (res.user == null) {
         throw Exception("Login gagal. Periksa kembali email & password Anda.");
@@ -2017,14 +2373,15 @@ class _LoginScreenState extends State<LoginScreen> {
           .select()
           .eq('id', userId)
           .single();
-      
+
       // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
       final String rawRole = profileData['role'] ?? 'unknown';
-      final String role = rawRole.toLowerCase().trim(); // <-- FIX RLS ERROR DISINI
+      final String role = rawRole
+          .toLowerCase()
+          .trim(); // <-- FIX RLS ERROR DISINI
 
       print("Role yang Diterima dari DB: $rawRole");
       print("Role yang Digunakan (Normalized): $role");
-
 
       // 3. Resepsionis Pintar Mengarahkan User
       if (!mounted) return;
@@ -2039,10 +2396,17 @@ class _LoginScreenState extends State<LoginScreen> {
           context,
           MaterialPageRoute(builder: (_) => const DashboardAdminScreen()),
         );
-      } else if (role == 'kurir') { // <-- Sekarang comparison lebih aman
+      } else if (role == 'kurir') {
+        // <-- Sekarang comparison lebih aman
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKurirScreen()),
+        );
+      } else if (role == 'koordinator') {
+        // <--- TAMBAH INI
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardKoordinatorScreen()),
         );
       } else {
         // Role tidak dikenali
@@ -2055,12 +2419,13 @@ class _LoginScreenState extends State<LoginScreen> {
         // Logout lagi agar sesi yang salah terhapus
         await Supabase.instance.client.auth.signOut();
       }
-
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text("Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}"),
+          content: Text(
+            "Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}",
+          ),
           backgroundColor: Colors.red,
         ),
       );
@@ -2073,7 +2438,7 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
   // ... (kode dispose dan build tetap sama) ...
-  
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2085,20 +2450,34 @@ class _LoginScreenState extends State<LoginScreen> {
             children: [
               const Icon(Icons.security, size: 80, color: Colors.blue),
               const SizedBox(height: 20),
-              const Text("MBG Monitoring", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const Text("Silakan masuk untuk melanjutkan", style: TextStyle(color: Colors.grey)),
+              const Text(
+                "MBG Monitoring",
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              const Text(
+                "Silakan masuk untuk melanjutkan",
+                style: TextStyle(color: Colors.grey),
+              ),
               const SizedBox(height: 40),
-              
+
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                decoration: const InputDecoration(
+                  labelText: "Email",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
+                ),
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordController,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+                decoration: const InputDecoration(
+                  labelText: "Password",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                ),
               ),
               const SizedBox(height: 30),
               SizedBox(
@@ -2106,10 +2485,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 height: 50,
                 child: ElevatedButton(
                   onPressed: _isLoading ? null : _login,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[800],
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
                   child: _isLoading
                       ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("MASUK", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                      : const Text(
+                          "MASUK",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -2118,7 +2509,7 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-  
+
   @override
   void dispose() {
     _emailController.dispose();
@@ -2126,6 +2517,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 }
+
 
 === FILE: lib\features\autentikasi\services\auth_service.dart ===
 
@@ -2185,6 +2577,262 @@ class AuthService {
   }
 }
 
+=== FILE: lib\features\koordinator\screens\dashboard_koordinator_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../autentikasi/screens/login_screen.dart';
+import '../services/receiving_service.dart';
+
+class DashboardKoordinatorScreen extends StatefulWidget {
+  const DashboardKoordinatorScreen({super.key});
+
+  @override
+  State<DashboardKoordinatorScreen> createState() => _DashboardKoordinatorScreenState();
+}
+
+class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen> {
+  final ReceivingService _service = ReceivingService();
+  
+  Map<String, dynamic>? _deliveryData;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = await _service.getTodayDelivery();
+      if (mounted) setState(() => _deliveryData = data);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  // --- DIALOG KONFIRMASI ---
+  void _showConfirmationDialog(String stopId) {
+    final qtyController = TextEditingController();
+    final noteController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Konfirmasi Penerimaan"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: qtyController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: "Jumlah Diterima (Box)", border: OutlineInputBorder()),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              controller: noteController,
+              decoration: const InputDecoration(labelText: "Catatan (Jika ada kerusakan)", border: OutlineInputBorder()),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _service.confirmReception(
+                stopId: stopId,
+                receivedQty: int.tryParse(qtyController.text) ?? 0,
+                notes: noteController.text,
+                recipientName: "Koordinator Sekolah", // Nanti ambil dari profile
+              );
+              _fetchData(); // Refresh dashboard
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Penerimaan Dikonfirmasi!")));
+            },
+            child: const Text("Terima Barang"),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Portal Sekolah"),
+        backgroundColor: Colors.teal[700],
+        foregroundColor: Colors.white,
+        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _logout)],
+      ),
+      body: _isLoading 
+        ? const Center(child: CircularProgressIndicator())
+        : _deliveryData == null
+            ? const Center(child: Text("Tidak ada jadwal pengiriman hari ini."))
+            : Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  children: [
+                    _buildStatusCard(),
+                  ],
+                ),
+              ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    final status = _deliveryData!['status'];
+    final vehicle = _deliveryData!['delivery_routes']['vehicles'];
+    final plat = vehicle != null ? vehicle['plate_number'] : '-';
+    final driver = vehicle != null ? vehicle['driver_name'] : '-';
+    
+   Color statusColor = Colors.grey;
+    String statusText = "Menunggu Kurir";
+    String instructionText = "Kurir belum memulai perjalanan.";
+
+    if (status == 'pending') {
+       statusColor = Colors.grey;
+       statusText = "Persiapan";
+       instructionText = "Makanan sedang disiapkan di dapur.";
+    } else if (status == 'active') {
+       statusColor = Colors.blue;
+       statusText = "Sedang Dalam Perjalanan";
+       instructionText = "Pantau kedatangan kurir.";
+    } else if (status == 'completed') { 
+       statusColor = Colors.orange;
+       statusText = "Barang Tiba";
+       instructionText = "Silakan cek barang dan tekan tombol Konfirmasi.";
+    } else if (status == 'received') {
+       statusColor = Colors.green;
+       statusText = "Selesai";
+       instructionText = "Penerimaan sudah dikonfirmasi.";
+    }
+
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.local_shipping, size: 40, color: statusColor),
+                const SizedBox(width: 15),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Pengiriman Hari Ini", style: TextStyle(fontSize: 14, color: Colors.grey)),
+                      Text(statusText, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: statusColor)),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 30),
+            Text("Mobil: $plat ($driver)", style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 20),
+            
+            // TOMBOL AKSI (Hanya muncul jika kurir sudah 'completed' tapi sekolah belum 'received')
+            if (status == 'completed')
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: () => _showConfirmationDialog(_deliveryData!['id']),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.teal,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 15)
+                  ),
+                  icon: const Icon(Icons.check_circle_outline),
+                  label: const Text("KONFIRMASI PENERIMAAN"),
+                ),
+              )
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\koordinator\services\receiving_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
+
+class ReceivingService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL INFO PENGIRIMAN HARI INI (Untuk Sekolah si Koordinator)
+  Future<Map<String, dynamic>?> getTodayDelivery() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+
+      // A. Cari School ID milik Koordinator
+      final profile = await _supabase
+          .from('profiles')
+          .select('school_id')
+          .eq('id', userId)
+          .single();
+      
+      final String? mySchoolId = profile['school_id'];
+      if (mySchoolId == null) throw Exception("Akun ini tidak terhubung ke sekolah manapun.");
+
+      // B. Cari Pengiriman hari ini ke sekolah tersebut
+      final String today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+      // Join: delivery_stops -> delivery_routes (filter tanggal) -> vehicles
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('*, delivery_routes!inner(date, vehicles(plate_number, driver_name))')
+          .eq('school_id', mySchoolId)
+          .eq('delivery_routes.date', today)
+          .maybeSingle(); // Ambil 1 aja
+
+      return response; // Bisa null kalau belum ada jadwal
+    } catch (e) {
+      throw Exception("Gagal ambil data pengiriman: $e");
+    }
+  }
+
+  // 2. KONFIRMASI PENERIMAAN
+  Future<void> confirmReception({
+    required String stopId,
+    required int receivedQty,
+    required String notes,
+    required String recipientName,
+    // Nanti kita tambah parameter foto kalau upload sudah siap
+  }) async {
+    try {
+      await _supabase.from('delivery_stops').update({
+        'status': 'received', // Status baru: DITERIMA
+        'received_qty': receivedQty,
+        'reception_notes': notes,
+        'recipient_name': recipientName,
+        'completion_time': DateTime.now().toIso8601String(), // Waktu TTD
+      }).eq('id', stopId);
+    } catch (e) {
+      throw Exception("Gagal konfirmasi: $e");
+    }
+  }
+}
+
 === FILE: lib\features\kurir\screens\dashboard_kurir_screen.dart ===
 
 import 'package:flutter/material.dart';
@@ -2196,12 +2844,13 @@ import '../../admin_sppg/services/route_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import '../../../models/route_model.dart';
 
+// [PENTING] Import Halaman Detail Rute
+import 'route_detail_screen.dart'; 
+
 class DashboardKurirScreen extends StatelessWidget {
-  // [FIX]: Constructor bisa const karena tidak ada final fields non-const
+  // Constructor constant aman
   const DashboardKurirScreen({super.key}); 
   
-  // HILANGKAN deklarasi final RouteService _routeService = ... di sini.
-
   // --- FUNGSI LOGOUT ---
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -2214,12 +2863,11 @@ class DashboardKurirScreen extends StatelessWidget {
 
   // --- LOGIKA AMBIL & TAMPILKAN RUTE ---
   Widget _buildRouteList(BuildContext context) {
-    // [FIX UTAMA]: Service dibuat LOKAL di dalam method (bukan final field)
+    // Service dibuat LOKAL
     final RouteService routeService = RouteService();
 
-    // Memanggil fungsi yang memfilter berdasarkan ID Kurir
     return FutureBuilder<List<DeliveryRoute>>(
-      future: routeService.getRoutesByCourier(), // Panggil service lokal
+      future: routeService.getRoutesByCourier(), 
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -2277,9 +2925,16 @@ class DashboardKurirScreen extends StatelessWidget {
                     ),
                   ),
                   onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text("Fitur Detail Rute akan dibuat!")),
-                    );
+                    // [FIX] NAVIGASI KE DETAIL RUTE
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => RouteDetailScreen(route: route),
+                      ),
+                    ).then((val) {
+                      // Refresh dashboard pas balik (biar status update jadi ACTIVE/COMPLETED)
+                      (context as Element).markNeedsBuild();
+                    });
                   },
                 ),
               );
@@ -2297,7 +2952,6 @@ class DashboardKurirScreen extends StatelessWidget {
       default: return Colors.orange; // pending
     }
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -2339,7 +2993,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
   final MapController _mapController = MapController();
   
   List<Map<String, dynamic>> _stops = [];
-  List<LatLng> _polylinePoints = []; // Titik-titik garis rute biru
+  List<LatLng> _polylinePoints = []; 
+  LatLng? _sppgLocation; 
+  
   bool _isLoading = true;
   String _currentStatus = 'pending';
 
@@ -2350,32 +3006,48 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     _fetchData();
   }
 
-  // --- AMBIL DATA STOP & HITUNG JALUR ---
+  // --- FUNGSI ZOOM MANUAL (BARU) ---
+  void _zoomMap(double change) {
+    final currentZoom = _mapController.camera.zoom;
+    final newZoom = (currentZoom + change).clamp(3.0, 18.0); // Batas zoom
+    _mapController.move(_mapController.camera.center, newZoom);
+  }
+
   Future<void> _fetchData() async {
     try {
-      // 1. Ambil daftar sekolah (Stops)
+      print("--- MULAI AMBIL DATA RUTE ---");
+
+      // 1. Ambil Lokasi Dapur
+      final origin = await _routeService.getSppgLocation();
+      _sppgLocation = origin;
+      if (origin != null) print("1. Dapur: ${origin.latitude}, ${origin.longitude}");
+
+      // 2. Ambil daftar sekolah (Stops)
       final stopsData = await _routeService.getRouteStops(widget.route.id);
       
-      // 2. Ambil Koordinat Sekolah untuk marker & rute
-      List<LatLng> points = [];
+      // 3. Susun Urutan Titik untuk Garis (Polyline)
+      List<LatLng> routingPoints = [];
       
-      // (Opsional) Tambahkan Titik Awal (Dapur SPPG) jika punya datanya.
-      // Untuk sekarang kita mulai dari sekolah pertama.
-      
-      for (var stop in stopsData) {
+      if (origin != null) routingPoints.add(origin); 
+
+      for (var i = 0; i < stopsData.length; i++) {
+        final stop = stopsData[i];
         final school = stop['schools'];
-        if (school['latitude'] != null && school['longitude'] != null) {
-          points.add(LatLng(school['latitude'], school['longitude']));
+        
+        if (school['gps_lat'] != null && school['gps_long'] != null) {
+          double? lat = double.tryParse(school['gps_lat'].toString());
+          double? long = double.tryParse(school['gps_long'].toString());
+          
+          if (lat != null && long != null) {
+            routingPoints.add(LatLng(lat, long));
+          }
         }
       }
 
-      // 3. Minta Garis Rute ke OSRM (Service yang baru kita buat)
+      // 4. Minta Garis Rute ke OSRM
       List<LatLng> polyline = [];
-      if (points.isNotEmpty) {
-        // Kalau titiknya cuma 1, ga bisa bikin garis, jadi marker aja
-        if (points.length > 1) {
-          polyline = await _routeService.getRoutePolyline(points);
-        }
+      if (routingPoints.length >= 2) {
+         polyline = await _routeService.getRoutePolyline(routingPoints);
       }
 
       if (!mounted) return;
@@ -2385,16 +3057,18 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         _isLoading = false;
       });
 
-      // 4. Fit Kamera Peta biar semua titik kelihatan
-      if (points.isNotEmpty) {
-        // Kasih delay dikit biar peta render dulu
-        Future.delayed(const Duration(milliseconds: 500), () {
-          _mapController.fitCamera(
-            CameraFit.bounds(
-              bounds: LatLngBounds.fromPoints(points),
-              padding: const EdgeInsets.all(50),
-            ),
-          );
+      // 5. Fit Kamera (Zoom otomatis ke rute)
+      if (routingPoints.isNotEmpty) {
+        Future.delayed(const Duration(seconds: 1), () {
+          if (!mounted) return;
+          try {
+             _mapController.fitCamera(
+              CameraFit.bounds(
+                bounds: LatLngBounds.fromPoints(routingPoints),
+                padding: const EdgeInsets.all(60), 
+              ),
+            );
+          } catch (e) { print("Map Camera Error: $e"); }
         });
       }
 
@@ -2404,27 +3078,16 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     }
   }
 
-  // --- BUKA GOOGLE MAPS (Navigasi) ---
   Future<void> _launchGoogleMaps(double lat, double long) async {
-    // Format URL untuk mode navigasi (turn-by-turn)
     final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$long&mode=d");
-    
-    // Fallback link browser kalau aplikasinya ga ada
-    final Uri browserUrl = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$long");
-
     try {
-      if (await canLaunchUrl(googleMapsUrl)) {
         await launchUrl(googleMapsUrl);
-      } else {
-        await launchUrl(browserUrl, mode: LaunchMode.externalApplication);
-      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal buka maps: $e")));
     }
   }
 
-  // --- LOGIKA BUTTONS (Sama seperti sebelumnya) ---
   void _showValidationDialog() {
     showDialog(
       context: context,
@@ -2451,7 +3114,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
   Future<void> _completeStop(String stopId, String schoolName) async {
     await _routeService.updateStopStatus(stopId, 'completed');
-    _fetchData(); // Refresh data
+    _fetchData(); 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Sampai di $schoolName!")));
   }
 
@@ -2466,49 +3129,115 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
       body: Column(
         children: [
           // -------------------------------------------------------
-          // 1. PETA NAVIGASI (ATAS)
+          // 1. PETA NAVIGASI (ATAS) - SEKARANG PAKAI STACK
           // -------------------------------------------------------
           SizedBox(
-            height: 250, // Tinggi Peta
-            child: FlutterMap(
-              mapController: _mapController,
-              options: const MapOptions(
-                initialCenter: LatLng(-6.9175, 107.6191), // Default Bandung
-                initialZoom: 13.0,
-              ),
+            height: 300, 
+            child: Stack(
               children: [
-                TileLayer(
-                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                  userAgentPackageName: 'com.example.mbg_monitoring',
-                ),
-                // GARIS RUTE (BIRU)
-                PolylineLayer(
-                  polylines: [
-                    Polyline(
-                      points: _polylinePoints,
-                      strokeWidth: 4.0,
-                      color: Colors.blue,
+                // A. MAP UTAMA
+                FlutterMap(
+                  mapController: _mapController,
+                  options: const MapOptions(
+                    initialCenter: LatLng(-6.9175, 107.6191),
+                    initialZoom: 13.0,
+                    interactionOptions: InteractionOptions(
+                      flags: InteractiveFlag.all, 
+                    ),
+                  ),
+                  children: [
+                    TileLayer(
+                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.mbg_monitoring',
+                    ),
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: _polylinePoints,
+                          strokeWidth: 5.0,
+                          color: Colors.blueAccent,
+                        ),
+                      ],
+                    ),
+                    MarkerLayer(
+                      markers: [
+                        if (_sppgLocation != null)
+                          Marker(
+                            point: _sppgLocation!,
+                            width: 60, 
+                            height: 60, 
+                            child: const Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.store_mall_directory, color: Colors.purple, size: 35),
+                                Text("DAPUR", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple, backgroundColor: Colors.white70)),
+                              ],
+                            ),
+                          ),
+
+                        ..._stops.map((stop) {
+                          final school = stop['schools'];
+                          final isCompleted = stop['status'] == 'completed';
+                          
+                          if (school['gps_lat'] == null) return const Marker(point: LatLng(0,0), child: SizedBox());
+                          
+                          double lat = double.parse(school['gps_lat'].toString());
+                          double long = double.parse(school['gps_long'].toString());
+
+                          return Marker(
+                            point: LatLng(lat, long),
+                            width: 60,
+                            height: 60, 
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.location_on, 
+                                  color: isCompleted ? Colors.green : Colors.red,
+                                  size: 35,
+                                ),
+                                Container(
+                                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                   decoration: BoxDecoration(
+                                     color: Colors.white, 
+                                     borderRadius: BorderRadius.circular(4),
+                                     border: Border.all(color: Colors.grey)
+                                   ),
+                                   child: Text(
+                                     "${stop['sequence_order']}", 
+                                     style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)
+                                   )
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ],
                     ),
                   ],
                 ),
-                // MARKER (PIN SEKOLAH)
-                MarkerLayer(
-                  markers: _stops.map((stop) {
-                    final school = stop['schools'];
-                    final isCompleted = stop['status'] == 'completed';
-                    if (school['latitude'] == null) return const Marker(point: LatLng(0,0), child: SizedBox()); // Skip if null
 
-                    return Marker(
-                      point: LatLng(school['latitude'], school['longitude']),
-                      width: 40,
-                      height: 40,
-                      child: Icon(
-                        Icons.location_on, 
-                        color: isCompleted ? Colors.green : Colors.red,
-                        size: 40,
+                // B. TOMBOL ZOOM (OVERLAY)
+                Positioned(
+                  right: 10,
+                  bottom: 10,
+                  child: Column(
+                    children: [
+                      FloatingActionButton.small(
+                        heroTag: "btnZoomIn", // Wajib unik biar ga error
+                        onPressed: () => _zoomMap(1),
+                        backgroundColor: Colors.white,
+                        child: const Icon(Icons.add, color: Colors.black),
                       ),
-                    );
-                  }).toList(),
+                      const SizedBox(height: 10),
+                      FloatingActionButton.small(
+                        heroTag: "btnZoomOut",
+                        onPressed: () => _zoomMap(-1),
+                        backgroundColor: Colors.white,
+                        child: const Icon(Icons.remove, color: Colors.black),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -2527,43 +3256,49 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       final stop = _stops[index];
                       final school = stop['schools'];
                       final bool isCompleted = stop['status'] == 'completed';
-                      final lat = school['latitude'];
-                      final long = school['longitude'];
+                      
+                      double? lat;
+                      double? long;
+                      if (school['gps_lat'] != null) {
+                         lat = double.parse(school['gps_lat'].toString());
+                         long = double.parse(school['gps_long'].toString());
+                      }
 
                       return Card(
                         color: isCompleted ? Colors.green[50] : Colors.white,
-                        elevation: 2,
+                        elevation: 3,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: CircleAvatar(
                             backgroundColor: isCompleted ? Colors.green : Colors.grey[300],
-                            child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black)),
+                            child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
                           ),
-                          title: Text(school['name']),
+                          title: Text(school['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text("Menu: ${school['menu_default'] ?? '-'} (${school['student_count']} pax)"),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // TOMBOL NAVIGASI (GOOGLE MAPS)
                               if (lat != null && long != null)
                                 IconButton(
                                   icon: const Icon(Icons.directions, color: Colors.blue),
-                                  onPressed: () => _launchGoogleMaps(lat, long),
+                                  onPressed: () => _launchGoogleMaps(lat!, long!),
+                                  tooltip: "Navigasi",
                                 ),
                               
-                              // TOMBOL SELESAI
                               if (_currentStatus == 'active' && !isCompleted)
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green, 
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 10)
+                                    padding: const EdgeInsets.symmetric(horizontal: 16)
                                   ),
                                   onPressed: () => _completeStop(stop['id'], school['name']),
                                   child: const Text("Tiba"),
                                 )
                               else if (isCompleted)
-                                const Icon(Icons.check_circle, color: Colors.green),
+                                const Icon(Icons.check_circle, color: Colors.green, size: 32),
                             ],
                           ),
                         ),
@@ -2574,7 +3309,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         ],
       ),
       
-      // Tombol Start (Muncul cuma pas Pending)
       bottomNavigationBar: _currentStatus == 'pending'
           ? Padding(
               padding: const EdgeInsets.all(16.0),
@@ -2586,6 +3320,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                   backgroundColor: Colors.blue[800],
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
             )
