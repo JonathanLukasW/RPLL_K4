@@ -119,15 +119,26 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     final plat = vehicle != null ? vehicle['plate_number'] : '-';
     final driver = vehicle != null ? vehicle['driver_name'] : '-';
     
-    Color statusColor = Colors.grey;
-    String statusText = "Menunggu";
-    
-    if (status == 'completed') { // 'completed' dari sisi kurir artinya sudah sampai
-      statusColor = Colors.orange;
-      statusText = "Barang Tiba - Perlu Konfirmasi";
+   Color statusColor = Colors.grey;
+    String statusText = "Menunggu Kurir";
+    String instructionText = "Kurir belum memulai perjalanan.";
+
+    if (status == 'pending') {
+       statusColor = Colors.grey;
+       statusText = "Persiapan";
+       instructionText = "Makanan sedang disiapkan di dapur.";
+    } else if (status == 'active') {
+       statusColor = Colors.blue;
+       statusText = "Sedang Dalam Perjalanan";
+       instructionText = "Pantau kedatangan kurir.";
+    } else if (status == 'completed') { 
+       statusColor = Colors.orange;
+       statusText = "Barang Tiba";
+       instructionText = "Silakan cek barang dan tekan tombol Konfirmasi.";
     } else if (status == 'received') {
-      statusColor = Colors.green;
-      statusText = "Selesai - Diterima";
+       statusColor = Colors.green;
+       statusText = "Selesai";
+       instructionText = "Penerimaan sudah dikonfirmasi.";
     }
 
     return Card(
