@@ -20,7 +20,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
   final MapController _mapController = MapController();
   
   List<Map<String, dynamic>> _stops = [];
-  List<LatLng> _polylinePoints = []; // Titik-titik garis rute biru
+  List<LatLng> _polylinePoints = [];
+  LatLng? _sppgLocation; // Lokasi Dapur
+  
   bool _isLoading = true;
   String _currentStatus = 'pending';
 
@@ -31,36 +33,45 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     _fetchData();
   }
 
-  // --- AMBIL DATA STOP & HITUNG JALUR ---
   Future<void> _fetchData() async {
     try {
-      // 1. Ambil daftar sekolah (Stops)
+      // 1. Ambil Lokasi Dapur (Start Point)
+      final origin = await _routeService.getSppgLocation();
+      _sppgLocation = origin;
+
+      // 2. Ambil daftar sekolah (Stops)
       final stopsData = await _routeService.getRouteStops(widget.route.id);
       
-      // 2. Ambil Koordinat Sekolah untuk marker & rute
-      List<LatLng> points = [];
+      // 3. Kumpulkan semua titik untuk Garis Rute
+      List<LatLng> routingPoints = [];
       
+      // A. Masukkan Dapur (Wajib jadi titik pertama)
+      if (origin != null) {
+        routingPoints.add(origin); 
+        print("Start Point (Dapur): ${origin.latitude}, ${origin.longitude}");
+      } else {
+        print("Warning: Lokasi Dapur (SPPG) belum diset/tidak ditemukan.");
+      }
+
+      // B. Masukkan Sekolah-sekolah
       for (var stop in stopsData) {
         final school = stop['schools'];
-        
-        // [CEK LOG]: Print data untuk memastikan koordinat ada
-        print("Sekolah: ${school['name']} -> Lat: ${school['gps_lat']}, Long: ${school['gps_long']}");
-
         if (school['gps_lat'] != null && school['gps_long'] != null) {
           try {
             double lat = double.parse(school['gps_lat'].toString());
             double long = double.parse(school['gps_long'].toString());
-            points.add(LatLng(lat, long));
+            routingPoints.add(LatLng(lat, long));
           } catch (e) {
-            print("Error parsing koordinat: $e");
+            print("Error parsing koordinat sekolah: $e");
           }
         }
       }
 
-      // 3. Minta Garis Rute ke OSRM (Cuma kalau ada > 1 titik)
+      // 4. Minta Garis Rute ke OSRM
+      // Syarat bikin garis: Minimal ada 2 titik (Misal: 1 Dapur + 1 Sekolah)
       List<LatLng> polyline = [];
-      if (points.length > 1) {
-         polyline = await _routeService.getRoutePolyline(points);
+      if (routingPoints.length >= 2) {
+         polyline = await _routeService.getRoutePolyline(routingPoints);
       }
 
       if (!mounted) return;
@@ -70,29 +81,21 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         _isLoading = false;
       });
 
-      // [PERBAIKAN KRUSIAL]: Cek points.isNotEmpty DUA KALI (di luar & di dalam)
-      if (points.isNotEmpty) {
+      // 5. Fit Kamera Peta (Auto Zoom biar pas)
+      if (routingPoints.isNotEmpty) {
         Future.delayed(const Duration(milliseconds: 500), () {
           if (!mounted) return;
           try {
-             // Pastikan points tidak kosong saat dipanggil
-             if (points.isNotEmpty) {
-               _mapController.fitCamera(
-                CameraFit.bounds(
-                  bounds: LatLngBounds.fromPoints(points),
-                  padding: const EdgeInsets.all(50),
-                ),
-              );
-             }
+             _mapController.fitCamera(
+              CameraFit.bounds(
+                bounds: LatLngBounds.fromPoints(routingPoints),
+                padding: const EdgeInsets.all(60), // Padding agak lega
+              ),
+            );
           } catch (e) {
-            print("Map Controller Error (Aman untuk diabaikan): $e"); 
+            print("Map Controller Error: $e"); 
           }
         });
-      } else {
-        print("PERINGATAN: Tidak ada koordinat valid untuk ditampilkan di peta.");
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Peta tidak tampil karena Sekolah belum punya lokasi GPS.")),
-        );
       }
 
     } catch (e) {
@@ -101,10 +104,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     }
   }
 
-  // --- BUKA GOOGLE MAPS (Navigasi) ---
   Future<void> _launchGoogleMaps(double lat, double long) async {
     final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$long&mode=d");
-    final Uri browserUrl = Uri.parse("https://www.google.com/maps/search/?api=1&query=$lat,$long");
+    final Uri browserUrl = Uri.parse("https://www.google.com/maps/dir/?api=1&destination=$lat,$long");
 
     try {
       if (await canLaunchUrl(googleMapsUrl)) {
@@ -118,7 +120,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     }
   }
 
-  // --- LOGIKA BUTTONS ---
   void _showValidationDialog() {
     showDialog(
       context: context,
@@ -145,7 +146,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
   Future<void> _completeStop(String stopId, String schoolName) async {
     await _routeService.updateStopStatus(stopId, 'completed');
-    _fetchData(); // Refresh data
+    _fetchData(); 
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Sampai di $schoolName!")));
   }
 
@@ -163,53 +164,81 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
           // 1. PETA NAVIGASI (ATAS)
           // -------------------------------------------------------
           SizedBox(
-            height: 250,
+            height: 300, // Agak dibesarkan biar enak zoom-nya
             child: FlutterMap(
               mapController: _mapController,
               options: const MapOptions(
-                initialCenter: LatLng(-6.9175, 107.6191), // Default Bandung
+                initialCenter: LatLng(-6.9175, 107.6191),
                 initialZoom: 13.0,
+                // Interaction Flags: Memastikan user bisa cubit (pinch) & geser (drag)
+                interactionOptions: InteractionOptions(
+                  flags: InteractiveFlag.all, 
+                ),
               ),
               children: [
                 TileLayer(
                   urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                   userAgentPackageName: 'com.example.mbg_monitoring',
                 ),
-                // GARIS RUTE (BIRU)
+                // GARIS RUTE (BIRU TEBAL)
                 PolylineLayer(
                   polylines: [
                     Polyline(
                       points: _polylinePoints,
-                      strokeWidth: 4.0,
-                      color: Colors.blue,
+                      strokeWidth: 5.0,
+                      color: Colors.blueAccent,
                     ),
                   ],
                 ),
-                // MARKER (PIN SEKOLAH)
+                // MARKER LAYER
                 MarkerLayer(
-                  markers: _stops.map((stop) {
-                    final school = stop['schools'];
-                    final isCompleted = stop['status'] == 'completed';
-                    
-                    // [FIX]: Cek null dengan nama kolom yang benar
-                    if (school['gps_lat'] == null || school['gps_long'] == null) {
-                        return const Marker(point: LatLng(0,0), child: SizedBox());
-                    }
-                    
-                    double lat = double.parse(school['gps_lat'].toString());
-                    double long = double.parse(school['gps_long'].toString());
-
-                    return Marker(
-                      point: LatLng(lat, long),
-                      width: 40,
-                      height: 40,
-                      child: Icon(
-                        Icons.location_on, 
-                        color: isCompleted ? Colors.green : Colors.red,
-                        size: 40,
+                  markers: [
+                    // A. MARKER DAPUR (START) - Ikon Ungu
+                    if (_sppgLocation != null)
+                      Marker(
+                        point: _sppgLocation!,
+                        width: 50,
+                        height: 50,
+                        child: const Column(
+                          children: [
+                            Icon(Icons.store_mall_directory, color: Colors.purple, size: 35),
+                            Text("DAPUR", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple)),
+                          ],
+                        ),
                       ),
-                    );
-                  }).toList(),
+
+                    // B. MARKER SEKOLAH (TUJUAN) - Ikon Merah/Hijau
+                    ..._stops.map((stop) {
+                      final school = stop['schools'];
+                      final isCompleted = stop['status'] == 'completed';
+                      
+                      if (school['gps_lat'] == null) return const Marker(point: LatLng(0,0), child: SizedBox());
+                      
+                      double lat = double.parse(school['gps_lat'].toString());
+                      double long = double.parse(school['gps_long'].toString());
+
+                      return Marker(
+                        point: LatLng(lat, long),
+                        width: 45,
+                        height: 45,
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.location_on, 
+                              color: isCompleted ? Colors.green : Colors.red,
+                              size: 35,
+                            ),
+                            // Biar tau urutannya di peta
+                            Container(
+                               padding: const EdgeInsets.all(2),
+                               decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4)),
+                               child: Text("${stop['sequence_order']}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold))
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ],
                 ),
               ],
             ),
@@ -229,7 +258,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       final school = stop['schools'];
                       final bool isCompleted = stop['status'] == 'completed';
                       
-                      // [FIX]: Ambil koordinat dengan nama kolom yang benar
                       double? lat;
                       double? long;
                       if (school['gps_lat'] != null) {
@@ -239,23 +267,26 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
                       return Card(
                         color: isCompleted ? Colors.green[50] : Colors.white,
-                        elevation: 2,
+                        elevation: 3,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                           leading: CircleAvatar(
                             backgroundColor: isCompleted ? Colors.green : Colors.grey[300],
-                            child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black)),
+                            child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
                           ),
-                          title: Text(school['name']),
+                          title: Text(school['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text("Menu: ${school['menu_default'] ?? '-'} (${school['student_count']} pax)"),
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
-                              // TOMBOL NAVIGASI (GOOGLE MAPS)
+                              // TOMBOL NAVIGASI
                               if (lat != null && long != null)
                                 IconButton(
                                   icon: const Icon(Icons.directions, color: Colors.blue),
                                   onPressed: () => _launchGoogleMaps(lat!, long!),
+                                  tooltip: "Buka Google Maps",
                                 ),
                               
                               // TOMBOL SELESAI
@@ -264,13 +295,13 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green, 
                                     foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(horizontal: 10)
+                                    padding: const EdgeInsets.symmetric(horizontal: 16)
                                   ),
                                   onPressed: () => _completeStop(stop['id'], school['name']),
                                   child: const Text("Tiba"),
                                 )
                               else if (isCompleted)
-                                const Icon(Icons.check_circle, color: Colors.green),
+                                const Icon(Icons.check_circle, color: Colors.green, size: 32),
                             ],
                           ),
                         ),
@@ -292,6 +323,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                   backgroundColor: Colors.blue[800],
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
               ),
             )

@@ -1,11 +1,12 @@
 import os
 
 folders = [
+	"android/app/src/profile"
     "lib"
 ]
 
 # allowed file types for folder scanning
-allowed_ext = [".dart"]
+allowed_ext = [".dart",".xml"]
 
 # single files you want to include even if they're outside those folders
 extra_files = [

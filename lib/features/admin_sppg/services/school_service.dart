@@ -65,4 +65,14 @@ class SchoolService {
       throw Exception('Gagal menghapus sekolah: $e');
     }
   }
+
+  // --- 4. UPDATE DATA SEKOLAH (BARU) ---
+  Future<void> updateSchool(String schoolId, Map<String, dynamic> schoolData) async {
+    try {
+      // Kita tidak perlu update sppg_id karena itu tidak berubah
+      await _supabase.from('schools').update(schoolData).eq('id', schoolId);
+    } catch (e) {
+      throw Exception('Gagal mengupdate sekolah: $e');
+    }
+  }
 }

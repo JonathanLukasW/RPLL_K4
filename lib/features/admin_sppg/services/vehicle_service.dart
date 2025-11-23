@@ -58,4 +58,12 @@ class VehicleService {
        throw Exception('Gagal update status: $e');
     }
   }
+  
+  Future<void> updateVehicle(String id, Map<String, dynamic> data) async {
+    try {
+      await _supabase.from('vehicles').update(data).eq('id', id);
+    } catch (e) {
+      throw Exception('Gagal update kendaraan: $e');
+    }
+  }
 }

@@ -8,7 +8,7 @@ import 'package:latlong2/latlong.dart'; // Buat tipe data LatLng
 class RouteService {
   final _supabase = Supabase.instance.client;
 
-  // --- 1. BUAT RUTE BARU (OLEH ADMIN SPPG) ---
+  // --- 1. BUAT RUTE BARU ---
   Future<void> createRoute({
     required String vehicleId,
     required String courierId,
@@ -16,18 +16,12 @@ class RouteService {
     required List<School> selectedSchools,
   }) async {
     try {
-      // A. Ambil SPPG ID Admin yang sedang login
       final userId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase
-          .from('profiles')
-          .select('sppg_id')
-          .eq('id', userId)
-          .single();
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // B. Insert Header (delivery_routes)
       final routeResponse = await _supabase.from('delivery_routes').insert({
-        'date': date.toIso8601String().split('T')[0], // YYYY-MM-DD
+        'date': date.toIso8601String().split('T')[0], 
         'sppg_id': mySppgId,
         'vehicle_id': vehicleId,
         'courier_id': courierId,
@@ -36,15 +30,11 @@ class RouteService {
 
       final String newRouteId = routeResponse['id'];
 
-      // C. Siapkan & Insert Detail Perhentian (delivery_stops)
       List<Map<String, dynamic>> stopsData = [];
-      
       for (int i = 0; i < selectedSchools.length; i++) {
         stopsData.add({
           'route_id': newRouteId,
           'school_id': selectedSchools[i].id,
-          // Urutan saat ini: Masih Manual (Sesuai urutan array)
-          // Nanti di sini kita pasang logika VRP
           'sequence_order': i + 1, 
           'status': 'pending',
         });
@@ -57,15 +47,13 @@ class RouteService {
     }
   }
 
-  // --- 2. AMBIL DAFTAR RUTE (UNTUK ADMIN SPPG - HISTORY) ---
+  // --- 2. AMBIL DAFTAR RUTE (ADMIN) ---
   Future<List<DeliveryRoute>> getMyRoutes() async {
     try {
-      // Ambil SPPG ID Admin
       final userId = _supabase.auth.currentUser!.id;
       final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String mySppgId = profile['sppg_id'];
 
-      // Ambil semua rute milik SPPG ini
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -74,19 +62,16 @@ class RouteService {
 
       final List<dynamic> data = response;
       return data.map((json) => DeliveryRoute.fromJson(json)).toList();
-      
     } catch (e) {
-      throw Exception("Gagal mengambil data rute Admin: $e");
+      throw Exception("Gagal ambil rute admin: $e");
     }
   }
 
-  // --- 3. AMBIL DAFTAR RUTE (UNTUK KURIR YANG SEDANG LOGIN) ---
+  // --- 3. AMBIL DAFTAR RUTE (KURIR) ---
   Future<List<DeliveryRoute>> getRoutesByCourier() async {
     try {
-      // Ambil ID Kurir yang sedang login
       final currentCourierId = _supabase.auth.currentUser!.id;
 
-      // Query filter berdasarkan courier_id
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -95,19 +80,16 @@ class RouteService {
 
       final List<dynamic> data = response;
       return data.map((json) => DeliveryRoute.fromJson(json)).toList();
-      
     } catch (e) {
-      throw Exception("Gagal mengambil rute kurir: $e");
+      throw Exception("Gagal ambil rute kurir: $e");
     }
   }
 
-  // --- 4. AMBIL DETAIL PERHENTIAN (STOPS) UNTUK SUATU RUTE ---
-  // Fungsi ini dipakai di halaman Detail Rute Kurir
+  // --- 4. AMBIL DETAIL PERHENTIAN (STOPS) ---
   Future<List<Map<String, dynamic>>> getRouteStops(String routeId) async {
     try {
       final response = await _supabase
           .from('delivery_stops')
-          // [FIX]: Ganti 'latitude, longitude' jadi 'gps_lat, gps_long' sesuai DB
           .select('*, schools(name, address, gps_lat, gps_long, student_count, menu_default)')
           .eq('route_id', routeId)
           .order('sequence_order', ascending: true);
@@ -118,23 +100,20 @@ class RouteService {
     }
   }
 
-  // --- 5. UPDATE STATUS RUTE (Start/Finish Route) ---
+  // --- 5. UPDATE STATUS RUTE ---
   Future<void> updateRouteStatus(String routeId, String newStatus) async {
     try {
-      await _supabase.from('delivery_routes').update({
-        'status': newStatus
-      }).eq('id', routeId);
+      await _supabase.from('delivery_routes').update({'status': newStatus}).eq('id', routeId);
     } catch (e) {
       throw Exception("Gagal update status rute: $e");
     }
   }
 
-  // --- 6. UPDATE STATUS PERHENTIAN (Sekolah Selesai Dikirim) ---
+  // --- 6. UPDATE STATUS PERHENTIAN ---
   Future<void> updateStopStatus(String stopId, String newStatus) async {
     try {
       await _supabase.from('delivery_stops').update({
         'status': newStatus,
-        // Kalau statusnya 'completed', catat jam sekarang sebagai arrival_time
         'arrival_time': newStatus == 'completed' ? DateTime.now().toIso8601String() : null,
       }).eq('id', stopId);
     } catch (e) {
@@ -144,40 +123,72 @@ class RouteService {
 
   // --- 7. AMBIL GARIS RUTE (POLYLINE) DARI OSRM ---
   Future<List<LatLng>> getRoutePolyline(List<LatLng> coordinates) async {
-    if (coordinates.length < 2) return []; // Butuh minimal 2 titik buat bikin garis
+    print("OSRM Request: Mencoba hitung rute untuk ${coordinates.length} titik.");
+    if (coordinates.length < 2) {
+       return []; 
+    }
 
-    // 1. Susun String Koordinat untuk URL OSRM
-    // Format: {long},{lat};{long},{lat};...
     String coordString = coordinates
         .map((p) => "${p.longitude},${p.latitude}")
         .join(';');
 
-    // 2. URL OSRM Public (Gratis)
     final url = Uri.parse(
-        'http://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
+        'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
 
     try {
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        
-        // 3. Ambil geometri (garis) dari JSON
+        if (data['code'] != 'Ok') return [];
+
         final List<dynamic> coords = 
             data['routes'][0]['geometry']['coordinates'];
-
-        // 4. Konversi ke List<LatLng> untuk Flutter Map
-        // Note: OSRM balikin [Long, Lat], kita butuh [Lat, Long]
+        
         return coords
             .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
             .toList();
       } else {
-        print("Gagal ambil rute OSRM: ${response.body}");
-        return []; // Balikin list kosong kalau gagal biar app ga crash
+        return [];
       }
     } catch (e) {
-      print("Error OSRM: $e");
+      print("OSRM Exception: $e");
       return [];
+    }
+  }
+
+  // --- 8. AMBIL LOKASI DAPUR (SPPG) ---
+  // Fungsi ini mencari koordinat SPPG milik user yang sedang login
+  Future<LatLng?> getSppgLocation() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      
+      // 1. Cari SPPG ID dari Profile Kurir
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+          
+      final String sppgId = profile['sppg_id'];
+
+      // 2. Ambil Koordinat dari Tabel SPPG
+      final sppgData = await _supabase
+          .from('sppgs')
+          .select('gps_lat, gps_long')
+          .eq('id', sppgId)
+          .single();
+
+      if (sppgData['gps_lat'] != null && sppgData['gps_long'] != null) {
+        return LatLng(
+          double.parse(sppgData['gps_lat'].toString()),
+          double.parse(sppgData['gps_long'].toString()),
+        );
+      }
+      return null; 
+    } catch (e) {
+      print("Gagal ambil lokasi SPPG: $e");
+      return null;
     }
   }
 }
