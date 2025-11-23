@@ -1,7 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../autentikasi/screens/login_screen.dart';
 import '../services/receiving_service.dart';
+// Import Storage Service baru
+import '../../../core/services/storage_service.dart'; // Sesuaikan path
 
 class DashboardKoordinatorScreen extends StatefulWidget {
   const DashboardKoordinatorScreen({super.key});
@@ -12,6 +17,7 @@ class DashboardKoordinatorScreen extends StatefulWidget {
 
 class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen> {
   final ReceivingService _service = ReceivingService();
+  final StorageService _storageService = StorageService();
   
   Map<String, dynamic>? _deliveryData;
   bool _isLoading = true;
@@ -28,7 +34,7 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
       final data = await _service.getTodayDelivery();
       if (mounted) setState(() => _deliveryData = data);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      // ignore
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -43,49 +49,156 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     );
   }
 
-  // --- DIALOG KONFIRMASI ---
+  // --- LOGIKA DIALOG KONFIRMASI / LAPOR MASALAH ---
   void _showConfirmationDialog(String stopId) {
     final qtyController = TextEditingController();
     final noteController = TextEditingController();
     
+    // State lokal dialog
+    File? photoFile;
+    bool isProblem = false; // Toggle: Aman / Masalah
+    bool isSubmitting = false;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Konfirmasi Penerimaan"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Jumlah Diterima (Box)", border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: noteController,
-              decoration: const InputDecoration(labelText: "Catatan (Jika ada kerusakan)", border: OutlineInputBorder()),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _service.confirmReception(
-                stopId: stopId,
-                receivedQty: int.tryParse(qtyController.text) ?? 0,
-                notes: noteController.text,
-                recipientName: "Koordinator Sekolah", // Nanti ambil dari profile
-              );
-              _fetchData(); // Refresh dashboard
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Penerimaan Dikonfirmasi!")));
-            },
-            child: const Text("Terima Barang"),
-          )
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text("Konfirmasi Penerimaan"),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pilihan Status
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text("✅ Aman"),
+                            selected: !isProblem,
+                            selectedColor: Colors.green[100],
+                            onSelected: (val) => setDialogState(() => isProblem = !val),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text("⚠️ Masalah"),
+                            selected: isProblem,
+                            selectedColor: Colors.red[100],
+                            onSelected: (val) => setDialogState(() => isProblem = val),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+
+                    TextField(
+                      controller: qtyController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: "Jml Diterima", border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    
+                    TextField(
+                      controller: noteController,
+                      decoration: InputDecoration(
+                        labelText: isProblem ? "Jelaskan Kerusakan/Kekurangan" : "Catatan (Opsional)", 
+                        border: const OutlineInputBorder()
+                      ),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Tombol Kamera (Hanya jika ada masalah)
+                    if (isProblem)
+                      GestureDetector(
+                        onTap: () async {
+                          final file = await _storageService.pickImage(ImageSource.camera);
+                          if (file != null) {
+                            setDialogState(() => photoFile = file);
+                          }
+                        },
+                        child: Container(
+                          height: 100,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: photoFile == null
+                              ? const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [Icon(Icons.camera_alt), Text("Ambil Foto Bukti")],
+                                )
+                              : Image.file(photoFile!, fit: BoxFit.cover),
+                        ),
+                      ),
+                      
+                     if (isSubmitting)
+                       const Padding(
+                         padding: EdgeInsets.only(top: 15),
+                         child: CircularProgressIndicator(),
+                       )
+                  ],
+                ),
+              ),
+              actions: [
+                if (!isSubmitting)
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+                
+                if (!isSubmitting)
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isProblem ? Colors.red : Colors.green,
+                      foregroundColor: Colors.white
+                    ),
+                    onPressed: () async {
+                      // Validasi
+                      if (isProblem && photoFile == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib sertakan foto jika ada masalah!")));
+                        return;
+                      }
+                      
+                      setDialogState(() => isSubmitting = true);
+
+                      try {
+                        String? imageUrl;
+                        // 1. Upload Foto Jika Ada
+                        if (photoFile != null) {
+                          imageUrl = await _storageService.uploadEvidence(photoFile!, 'stops');
+                        }
+
+                        // 2. Kirim Data
+                        await _service.confirmReception(
+                          stopId: stopId,
+                          receivedQty: int.tryParse(qtyController.text) ?? 0,
+                          notes: isProblem ? "[MASALAH] ${noteController.text}" : noteController.text,
+                          recipientName: "Koordinator", 
+                          issueType: isProblem ? 'problem' : null,
+                          proofUrl: imageUrl,
+                        );
+
+                        if (!mounted) return;
+                        Navigator.pop(ctx);
+                        _fetchData(); // Refresh
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laporan Terkirim!")));
+
+                      } catch (e) {
+                         setDialogState(() => isSubmitting = false);
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e")));
+                      }
+                    },
+                    child: Text(isProblem ? "Lapor Masalah" : "Terima Barang"),
+                  )
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -117,28 +230,19 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     final status = _deliveryData!['status'];
     final vehicle = _deliveryData!['delivery_routes']['vehicles'];
     final plat = vehicle != null ? vehicle['plate_number'] : '-';
-    final driver = vehicle != null ? vehicle['driver_name'] : '-';
     
-   Color statusColor = Colors.grey;
-    String statusText = "Menunggu Kurir";
-    String instructionText = "Kurir belum memulai perjalanan.";
-
-    if (status == 'pending') {
-       statusColor = Colors.grey;
-       statusText = "Persiapan";
-       instructionText = "Makanan sedang disiapkan di dapur.";
-    } else if (status == 'active') {
-       statusColor = Colors.blue;
-       statusText = "Sedang Dalam Perjalanan";
-       instructionText = "Pantau kedatangan kurir.";
-    } else if (status == 'completed') { 
-       statusColor = Colors.orange;
-       statusText = "Barang Tiba";
-       instructionText = "Silakan cek barang dan tekan tombol Konfirmasi.";
+    Color statusColor = Colors.grey;
+    String statusText = "Menunggu";
+    
+    if (status == 'completed') { 
+      statusColor = Colors.orange;
+      statusText = "Barang Tiba - Perlu Konfirmasi";
     } else if (status == 'received') {
-       statusColor = Colors.green;
-       statusText = "Selesai";
-       instructionText = "Penerimaan sudah dikonfirmasi.";
+      statusColor = Colors.green;
+      statusText = "Selesai - Diterima";
+    } else if (status == 'issue_reported') { // Status baru
+      statusColor = Colors.red;
+      statusText = "Masalah Dilaporkan";
     }
 
     return Card(
@@ -165,10 +269,10 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
               ],
             ),
             const Divider(height: 30),
-            Text("Mobil: $plat ($driver)", style: const TextStyle(fontSize: 16)),
+            Text("Mobil: $plat", style: const TextStyle(fontSize: 16)),
+            
             const SizedBox(height: 20),
             
-            // TOMBOL AKSI (Hanya muncul jika kurir sudah 'completed' tapi sekolah belum 'received')
             if (status == 'completed')
               SizedBox(
                 width: double.infinity,

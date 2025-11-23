@@ -1,7 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../autentikasi/screens/login_screen.dart';
 import '../services/teacher_reception_service.dart';
+// Import Storage Service
+import '../../../core/services/storage_service.dart'; 
 
 class DashboardTeacherScreen extends StatefulWidget {
   const DashboardTeacherScreen({super.key});
@@ -12,7 +17,8 @@ class DashboardTeacherScreen extends StatefulWidget {
 
 class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
   final TeacherReceptionService _service = TeacherReceptionService();
-  
+  final StorageService _storageService = StorageService();
+
   Map<String, dynamic>? _deliveryData;
   bool _isLoading = true;
   bool _alreadyReceived = false;
@@ -38,7 +44,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
         });
       }
     } catch (e) {
-      if(mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      // ignore
     } finally {
       if(mounted) setState(() => _isLoading = false);
     }
@@ -51,48 +57,146 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
       MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
   }
 
+  // --- DIALOG CANGGIH (QC & FOTO) ---
   void _showReceiveDialog() {
     final qtyController = TextEditingController();
     final noteController = TextEditingController();
+    
+    // State lokal dialog
+    File? photoFile;
+    bool isProblem = false; 
+    bool isSubmitting = false;
 
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text("Konfirmasi Kelas $_className"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text("Pastikan jumlah sesuai dan makanan dalam kondisi baik."),
-            const SizedBox(height: 15),
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Jumlah Diterima", border: OutlineInputBorder()),
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text("Laporan Kelas $_className"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Pilihan Status QC
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text("✅ Aman"),
+                          selected: !isProblem,
+                          selectedColor: Colors.green[100],
+                          onSelected: (val) => setDialogState(() => isProblem = !val),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text("⚠️ Masalah"),
+                          selected: isProblem,
+                          selectedColor: Colors.red[100],
+                          onSelected: (val) => setDialogState(() => isProblem = val),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 15),
+
+                  TextField(
+                    controller: qtyController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: "Jumlah Box Diterima", border: OutlineInputBorder()),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteController,
+                    decoration: InputDecoration(
+                      labelText: isProblem ? "Detail Masalah (Basi/Asing/dll)" : "Catatan (Opsional)", 
+                      border: const OutlineInputBorder()
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Tombol Kamera (Wajib jika Masalah)
+                  if (isProblem)
+                    GestureDetector(
+                      onTap: () async {
+                        final file = await _storageService.pickImage(ImageSource.camera);
+                        if (file != null) {
+                          setDialogState(() => photoFile = file);
+                        }
+                      },
+                      child: Container(
+                        height: 100,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: photoFile == null
+                            ? const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [Icon(Icons.camera_alt), Text("FOTO BUKTI (WAJIB)")],
+                              )
+                            : Image.file(photoFile!, fit: BoxFit.cover),
+                      ),
+                    ),
+
+                  if (isSubmitting)
+                     const Padding(padding: EdgeInsets.only(top: 10), child: CircularProgressIndicator())
+                ],
+              ),
             ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: noteController,
-              decoration: const InputDecoration(labelText: "Catatan (Opsional)", border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _service.submitClassReception(
-                stopId: _deliveryData!['id'],
-                className: _className,
-                qty: int.tryParse(qtyController.text) ?? 0,
-                notes: noteController.text,
-              );
-              _fetchData(); // Refresh
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Berhasil dikonfirmasi!")));
-            },
-            child: const Text("Simpan"),
-          )
-        ],
+            actions: [
+              if (!isSubmitting)
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+              
+              if (!isSubmitting)
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isProblem ? Colors.red : Colors.indigo,
+                    foregroundColor: Colors.white
+                  ),
+                  onPressed: () async {
+                    // Validasi
+                    if (isProblem && photoFile == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib sertakan foto jika ada masalah!")));
+                      return;
+                    }
+
+                    setDialogState(() => isSubmitting = true);
+                    try {
+                      String? imageUrl;
+                      if (photoFile != null) {
+                        imageUrl = await _storageService.uploadEvidence(photoFile!, 'classroom_issues');
+                      }
+
+                      await _service.submitClassReception(
+                        stopId: _deliveryData!['id'],
+                        className: _className,
+                        qty: int.tryParse(qtyController.text) ?? 0,
+                        notes: noteController.text,
+                        issueType: isProblem ? 'food_quality_issue' : null,
+                        proofUrl: imageUrl,
+                      );
+                      
+                      if (!mounted) return;
+                      Navigator.pop(ctx);
+                      _fetchData(); 
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laporan Kelas Berhasil!")));
+
+                    } catch (e) {
+                      setDialogState(() => isSubmitting = false);
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                    }
+                  },
+                  child: const Text("Simpan Laporan"),
+                )
+            ],
+          );
+        },
       ),
     );
   }
@@ -101,7 +205,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Wali Kelas $_className"), // Tampilkan nama kelas di header
+        title: Text("Wali Kelas $_className"), 
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
         actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _logout)],
@@ -115,8 +219,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
   }
 
   Widget _buildBody() {
-    // Status Pengiriman (dari tabel delivery_stops)
-    // pending -> active -> completed (Kurir Tiba) -> received (Koord Terima)
+    // Status Pengiriman Global (dari tabel delivery_stops)
     final String status = _deliveryData!['status'];
     
     String message = "Makanan sedang diproses.";
@@ -124,16 +227,18 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
     bool canReceive = false;
 
     if (status == 'completed') {
-      message = "Makanan sudah tiba di Sekolah.\nMenunggu Koordinator cek.";
+      message = "Makanan sudah tiba di Sekolah.\nMenunggu pengecekan Koordinator.";
       color = Colors.orange;
-    } else if (status == 'received') {
-      message = "Makanan SIAP DIAMBIL / DIBAGIKAN.";
+    } else if (status == 'received' || status == 'issue_reported') {
+      // Kalau Koordinator sudah terima (baik aman atau ada masalah kemasan),
+      // Wali Kelas tetap boleh ambil jatahnya.
+      message = "Makanan SIAP DIBAGIKAN KE SISWA.";
       color = Colors.green;
-      canReceive = true; // Tombol aktif
+      canReceive = true; 
     }
 
     if (_alreadyReceived) {
-      message = "Anda sudah mengonfirmasi penerimaan hari ini.";
+      message = "Laporan kelas Anda sudah masuk.\nTerima kasih.";
       color = Colors.blue;
       canReceive = false;
     }
@@ -170,7 +275,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
             ElevatedButton.icon(
               onPressed: _showReceiveDialog,
               icon: const Icon(Icons.inventory),
-              label: const Text("KONFIRMASI TERIMA DI KELAS"),
+              label: const Text("TERIMA & CEK KUALITAS MAKANAN"),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.indigo,
                 foregroundColor: Colors.white,

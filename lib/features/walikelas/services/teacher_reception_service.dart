@@ -16,7 +16,7 @@ class TeacherReceptionService {
           .select('school_id, class_name')
           .eq('id', userId)
           .single();
-      
+
       final String? mySchoolId = profile['school_id'];
       if (mySchoolId == null) throw Exception("Akun tidak terhubung sekolah.");
 
@@ -40,7 +40,7 @@ class TeacherReceptionService {
             .eq('stop_id', stopId)
             .eq('teacher_id', userId)
             .maybeSingle();
-        
+
         if (receptionCheck != null) alreadyReceived = true;
       }
 
@@ -51,7 +51,6 @@ class TeacherReceptionService {
       }
 
       return response;
-
     } catch (e) {
       throw Exception("Gagal cek status: $e");
     }
@@ -63,16 +62,20 @@ class TeacherReceptionService {
     required String className,
     required int qty,
     required String notes,
+    String? issueType, // [BARU]
+    String? proofUrl, // [BARU]
   }) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      
+
       await _supabase.from('class_receptions').insert({
         'stop_id': stopId,
         'teacher_id': userId,
         'class_name': className,
         'qty_received': qty,
         'notes': notes,
+        'issue_type': issueType, // Simpan tipe masalah
+        'proof_photo_url': proofUrl, // Simpan bukti foto
       });
     } catch (e) {
       throw Exception("Gagal simpan data: $e");
