@@ -9,6 +9,9 @@ import '../services/receiving_service.dart';
 import '../../../core/services/storage_service.dart'; 
 import '../../../core/screens/profile_screen.dart';
 
+// [BARU] Import Layar Request Koordinator
+import 'coordinator_request_screen.dart'; 
+
 class DashboardKoordinatorScreen extends StatefulWidget {
   const DashboardKoordinatorScreen({super.key});
 
@@ -55,9 +58,8 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     final qtyController = TextEditingController();
     final noteController = TextEditingController();
     
-    // State lokal dialog
     File? photoFile;
-    bool isProblem = false; // Toggle: Aman / Masalah
+    bool isProblem = false; 
     bool isSubmitting = false;
 
     showDialog(
@@ -113,7 +115,7 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
                     ),
                     const SizedBox(height: 10),
 
-                    // Tombol Kamera (Hanya jika ada masalah)
+                    // Tombol Kamera
                     if (isProblem)
                       GestureDetector(
                         onTap: () async {
@@ -154,11 +156,10 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
                 if (!isSubmitting)
                   ElevatedButton(
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: isProblem ? Colors.red : Colors.green,
+                      backgroundColor: isProblem ? Colors.red : Colors.teal,
                       foregroundColor: Colors.white
                     ),
                     onPressed: () async {
-                      // Validasi
                       if (isProblem && photoFile == null) {
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib sertakan foto jika ada masalah!")));
                         return;
@@ -168,12 +169,10 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
 
                       try {
                         String? imageUrl;
-                        // 1. Upload Foto Jika Ada
                         if (photoFile != null) {
                           imageUrl = await _storageService.uploadEvidence(photoFile!, 'stops');
                         }
 
-                        // 2. Kirim Data
                         await _service.confirmReception(
                           stopId: stopId,
                           receivedQty: int.tryParse(qtyController.text) ?? 0,
@@ -185,7 +184,7 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
 
                         if (!mounted) return;
                         Navigator.pop(ctx);
-                        _fetchData(); // Refresh
+                        _fetchData(); 
                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laporan Terkirim!")));
 
                       } catch (e) {
@@ -210,8 +209,22 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
         title: const Text("Portal Sekolah"),
         backgroundColor: Colors.teal[700],
         foregroundColor: Colors.white,
-        actions: [IconButton(
-            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+        actions: [
+          // [BARU] Tombol Pengajuan Perubahan (Request)
+          IconButton(
+            icon: const Icon(Icons.edit_document),
+            tooltip: "Ajukan Perubahan",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const CoordinatorRequestScreen()),
+              );
+            },
+          ),
+          
+          // Tombol Profil
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), 
             tooltip: "Profil Saya",
             onPressed: () {
               Navigator.push(
@@ -251,7 +264,7 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     } else if (status == 'received') {
       statusColor = Colors.green;
       statusText = "Selesai - Diterima";
-    } else if (status == 'issue_reported') { // Status baru
+    } else if (status == 'issue_reported') { 
       statusColor = Colors.red;
       statusText = "Masalah Dilaporkan";
     }

@@ -34,7 +34,7 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
   List<CourierModel> _availableCouriers = [];
 
   // --- Form State (Data yang dipilih user) ---
-  DateTime _selectedDate = DateTime.now().add(const Duration(days: 1)); // Default Besok
+  DateTime _selectedDate = DateTime.now(); // Default Besok
   String? _selectedVehicleId;
   String? _selectedCourierId;
   final List<School> _selectedSchools = []; // Sekolah yang dicentang
