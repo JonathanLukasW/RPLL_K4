@@ -53,6 +53,233 @@ class MyApp extends StatelessWidget {
   }
 }
 
+=== FILE: lib\core\screens\profile_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../features/autentikasi/screens/login_screen.dart';
+
+class ProfileScreen extends StatefulWidget {
+  const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  final _passwordController = TextEditingController();
+  bool _isLoading = false;
+  
+  // Data User
+  String _email = "";
+  String _name = "";
+  String _role = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final user = Supabase.instance.client.auth.currentUser;
+    if (user != null) {
+      try {
+        final profile = await Supabase.instance.client
+            .from('profiles')
+            .select()
+            .eq('id', user.id)
+            .single();
+        
+        setState(() {
+          _email = user.email ?? "-";
+          _name = profile['full_name'] ?? "-";
+          _role = profile['role']?.toString().toUpperCase() ?? "-";
+        });
+      } catch (e) {
+        print("Gagal load profil: $e");
+      }
+    }
+  }
+
+  Future<void> _changePassword() async {
+    if (_passwordController.text.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Password minimal 6 karakter")),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      await Supabase.instance.client.auth.updateUser(
+        UserAttributes(password: _passwordController.text),
+      );
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Password berhasil diubah!"), backgroundColor: Colors.green),
+      );
+      _passwordController.clear();
+
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Gagal ganti password: $e"), backgroundColor: Colors.red),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Profil Saya"),
+        backgroundColor: Colors.grey[800], // Netral
+        foregroundColor: Colors.white,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          children: [
+            const SizedBox(height: 20),
+            // Avatar Besar
+            const CircleAvatar(
+              radius: 50,
+              backgroundColor: Colors.grey,
+              child: Icon(Icons.person, size: 60, color: Colors.white),
+            ),
+            const SizedBox(height: 20),
+            
+            // Info User
+            Text(_name, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            Text(_email, style: const TextStyle(fontSize: 16, color: Colors.grey)),
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: Colors.blue[50],
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.blue),
+              ),
+              child: Text(_role, style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
+            ),
+
+            const SizedBox(height: 40),
+            const Divider(),
+            const SizedBox(height: 20),
+
+            // Form Ganti Password
+            const Align(
+              alignment: Alignment.centerLeft,
+              child: Text("Ganti Password", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: _passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: "Password Baru",
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.lock_reset),
+              ),
+            ),
+            const SizedBox(height: 15),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _isLoading ? null : _changePassword,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  backgroundColor: Colors.blue[800],
+                  foregroundColor: Colors.white,
+                ),
+                child: _isLoading 
+                  ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white))
+                  : const Text("UPDATE PASSWORD"),
+              ),
+            ),
+
+            const SizedBox(height: 40),
+            
+            // Tombol Logout Merah
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: _logout,
+                icon: const Icon(Icons.logout, color: Colors.red),
+                label: const Text("LOGOUT", style: TextStyle(color: Colors.red)),
+                style: OutlinedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  side: const BorderSide(color: Colors.red),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+=== FILE: lib\core\services\storage_service.dart ===
+
+import 'dart:io';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:image_picker/image_picker.dart'; // Pastikan sudah ada di pubspec
+
+class StorageService {
+  final _supabase = Supabase.instance.client;
+
+  // Fungsi Pilih Foto dari Kamera/Galeri
+  Future<File?> pickImage(ImageSource source) async {
+    final ImagePicker picker = ImagePicker();
+    final XFile? image = await picker.pickImage(
+      source: source,
+      imageQuality: 70, // Kompres dikit biar gak berat
+      maxWidth: 1024,   // Resize
+    );
+
+    if (image != null) {
+      return File(image.path);
+    }
+    return null;
+  }
+
+  // Fungsi Upload ke Supabase
+  Future<String> uploadEvidence(File file, String folderName) async {
+    try {
+      // Nama file unik: evidence/stops/timestamp.jpg
+      final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final path = '$folderName/$fileName';
+
+      // Upload
+      await _supabase.storage.from('evidence').upload(
+        path,
+        file,
+        fileOptions: const FileOptions(cacheControl: '3600', upsert: false),
+      );
+
+      // Ambil URL Publik
+      final String publicUrl = _supabase.storage.from('evidence').getPublicUrl(path);
+      return publicUrl;
+      
+    } catch (e) {
+      throw Exception("Gagal upload foto: $e");
+    }
+  }
+}
+
 === FILE: lib\features\admin_sppg\screens\add_coordinator_screen.dart ===
 
 import 'package:flutter/material.dart';
@@ -768,6 +995,144 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   }
 }
 
+=== FILE: lib\features\admin_sppg\screens\add_teacher_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../services/teacher_service.dart';
+import '../services/school_service.dart';
+import '../../../models/school_model.dart';
+
+class AddTeacherScreen extends StatefulWidget {
+  const AddTeacherScreen({super.key});
+
+  @override
+  State<AddTeacherScreen> createState() => _AddTeacherScreenState();
+}
+
+class _AddTeacherScreenState extends State<AddTeacherScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _nameController = TextEditingController();
+  final _classController = TextEditingController(); // Input Nama Kelas
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  
+  final SchoolService _schoolService = SchoolService();
+  List<School> _schools = [];
+  String? _selectedSchoolId;
+  bool _isSubmitting = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSchools();
+  }
+
+  Future<void> _fetchSchools() async {
+    try {
+      final data = await _schoolService.getMySchools();
+      setState(() => _schools = data);
+    } catch (e) { }
+  }
+
+  Future<void> _submit() async {
+    if (_formKey.currentState!.validate()) {
+      setState(() => _isSubmitting = true);
+      try {
+        await TeacherService().createTeacherAccount(
+          email: _emailController.text.trim(),
+          password: _passwordController.text,
+          fullName: _nameController.text.trim(),
+          schoolId: _selectedSchoolId!,
+          className: _classController.text.trim(),
+        );
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Akun Wali Kelas Berhasil Dibuat!"), backgroundColor: Colors.green),
+        );
+        Navigator.pop(context, true);
+
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+      } finally {
+        if (mounted) setState(() => _isSubmitting = false);
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Tambah Akun Wali Kelas"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                DropdownButtonFormField<String>(
+                  decoration: const InputDecoration(labelText: "Pilih Sekolah", border: OutlineInputBorder(), prefixIcon: Icon(Icons.school)),
+                  value: _selectedSchoolId,
+                  items: _schools.map((school) {
+                    return DropdownMenuItem(value: school.id, child: Text(school.name, overflow: TextOverflow.ellipsis));
+                  }).toList(),
+                  onChanged: (val) => setState(() => _selectedSchoolId = val),
+                  validator: (val) => val == null ? "Wajib pilih sekolah" : null,
+                ),
+                const SizedBox(height: 15),
+
+                TextFormField(
+                  controller: _nameController,
+                  decoration: const InputDecoration(labelText: "Nama Guru / Penanggung Jawab", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
+                  validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                ),
+                const SizedBox(height: 15),
+
+                TextFormField(
+                  controller: _classController,
+                  decoration: const InputDecoration(labelText: "Nama Kelas (Misal: 7A)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.class_)),
+                  validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                ),
+                const SizedBox(height: 15),
+
+                TextFormField(
+                  controller: _emailController,
+                  decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                  keyboardType: TextInputType.emailAddress,
+                  validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                ),
+                const SizedBox(height: 15),
+                TextFormField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+                  validator: (v) => v!.length < 6 ? "Minimal 6 karakter" : null,
+                ),
+                const SizedBox(height: 30),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: _isSubmitting ? null : _submit,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
+                    child: _isSubmitting 
+                      ? const CircularProgressIndicator(color: Colors.white) 
+                      : const Text("BUAT AKUN WALI KELAS", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  ),
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 === FILE: lib\features\admin_sppg\screens\add_transport_screen.dart ===
 
 import 'package:flutter/material.dart';
@@ -890,6 +1255,192 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
           ),
         ),
       ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\complaint_list_screen.dart ===
+
+import 'package:flutter/material.dart';
+import '../services/complaint_service.dart';
+
+class ComplaintListScreen extends StatefulWidget {
+  const ComplaintListScreen({super.key});
+
+  @override
+  State<ComplaintListScreen> createState() => _ComplaintListScreenState();
+}
+
+class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final ComplaintService _service = ComplaintService();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  // --- DIALOG RESPON ADMIN ---
+  void _showRespondDialog(String table, String id, String currentNote) {
+    final responseController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Beri Instruksi"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("Masalah:", style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(currentNote, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 15),
+            TextField(
+              controller: responseController,
+              decoration: const InputDecoration(
+                labelText: "Instruksi Tindak Lanjut",
+                hintText: "Contoh: Segera retur, kami kirim pengganti.",
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 3,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _service.respondToComplaint(table: table, id: id, response: responseController.text);
+              setState(() {}); // Refresh list
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Instruksi Terkirim!")));
+              }
+            },
+            child: const Text("Kirim"),
+          )
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Pusat Pengaduan"),
+        backgroundColor: Colors.red[700], // Warna Merah biar kerasa 'Urgent'
+        foregroundColor: Colors.white,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: "Dari Koordinator"),
+            Tab(text: "Dari Wali Kelas"),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildCoordinatorList(),
+          _buildTeacherList(),
+        ],
+      ),
+    );
+  }
+
+  // TAB 1: LAPORAN KOORDINATOR
+  Widget _buildCoordinatorList() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getCoordinatorComplaints(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return const Center(child: Text("Tidak ada laporan dari Koordinator."));
+
+        return ListView.builder(
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            final schoolName = item['schools']['name'];
+            final note = item['reception_notes'];
+            final isResolved = item['admin_response'] != null;
+
+            return Card(
+              margin: const EdgeInsets.all(8),
+              color: isResolved ? Colors.grey[200] : Colors.red[50],
+              child: ListTile(
+                leading: Icon(Icons.warning, color: isResolved ? Colors.grey : Colors.red),
+                title: Text(schoolName, style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Laporan: $note"),
+                    if (isResolved) Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                trailing: isResolved 
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : ElevatedButton(
+                        onPressed: () => _showRespondDialog('delivery_stops', item['id'], note),
+                        child: const Text("Respon"),
+                      ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // TAB 2: LAPORAN WALI KELAS
+  Widget _buildTeacherList() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getTeacherComplaints(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return const Center(child: Text("Tidak ada laporan dari Wali Kelas."));
+
+        return ListView.builder(
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            // Struktur JSON agak dalam karena join berlapis
+            final schoolName = item['delivery_stops']['schools']['name'];
+            final className = item['class_name'];
+            final issue = item['issue_type'];
+            final note = item['notes'];
+            final isResolved = item['admin_response'] != null;
+
+            return Card(
+              margin: const EdgeInsets.all(8),
+              color: isResolved ? Colors.grey[200] : Colors.red[50],
+              child: ListTile(
+                leading: const Icon(Icons.report_problem, color: Colors.orange),
+                title: Text("$schoolName - Kls $className"),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Masalah: $issue"),
+                    Text("Catatan: $note"),
+                    if (isResolved) Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+                trailing: isResolved 
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : ElevatedButton(
+                        onPressed: () => _showRespondDialog('class_receptions', item['id'], "$issue: $note"),
+                        child: const Text("Respon"),
+                      ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -1176,7 +1727,7 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
 === FILE: lib\features\admin_sppg\screens\dashboard_admin_screen.dart ===
 
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart'; 
+import 'package:intl/intl.dart';
 
 // Import Auth & Login
 import '../../../features/autentikasi/services/auth_service.dart';
@@ -1187,22 +1738,29 @@ import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
 import '../../../models/route_model.dart';
 import '../../../models/courier_model.dart';
+// Asumsi model Coordinator & Teacher sudah dipisah ke folder models,
+// jika masih di dalam file service, sesuaikan importnya.
+import '../services/coordinator_service.dart';
+import '../services/teacher_service.dart';
 
 // Import Services
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
 import '../services/route_service.dart';
-// Note: CoordinatorModel ada di dalam file service ini berdasarkan langkah sebelumnya
-import '../services/coordinator_service.dart'; 
 
-// Import Forms (Halaman Tambah)
+// Import Forms & Screens
 import 'add_school_screen.dart';
 import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
-import 'add_coordinator_screen.dart'; // Import Form Koordinator
+import 'add_coordinator_screen.dart';
+import 'add_teacher_screen.dart';
 import 'create_route_screen.dart';
-import 'menu_management_screen.dart'; 
+import 'menu_management_screen.dart';
+import 'complaint_list_screen.dart';
+import 'statistics_screen.dart';
+
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardAdminScreen extends StatefulWidget {
   const DashboardAdminScreen({super.key});
@@ -1212,15 +1770,22 @@ class DashboardAdminScreen extends StatefulWidget {
 }
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
-  int _selectedIndex = 0; 
-  // Index: 0=Sekolah, 1=Armada, 2=Kurir, 3=Koordinator, 4=Rute
+  int _selectedIndex = 0;
+  // Index:
+  // 0: Sekolah
+  // 1: Armada
+  // 2: Kurir
+  // 3: Koordinator
+  // 4: Wali Kelas
+  // 5: Rute
 
   // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
   final CoordinatorService _coordinatorService = CoordinatorService();
-  final RouteService _routeService = RouteService(); 
+  final TeacherService _teacherService = TeacherService();
+  final RouteService _routeService = RouteService();
 
   // --- FUNGSI LOGOUT ---
   Future<void> _logout() async {
@@ -1235,12 +1800,40 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   // --- JUDUL APP BAR ---
   String _getAppBarTitle() {
     switch (_selectedIndex) {
-      case 0: return "Kelola Sekolah";
-      case 1: return "Kelola Armada";
-      case 2: return "Kelola Kurir";
-      case 3: return "Kelola Koordinator";
-      case 4: return "Jadwal & Rute";
-      default: return "Admin SPPG";
+      case 0:
+        return "Kelola Sekolah";
+      case 1:
+        return "Kelola Armada";
+      case 2:
+        return "Kelola Kurir";
+      case 3:
+        return "Kelola Koordinator";
+      case 4:
+        return "Kelola Wali Kelas";
+      case 5:
+        return "Jadwal & Rute";
+      default:
+        return "Admin SPPG";
+    }
+  }
+
+  // --- LABEL FAB ---
+  String _getFabLabel() {
+    switch (_selectedIndex) {
+      case 0:
+        return "Sekolah";
+      case 1:
+        return "Mobil";
+      case 2:
+        return "Kurir";
+      case 3:
+        return "Koord";
+      case 4:
+        return "Wali";
+      case 5:
+        return "Buat Rute";
+      default:
+        return "Tambah";
     }
   }
 
@@ -1252,6 +1845,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
+          // [BARU] Tombol Pusat Pengaduan
+          IconButton(
+            icon: const Icon(
+              Icons.notification_important,
+              color: Colors.redAccent,
+            ), // Ikon Merah
+            tooltip: "Laporan Pengaduan",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ComplaintListScreen()),
+              );
+            },
+          ),
           // Tombol Manajemen Menu
           IconButton(
             icon: const Icon(Icons.restaurant_menu),
@@ -1263,20 +1870,40 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               );
             },
           ),
+          IconButton(
+            icon: const Icon(Icons.bar_chart), // Ikon Grafik
+            tooltip: "Laporan Kinerja",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const StatisticsScreen()),
+              );
+            },
+          ),
           // Tombol Logout
-          IconButton(icon: const Icon(Icons.logout), onPressed: _logout),
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
         ],
       ),
-      
-      // --- ISI BODY (5 TAB) ---
+
+      // --- ISI BODY (6 TAB) ---
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildSchoolList(),      // 0
-          _buildTransportList(),   // 1
-          _buildCourierList(),     // 2
-          _buildCoordinatorList(), // 3 (BARU)
-          _buildRouteList(),       // 4
+          _buildSchoolList(), // 0
+          _buildTransportList(), // 1
+          _buildCourierList(), // 2
+          _buildCoordinatorList(), // 3
+          _buildTeacherList(), // 4
+          _buildRouteList(), // 5
         ],
       ),
 
@@ -1285,56 +1912,61 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         icon: const Icon(Icons.add),
-        // Label dinamis sesuai tab
         label: Text(_getFabLabel()),
         onPressed: () {
           Widget nextPage;
-          // Tentukan halaman tujuan berdasarkan tab
-          if (_selectedIndex == 0) {
+          if (_selectedIndex == 0)
             nextPage = const AddSchoolScreen();
-          } else if (_selectedIndex == 1) {
+          else if (_selectedIndex == 1)
             nextPage = const AddTransportScreen();
-          } else if (_selectedIndex == 2) {
+          else if (_selectedIndex == 2)
             nextPage = const AddCourierScreen();
-          } else if (_selectedIndex == 3) {
-            nextPage = const AddCoordinatorScreen(); // Halaman Tambah Koordinator
-          } else {
+          else if (_selectedIndex == 3)
+            nextPage = const AddCoordinatorScreen();
+          else if (_selectedIndex == 4)
+            nextPage = const AddTeacherScreen();
+          else
             nextPage = const CreateRouteScreen();
-          }
 
           // Navigasi & Refresh setelah kembali
-          Navigator.push(context, MaterialPageRoute(builder: (_) => nextPage))
-              .then((val) { if (val == true) setState(() {}); });
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => nextPage),
+          ).then((val) {
+            if (val == true) setState(() {});
+          });
         },
       ),
 
-      // --- MENU BAWAH (5 ITEM) ---
+      // --- MENU BAWAH (6 ITEM) ---
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
-        type: BottomNavigationBarType.fixed, 
+        type: BottomNavigationBarType.fixed, // Wajib fixed karena item > 3
         selectedItemColor: Colors.orange[800],
         unselectedItemColor: Colors.grey,
         onTap: (index) => setState(() => _selectedIndex = index),
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.school), label: "Sekolah"),
-          BottomNavigationBarItem(icon: Icon(Icons.local_shipping), label: "Armada"),
-          BottomNavigationBarItem(icon: Icon(Icons.person_pin_circle), label: "Kurir"),
-          BottomNavigationBarItem(icon: Icon(Icons.supervisor_account), label: "Koord"),
-          BottomNavigationBarItem(icon: Icon(Icons.map_outlined), label: "Rute"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.local_shipping),
+            label: "Armada",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.person_pin_circle),
+            label: "Kurir",
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.supervisor_account),
+            label: "Koord",
+          ),
+          BottomNavigationBarItem(icon: Icon(Icons.class_), label: "Wali"),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.map_outlined),
+            label: "Rute",
+          ),
         ],
       ),
     );
-  }
-
-  String _getFabLabel() {
-    switch (_selectedIndex) {
-      case 0: return "Sekolah";
-      case 1: return "Mobil";
-      case 2: return "Kurir";
-      case 3: return "Koord";
-      case 4: return "Buat Rute";
-      default: return "Tambah";
-    }
   }
 
   // ===========================================================================
@@ -1344,9 +1976,11 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
         final schools = snapshot.data ?? [];
-        if (schools.isEmpty) return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
+        if (schools.isEmpty)
+          return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
@@ -1357,18 +1991,37 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.orange, child: Icon(Icons.school, color: Colors.white)),
-                title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text("Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}"),
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.orange,
+                  child: Icon(Icons.school, color: Colors.white),
+                ),
+                title: Text(
+                  school.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  "Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}",
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    if (school.isHighRisk) const Padding(padding: EdgeInsets.only(right:8), child: Icon(Icons.warning, color: Colors.red)),
+                    if (school.isHighRisk)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 8),
+                        child: Icon(Icons.warning, color: Colors.red),
+                      ),
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () {
-                        Navigator.push(context, MaterialPageRoute(builder: (_) => AddSchoolScreen(schoolToEdit: school)))
-                            .then((val) { if (val == true) setState(() {}); });
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                AddSchoolScreen(schoolToEdit: school),
+                          ),
+                        ).then((val) {
+                          if (val == true) setState(() {});
+                        });
                       },
                     ),
                   ],
@@ -1388,9 +2041,14 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<Vehicle>>(
       future: _vehicleService.getMyVehicles(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
         final vehicles = snapshot.data ?? [];
-        if (vehicles.isEmpty) return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
+        if (vehicles.isEmpty)
+          return _buildEmptyState(
+            "Belum ada kendaraan.",
+            Icons.local_shipping_outlined,
+          );
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
@@ -1401,25 +2059,44 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: Icon(Icons.directions_car, color: vehicle.isActive ? Colors.green : Colors.grey, size: 32),
-                title: Text(vehicle.plateNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text("Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}"),
+                leading: Icon(
+                  Icons.directions_car,
+                  color: vehicle.isActive ? Colors.green : Colors.grey,
+                  size: 32,
+                ),
+                title: Text(
+                  vehicle.plateNumber,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(
+                  "Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}",
+                ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () {
-                         Navigator.push(context, MaterialPageRoute(builder: (_) => AddTransportScreen(vehicleToEdit: vehicle)))
-                            .then((val) { if (val == true) setState(() {}); });
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                AddTransportScreen(vehicleToEdit: vehicle),
+                          ),
+                        ).then((val) {
+                          if (val == true) setState(() {});
+                        });
                       },
                     ),
                     Switch(
                       value: vehicle.isActive,
                       activeColor: Colors.green,
                       onChanged: (val) async {
-                        await _vehicleService.toggleStatus(vehicle.id, vehicle.isActive);
-                        setState(() {}); 
+                        await _vehicleService.toggleStatus(
+                          vehicle.id,
+                          vehicle.isActive,
+                        );
+                        setState(() {});
                       },
                     ),
                   ],
@@ -1439,9 +2116,14 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return FutureBuilder<List<CourierModel>>(
       future: _courierService.getMyCouriers(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
         final couriers = snapshot.data ?? [];
-        if (couriers.isEmpty) return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
+        if (couriers.isEmpty)
+          return _buildEmptyState(
+            "Belum ada akun kurir.",
+            Icons.person_off_outlined,
+          );
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
@@ -1452,9 +2134,15 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               elevation: 2,
               margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
               child: ListTile(
-                leading: const CircleAvatar(backgroundColor: Colors.blueGrey, child: Icon(Icons.person, color: Colors.white)),
-                title: Text(courier.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Text(courier.email), 
+                leading: const CircleAvatar(
+                  backgroundColor: Colors.blueGrey,
+                  child: Icon(Icons.person, color: Colors.white),
+                ),
+                title: Text(
+                  courier.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Text(courier.email),
               ),
             );
           },
@@ -1464,15 +2152,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   }
 
   // ===========================================================================
-  // TAB 4: DAFTAR KOORDINATOR (BARU)
+  // TAB 4: DAFTAR KOORDINATOR
   // ===========================================================================
   Widget _buildCoordinatorList() {
     return FutureBuilder<List<CoordinatorModel>>(
       future: _coordinatorService.getMyCoordinators(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
         final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada koordinator.", Icons.supervised_user_circle);
+        if (data.isEmpty)
+          return _buildEmptyState(
+            "Belum ada koordinator.",
+            Icons.supervised_user_circle,
+          );
 
         return ListView.builder(
           padding: const EdgeInsets.all(10),
@@ -1481,8 +2174,14 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
             elevation: 2,
             margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
             child: ListTile(
-              leading: const CircleAvatar(backgroundColor: Colors.teal, child: Icon(Icons.person, color: Colors.white)),
-              title: Text(data[i].name, style: const TextStyle(fontWeight: FontWeight.bold)),
+              leading: const CircleAvatar(
+                backgroundColor: Colors.teal,
+                child: Icon(Icons.person, color: Colors.white),
+              ),
+              title: Text(
+                data[i].name,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
               subtitle: Text("${data[i].schoolName}\n${data[i].email}"),
               isThreeLine: true,
             ),
@@ -1493,16 +2192,57 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   }
 
   // ===========================================================================
-  // TAB 5: DAFTAR RUTE PENGIRIMAN
+  // TAB 5: DAFTAR WALI KELAS
+  // ===========================================================================
+  Widget _buildTeacherList() {
+    return FutureBuilder<List<TeacherModel>>(
+      future: _teacherService.getMyTeachers(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty)
+          return _buildEmptyState("Belum ada wali kelas.", Icons.class_);
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: data.length,
+          itemBuilder: (ctx, i) => Card(
+            elevation: 2,
+            margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 8),
+            child: ListTile(
+              leading: const CircleAvatar(
+                backgroundColor: Colors.indigo,
+                child: Icon(Icons.class_, color: Colors.white),
+              ),
+              title: Text(
+                data[i].name,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+              ),
+              subtitle: Text(
+                "${data[i].schoolName} - Kelas ${data[i].className}\n${data[i].email}",
+              ),
+              isThreeLine: true,
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ===========================================================================
+  // TAB 6: DAFTAR RUTE PENGIRIMAN
   // ===========================================================================
   Widget _buildRouteList() {
     return FutureBuilder<List<DeliveryRoute>>(
       future: _routeService.getMyRoutes(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
-        
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
+
         final routes = snapshot.data ?? [];
-        if (routes.isEmpty) return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
+        if (routes.isEmpty)
+          return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(12),
@@ -1510,11 +2250,17 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           itemBuilder: (context, index) {
             final route = routes[index];
             final date = DateTime.tryParse(route.date) ?? DateTime.now();
-            final dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
+            // Format tanggal aman
+            String dateStr = route.date;
+            try {
+              dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
+            } catch (_) {}
 
             return Card(
               elevation: 3,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
               margin: const EdgeInsets.only(bottom: 12),
               child: Padding(
                 padding: const EdgeInsets.all(12),
@@ -1523,17 +2269,34 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text(dateStr, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                        Text(
+                          dateStr,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
-                            color: _getStatusColor(route.status).withOpacity(0.1),
+                            color: _getStatusColor(
+                              route.status,
+                            ).withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _getStatusColor(route.status)),
+                            border: Border.all(
+                              color: _getStatusColor(route.status),
+                            ),
                           ),
                           child: Text(
                             route.status.toUpperCase(),
-                            style: TextStyle(color: _getStatusColor(route.status), fontSize: 10, fontWeight: FontWeight.bold),
+                            style: TextStyle(
+                              color: _getStatusColor(route.status),
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                            ),
                           ),
                         ),
                       ],
@@ -1543,11 +2306,24 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       children: [
                         const Icon(Icons.person, size: 16, color: Colors.grey),
                         const SizedBox(width: 5),
-                        Text(route.courierName ?? "Kurir Hapus", style: const TextStyle(fontSize: 14)),
+                        Text(
+                          route.courierName ?? "Kurir Hapus",
+                          style: const TextStyle(fontSize: 14),
+                        ),
                         const Spacer(),
-                        const Icon(Icons.local_shipping, size: 16, color: Colors.grey),
+                        const Icon(
+                          Icons.local_shipping,
+                          size: 16,
+                          color: Colors.grey,
+                        ),
                         const SizedBox(width: 5),
-                        Text(route.vehiclePlate ?? "-", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500)),
+                        Text(
+                          route.vehiclePlate ?? "-",
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
                       ],
                     ),
                   ],
@@ -1569,7 +2345,10 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           const SizedBox(height: 10),
           Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
           const SizedBox(height: 5),
-          const Text("Tekan tombol (+) di bawah.", style: TextStyle(fontSize: 12, color: Colors.grey)),
+          const Text(
+            "Tekan tombol (+) di bawah.",
+            style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
         ],
       ),
     );
@@ -1577,12 +2356,16 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'completed': return Colors.green;
-      case 'active': return Colors.blue;
-      default: return Colors.orange; // pending
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      default:
+        return Colors.orange;
     }
   }
 }
+
 
 === FILE: lib\features\admin_sppg\screens\menu_management_screen.dart ===
 
@@ -1694,6 +2477,202 @@ class _MenuManagementScreenState extends State<MenuManagementScreen> {
         onPressed: () => _navigateToAddEdit(context),
       ),
     );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\screens\statistics_screen.dart ===
+
+import 'package:fl_chart/fl_chart.dart'; // Import Library Grafik
+import 'package:flutter/material.dart';
+import '../services/stats_service.dart';
+
+class StatisticsScreen extends StatefulWidget {
+  const StatisticsScreen({super.key});
+
+  @override
+  State<StatisticsScreen> createState() => _StatisticsScreenState();
+}
+
+class _StatisticsScreenState extends State<StatisticsScreen> {
+  final StatsService _statsService = StatsService();
+  
+  Map<String, int>? _stats;
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadStats();
+  }
+
+  Future<void> _loadStats() async {
+    try {
+      final data = await _statsService.getDeliveryStats();
+      setState(() {
+        _stats = data;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Laporan Kinerja"),
+        backgroundColor: Colors.indigo[800],
+        foregroundColor: Colors.white,
+      ),
+      body: _isLoading 
+          ? const Center(child: CircularProgressIndicator())
+          : _stats == null 
+              ? const Center(child: Text("Gagal memuat data."))
+              : Padding(
+                  padding: const EdgeInsets.all(16.0),
+                  child: Column(
+                    children: [
+                      const Text(
+                        "Status Pengiriman Keseluruhan",
+                        style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 30),
+                      
+                      // --- GRAFIK LINGKARAN (PIE CHART) ---
+                      SizedBox(
+                        height: 250,
+                        child: PieChart(
+                          PieChartData(
+                            sectionsSpace: 2,
+                            centerSpaceRadius: 50,
+                            sections: [
+                              // Bagian Hijau (Sukses)
+                              PieChartSectionData(
+                                color: Colors.green,
+                                value: _stats!['received']!.toDouble(),
+                                title: '${_stats!['received']}',
+                                radius: 60,
+                                titleStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                              // Bagian Merah (Masalah)
+                              PieChartSectionData(
+                                color: Colors.red,
+                                value: _stats!['issues']!.toDouble(),
+                                title: '${_stats!['issues']}',
+                                radius: 60,
+                                titleStyle: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                              // Bagian Abu (Pending)
+                              PieChartSectionData(
+                                color: Colors.grey,
+                                value: _stats!['pending']!.toDouble(),
+                                title: '${_stats!['pending']}',
+                                radius: 50,
+                                titleStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 30),
+
+                      // --- KETERANGAN (LEGEND) ---
+                      _buildLegend(Colors.green, "Sukses Diterima", _stats!['received']!),
+                      _buildLegend(Colors.red, "Ada Masalah/Komplain", _stats!['issues']!),
+                      _buildLegend(Colors.grey, "Dalam Proses", _stats!['pending']!),
+                      
+                      const Divider(height: 40),
+                      
+                      // Ringkasan Total
+                      Card(
+                        color: Colors.indigo[50],
+                        child: ListTile(
+                          leading: const Icon(Icons.analytics, color: Colors.indigo),
+                          title: const Text("Total Aktivitas Pengiriman"),
+                          trailing: Text(
+                            "${_stats!['total']}", 
+                            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.indigo)
+                          ),
+                        ),
+                      )
+                    ],
+                  ),
+                ),
+    );
+  }
+
+  Widget _buildLegend(Color color, String text, int value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 20),
+      child: Row(
+        children: [
+          Container(width: 16, height: 16, color: color),
+          const SizedBox(width: 8),
+          Text(text, style: const TextStyle(fontSize: 16)),
+          const Spacer(),
+          Text("$value", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+        ],
+      ),
+    );
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\complaint_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
+
+class ComplaintService {
+  final _supabase = Supabase.instance.client;
+
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+    return profile['sppg_id'];
+  }
+
+  // 1. AMBIL MASALAH DARI KOORDINATOR (Kemasan/Jumlah)
+  Future<List<Map<String, dynamic>>> getCoordinatorComplaints() async {
+    final mySppgId = await _getMySppgId();
+    
+    // Ambil delivery_stops yang statusnya 'issue_reported'
+    // Dan join ke sekolah untuk tau nama sekolahnya
+    final response = await _supabase
+        .from('delivery_stops')
+        .select('*, schools(name), delivery_routes!inner(sppg_id)')
+        .eq('delivery_routes.sppg_id', mySppgId)
+        .eq('status', 'issue_reported')
+        .order('created_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  // 2. AMBIL MASALAH DARI WALI KELAS (Kualitas Makanan)
+  Future<List<Map<String, dynamic>>> getTeacherComplaints() async {
+    final mySppgId = await _getMySppgId();
+
+    // Join class_receptions -> delivery_stops -> delivery_routes -> filter SPPG
+    final response = await _supabase
+        .from('class_receptions')
+        .select('*, delivery_stops!inner(schools(name), delivery_routes!inner(sppg_id))')
+        .eq('delivery_stops.delivery_routes.sppg_id', mySppgId)
+        .not('issue_type', 'is', null) // Ambil yang issue_type nya TIDAK NULL
+        .order('created_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(response);
+  }
+
+  // 3. KIRIM INSTRUKSI (TINDAK LANJUT)
+  Future<void> respondToComplaint({
+    required String table, // 'delivery_stops' atau 'class_receptions'
+    required String id,
+    required String response,
+  }) async {
+    await _supabase.from(table).update({
+      'admin_response': response,
+      'resolved_at': DateTime.now().toIso8601String(),
+    }).eq('id', id);
   }
 }
 
@@ -2247,6 +3226,175 @@ class SchoolService {
   }
 }
 
+=== FILE: lib\features\admin_sppg\services\stats_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class StatsService {
+  final _supabase = Supabase.instance.client;
+
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+    return profile['sppg_id'];
+  }
+
+  // Hitung status pengiriman (Sukses vs Masalah vs Pending)
+  Future<Map<String, int>> getDeliveryStats() async {
+    try {
+      final mySppgId = await _getMySppgId();
+
+      // Ambil semua data stops yang terkait dengan SPPG ini
+      // Join: delivery_routes -> filter SPPG
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('status, delivery_routes!inner(sppg_id)')
+          .eq('delivery_routes.sppg_id', mySppgId);
+
+      final List<dynamic> data = response;
+
+      int received = 0; // Sukses
+      int issues = 0;   // Masalah
+      int pending = 0;  // Belum selesai
+
+      for (var item in data) {
+        final status = item['status'];
+        if (status == 'received') {
+          received++;
+        } else if (status == 'issue_reported') {
+          issues++;
+        } else {
+          pending++; // pending, active, completed (belum confirm)
+        }
+      }
+
+      return {
+        'received': received,
+        'issues': issues,
+        'pending': pending,
+        'total': data.length,
+      };
+
+    } catch (e) {
+      throw Exception("Gagal hitung statistik: $e");
+    }
+  }
+}
+
+=== FILE: lib\features\admin_sppg\services\teacher_service.dart ===
+
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class TeacherModel {
+  final String id;
+  final String name;
+  final String email;
+  final String schoolName;
+  final String className;
+
+  TeacherModel({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.schoolName,
+    required this.className,
+  });
+
+  factory TeacherModel.fromJson(Map<String, dynamic> json) {
+    final school = json['schools'] != null ? json['schools']['name'] : 'Belum ditentukan';
+    return TeacherModel(
+      id: json['id'].toString(),
+      name: json['full_name'] ?? 'Tanpa Nama',
+      email: json['email'] ?? '-',
+      schoolName: school,
+      className: json['class_name'] ?? '-',
+    );
+  }
+}
+
+class TeacherService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL LIST WALI KELAS
+  Future<List<TeacherModel>> getMyTeachers() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      final response = await _supabase
+          .from('profiles')
+          .select('id, full_name, email, class_name, schools(name)') 
+          .eq('sppg_id', mySppgId) 
+          .eq('role', 'walikelas'); 
+
+      final List<dynamic> data = response;
+      return data.map((json) => TeacherModel.fromJson(json)).toList();
+    } catch (e) {
+      throw Exception('Gagal ambil data wali kelas: $e');
+    }
+  }
+
+  // 2. BUAT AKUN WALI KELAS
+  Future<void> createTeacherAccount({
+    required String email,
+    required String password,
+    required String fullName,
+    required String schoolId,
+    required String className, // Input Baru
+  }) async {
+    const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
+    const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
+
+    try {
+      final myUserId = _supabase.auth.currentUser!.id;
+      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', myUserId).single();
+      final String mySppgId = profile['sppg_id'];
+
+      // A. Request Signup
+      final url = Uri.parse('$projectUrl/auth/v1/signup');
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json', 'apikey': anonKey},
+        body: jsonEncode({
+          'email': email.trim(),
+          'password': password,
+          'data': { 'full_name': fullName }
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final responseData = jsonDecode(response.body);
+        String? newUserId = responseData['id'] ?? responseData['user']['id']; 
+
+        if (newUserId == null) throw Exception("Gagal dapat ID User.");
+
+        // B. Simpan ke Profiles
+        await _supabase.from('profiles').insert({
+          'id': newUserId,
+          'full_name': fullName,
+          'email': email.trim(),
+          'role': 'walikelas',
+          'sppg_id': mySppgId,
+          'school_id': schoolId,
+          'class_name': className,
+        });
+
+      } else {
+        final errorData = jsonDecode(response.body);
+        throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
+      }
+    } catch (e) {
+      if (e.toString().contains("User already registered")) {
+        throw Exception("Email sudah terdaftar!");
+      }
+      throw Exception('Gagal buat akun: $e');
+    }
+  }
+}
+
 === FILE: lib\features\admin_sppg\services\vehicle_service.dart ===
 
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -2324,11 +3472,12 @@ class VehicleService {
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// Import Dashboard
+// --- IMPORT SEMUA DASHBOARD ---
 import '../../pengawas/screens/dashboard_bgn_screen.dart';
 import '../../admin_sppg/screens/dashboard_admin_screen.dart';
 import '../../kurir/screens/dashboard_kurir_screen.dart';
 import '../../koordinator/screens/dashboard_koordinator_screen.dart';
+import '../../walikelas/screens/dashboard_teacher_screen.dart'; // [BARU] Dashboard Wali Kelas
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -2357,8 +3506,10 @@ class _LoginScreenState extends State<LoginScreen> {
       }
 
       // 1. Proses Login Auth Supabase
-      final AuthResponse res = await Supabase.instance.client.auth
-          .signInWithPassword(email: email, password: password);
+      final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
+        email: email,
+        password: password,
+      );
 
       if (res.user == null) {
         throw Exception("Login gagal. Periksa kembali email & password Anda.");
@@ -2374,39 +3525,49 @@ class _LoginScreenState extends State<LoginScreen> {
           .eq('id', userId)
           .single();
 
-      // [PERBAIKAN KRUSIAL] - Normalisasi string role: kecilkan dan buang spasi
-      final String rawRole = profileData['role'] ?? 'unknown';
-      final String role = rawRole
-          .toLowerCase()
-          .trim(); // <-- FIX RLS ERROR DISINI
+      if (profileData == null) {
+        throw Exception("Profil user tidak ditemukan di database.");
+      }
 
-      print("Role yang Diterima dari DB: $rawRole");
-      print("Role yang Digunakan (Normalized): $role");
+      // Normalisasi string role: kecilkan dan buang spasi (PENTING)
+      final String rawRole = profileData['role'] ?? 'unknown';
+      final String role = rawRole.toLowerCase().trim(); 
+
+      print("Login User: $email");
+      print("Role Detected: $role");
 
       // 3. Resepsionis Pintar Mengarahkan User
       if (!mounted) return;
 
       if (role == 'bgn') {
+        // Arahkan ke Dashboard Pengawas
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardBgnScreen()),
         );
       } else if (role == 'admin_sppg') {
+        // Arahkan ke Dashboard Admin SPPG
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardAdminScreen()),
         );
       } else if (role == 'kurir') {
-        // <-- Sekarang comparison lebih aman
+        // Arahkan ke Dashboard Kurir
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKurirScreen()),
         );
       } else if (role == 'koordinator') {
-        // <--- TAMBAH INI
+        // Arahkan ke Dashboard Koordinator
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const DashboardKoordinatorScreen()),
+        );
+      } else if (role == 'walikelas') { 
+        // [BARU] Arahkan ke Dashboard Wali Kelas
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const DashboardTeacherScreen()),
         );
       } else {
         // Role tidak dikenali
@@ -2419,13 +3580,12 @@ class _LoginScreenState extends State<LoginScreen> {
         // Logout lagi agar sesi yang salah terhapus
         await Supabase.instance.client.auth.signOut();
       }
+
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(
-            "Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}",
-          ),
+          content: Text("Gagal Masuk: ${e.toString().replaceAll('Exception:', '')}"),
           backgroundColor: Colors.red,
         ),
       );
@@ -2437,7 +3597,13 @@ class _LoginScreenState extends State<LoginScreen> {
       }
     }
   }
-  // ... (kode dispose dan build tetap sama) ...
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2446,10 +3612,11 @@ class _LoginScreenState extends State<LoginScreen> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(24.0),
           child: Column(
-            // ... (kode UI form) ...
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(Icons.security, size: 80, color: Colors.blue),
               const SizedBox(height: 20),
+              
               const Text(
                 "MBG Monitoring",
                 style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
@@ -2460,6 +3627,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
+              // Input Email
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
@@ -2470,6 +3638,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 16),
+
+              // Input Password
               TextField(
                 controller: _passwordController,
                 obscureText: true,
@@ -2480,6 +3650,8 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
               ),
               const SizedBox(height: 30),
+
+              // Tombol Masuk
               SizedBox(
                 width: double.infinity,
                 height: 50,
@@ -2496,10 +3668,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       ? const CircularProgressIndicator(color: Colors.white)
                       : const Text(
                           "MASUK",
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                         ),
                 ),
               ),
@@ -2509,15 +3678,7 @@ class _LoginScreenState extends State<LoginScreen> {
       ),
     );
   }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
 }
-
 
 === FILE: lib\features\autentikasi\services\auth_service.dart ===
 
@@ -2579,10 +3740,16 @@ class AuthService {
 
 === FILE: lib\features\koordinator\screens\dashboard_koordinator_screen.dart ===
 
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+
 import '../../autentikasi/screens/login_screen.dart';
 import '../services/receiving_service.dart';
+// Import Storage Service baru
+import '../../../core/services/storage_service.dart'; 
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardKoordinatorScreen extends StatefulWidget {
   const DashboardKoordinatorScreen({super.key});
@@ -2593,6 +3760,7 @@ class DashboardKoordinatorScreen extends StatefulWidget {
 
 class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen> {
   final ReceivingService _service = ReceivingService();
+  final StorageService _storageService = StorageService();
   
   Map<String, dynamic>? _deliveryData;
   bool _isLoading = true;
@@ -2609,7 +3777,7 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
       final data = await _service.getTodayDelivery();
       if (mounted) setState(() => _deliveryData = data);
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      // ignore
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -2624,49 +3792,156 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     );
   }
 
-  // --- DIALOG KONFIRMASI ---
+  // --- LOGIKA DIALOG KONFIRMASI / LAPOR MASALAH ---
   void _showConfirmationDialog(String stopId) {
     final qtyController = TextEditingController();
     final noteController = TextEditingController();
     
+    // State lokal dialog
+    File? photoFile;
+    bool isProblem = false; // Toggle: Aman / Masalah
+    bool isSubmitting = false;
+
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Konfirmasi Penerimaan"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: qtyController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: "Jumlah Diterima (Box)", border: OutlineInputBorder()),
-            ),
-            const SizedBox(height: 10),
-            TextField(
-              controller: noteController,
-              decoration: const InputDecoration(labelText: "Catatan (Jika ada kerusakan)", border: OutlineInputBorder()),
-              maxLines: 2,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(ctx);
-              await _service.confirmReception(
-                stopId: stopId,
-                receivedQty: int.tryParse(qtyController.text) ?? 0,
-                notes: noteController.text,
-                recipientName: "Koordinator Sekolah", // Nanti ambil dari profile
-              );
-              _fetchData(); // Refresh dashboard
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Penerimaan Dikonfirmasi!")));
-            },
-            child: const Text("Terima Barang"),
-          )
-        ],
-      ),
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              title: const Text("Konfirmasi Penerimaan"),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Pilihan Status
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text("✅ Aman"),
+                            selected: !isProblem,
+                            selectedColor: Colors.green[100],
+                            onSelected: (val) => setDialogState(() => isProblem = !val),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: ChoiceChip(
+                            label: const Text("⚠️ Masalah"),
+                            selected: isProblem,
+                            selectedColor: Colors.red[100],
+                            onSelected: (val) => setDialogState(() => isProblem = val),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 15),
+
+                    TextField(
+                      controller: qtyController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: "Jml Diterima", border: OutlineInputBorder()),
+                    ),
+                    const SizedBox(height: 10),
+                    
+                    TextField(
+                      controller: noteController,
+                      decoration: InputDecoration(
+                        labelText: isProblem ? "Jelaskan Kerusakan/Kekurangan" : "Catatan (Opsional)", 
+                        border: const OutlineInputBorder()
+                      ),
+                      maxLines: 2,
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Tombol Kamera (Hanya jika ada masalah)
+                    if (isProblem)
+                      GestureDetector(
+                        onTap: () async {
+                          final file = await _storageService.pickImage(ImageSource.camera);
+                          if (file != null) {
+                            setDialogState(() => photoFile = file);
+                          }
+                        },
+                        child: Container(
+                          height: 100,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: photoFile == null
+                              ? const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [Icon(Icons.camera_alt), Text("Ambil Foto Bukti")],
+                                )
+                              : Image.file(photoFile!, fit: BoxFit.cover),
+                        ),
+                      ),
+                      
+                     if (isSubmitting)
+                       const Padding(
+                         padding: EdgeInsets.only(top: 15),
+                         child: CircularProgressIndicator(),
+                       )
+                  ],
+                ),
+              ),
+              actions: [
+                if (!isSubmitting)
+                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+                
+                if (!isSubmitting)
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: isProblem ? Colors.red : Colors.green,
+                      foregroundColor: Colors.white
+                    ),
+                    onPressed: () async {
+                      // Validasi
+                      if (isProblem && photoFile == null) {
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib sertakan foto jika ada masalah!")));
+                        return;
+                      }
+                      
+                      setDialogState(() => isSubmitting = true);
+
+                      try {
+                        String? imageUrl;
+                        // 1. Upload Foto Jika Ada
+                        if (photoFile != null) {
+                          imageUrl = await _storageService.uploadEvidence(photoFile!, 'stops');
+                        }
+
+                        // 2. Kirim Data
+                        await _service.confirmReception(
+                          stopId: stopId,
+                          receivedQty: int.tryParse(qtyController.text) ?? 0,
+                          notes: isProblem ? "[MASALAH] ${noteController.text}" : noteController.text,
+                          recipientName: "Koordinator", 
+                          issueType: isProblem ? 'problem' : null,
+                          proofUrl: imageUrl,
+                        );
+
+                        if (!mounted) return;
+                        Navigator.pop(ctx);
+                        _fetchData(); // Refresh
+                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laporan Terkirim!")));
+
+                      } catch (e) {
+                         setDialogState(() => isSubmitting = false);
+                         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e")));
+                      }
+                    },
+                    child: Text(isProblem ? "Lapor Masalah" : "Terima Barang"),
+                  )
+              ],
+            );
+          },
+        );
+      },
     );
   }
 
@@ -2677,7 +3952,17 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
         title: const Text("Portal Sekolah"),
         backgroundColor: Colors.teal[700],
         foregroundColor: Colors.white,
-        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _logout)],
+        actions: [IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())
@@ -2698,28 +3983,19 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
     final status = _deliveryData!['status'];
     final vehicle = _deliveryData!['delivery_routes']['vehicles'];
     final plat = vehicle != null ? vehicle['plate_number'] : '-';
-    final driver = vehicle != null ? vehicle['driver_name'] : '-';
     
-   Color statusColor = Colors.grey;
-    String statusText = "Menunggu Kurir";
-    String instructionText = "Kurir belum memulai perjalanan.";
-
-    if (status == 'pending') {
-       statusColor = Colors.grey;
-       statusText = "Persiapan";
-       instructionText = "Makanan sedang disiapkan di dapur.";
-    } else if (status == 'active') {
-       statusColor = Colors.blue;
-       statusText = "Sedang Dalam Perjalanan";
-       instructionText = "Pantau kedatangan kurir.";
-    } else if (status == 'completed') { 
-       statusColor = Colors.orange;
-       statusText = "Barang Tiba";
-       instructionText = "Silakan cek barang dan tekan tombol Konfirmasi.";
+    Color statusColor = Colors.grey;
+    String statusText = "Menunggu";
+    
+    if (status == 'completed') { 
+      statusColor = Colors.orange;
+      statusText = "Barang Tiba - Perlu Konfirmasi";
     } else if (status == 'received') {
-       statusColor = Colors.green;
-       statusText = "Selesai";
-       instructionText = "Penerimaan sudah dikonfirmasi.";
+      statusColor = Colors.green;
+      statusText = "Selesai - Diterima";
+    } else if (status == 'issue_reported') { // Status baru
+      statusColor = Colors.red;
+      statusText = "Masalah Dilaporkan";
     }
 
     return Card(
@@ -2746,10 +4022,10 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
               ],
             ),
             const Divider(height: 30),
-            Text("Mobil: $plat ($driver)", style: const TextStyle(fontSize: 16)),
+            Text("Mobil: $plat", style: const TextStyle(fontSize: 16)),
+            
             const SizedBox(height: 20),
             
-            // TOMBOL AKSI (Hanya muncul jika kurir sudah 'completed' tapi sekolah belum 'received')
             if (status == 'completed')
               SizedBox(
                 width: double.infinity,
@@ -2790,9 +4066,10 @@ class ReceivingService {
           .select('school_id')
           .eq('id', userId)
           .single();
-      
+
       final String? mySchoolId = profile['school_id'];
-      if (mySchoolId == null) throw Exception("Akun ini tidak terhubung ke sekolah manapun.");
+      if (mySchoolId == null)
+        throw Exception("Akun ini tidak terhubung ke sekolah manapun.");
 
       // B. Cari Pengiriman hari ini ke sekolah tersebut
       final String today = DateFormat('yyyy-MM-dd').format(DateTime.now());
@@ -2800,7 +4077,9 @@ class ReceivingService {
       // Join: delivery_stops -> delivery_routes (filter tanggal) -> vehicles
       final response = await _supabase
           .from('delivery_stops')
-          .select('*, delivery_routes!inner(date, vehicles(plate_number, driver_name))')
+          .select(
+            '*, delivery_routes!inner(date, vehicles(plate_number, driver_name))',
+          )
           .eq('school_id', mySchoolId)
           .eq('delivery_routes.date', today)
           .maybeSingle(); // Ambil 1 aja
@@ -2817,27 +4096,43 @@ class ReceivingService {
     required int receivedQty,
     required String notes,
     required String recipientName,
-    // Nanti kita tambah parameter foto kalau upload sudah siap
+    String?
+    issueType, // Baru: Jenis Masalah (Misal: 'damaged', 'spoiled', 'less_qty')
+    String? proofUrl, // Baru: URL Foto Bukti
   }) async {
     try {
-      await _supabase.from('delivery_stops').update({
-        'status': 'received', // Status baru: DITERIMA
-        'received_qty': receivedQty,
-        'reception_notes': notes,
-        'recipient_name': recipientName,
-        'completion_time': DateTime.now().toIso8601String(), // Waktu TTD
-      }).eq('id', stopId);
+      // Tentukan status: Kalau ada issue -> 'issue_reported', kalau aman -> 'received'
+      // Atau tetap 'received' tapi ada flag issue. Kita pakai status khusus biar admin notice.
+      final String status = (issueType != null && issueType.isNotEmpty)
+          ? 'issue_reported'
+          : 'received';
+
+      await _supabase
+          .from('delivery_stops')
+          .update({
+            'status': status,
+            'received_qty': receivedQty,
+            'reception_notes': notes,
+            'recipient_name': recipientName,
+            'completion_time': DateTime.now().toIso8601String(),
+            // Pastikan kolom ini sudah ada di DB (Langkah SQL di bawah)
+            'proof_photo_url': proofUrl,
+            // Kita simpan jenis masalah di notes atau kolom baru (sementara di notes dulu gapapa)
+            // Idealnya bikin kolom 'issue_type' di DB, tapi notes cukup: "[RUSAK] Catatan..."
+          })
+          .eq('id', stopId);
     } catch (e) {
       throw Exception("Gagal konfirmasi: $e");
     }
   }
 }
 
+
 === FILE: lib\features\kurir\screens\dashboard_kurir_screen.dart ===
 
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart'; 
+import 'package:intl/intl.dart';
 
 // Import Services & Models
 import '../../admin_sppg/services/route_service.dart';
@@ -2845,12 +4140,13 @@ import '../../autentikasi/screens/login_screen.dart';
 import '../../../models/route_model.dart';
 
 // [PENTING] Import Halaman Detail Rute
-import 'route_detail_screen.dart'; 
+import 'route_detail_screen.dart';
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardKurirScreen extends StatelessWidget {
   // Constructor constant aman
-  const DashboardKurirScreen({super.key}); 
-  
+  const DashboardKurirScreen({super.key});
+
   // --- FUNGSI LOGOUT ---
   Future<void> _logout(BuildContext context) async {
     await Supabase.instance.client.auth.signOut();
@@ -2867,7 +4163,7 @@ class DashboardKurirScreen extends StatelessWidget {
     final RouteService routeService = RouteService();
 
     return FutureBuilder<List<DeliveryRoute>>(
-      future: routeService.getRoutesByCourier(), 
+      future: routeService.getRoutesByCourier(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
@@ -2883,9 +4179,16 @@ class DashboardKurirScreen extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(Icons.assignment_turned_in_outlined, size: 80, color: Colors.blue[100]),
+                Icon(
+                  Icons.assignment_turned_in_outlined,
+                  size: 80,
+                  color: Colors.blue[100],
+                ),
                 const SizedBox(height: 16),
-                const Text("Belum ada tugas pengiriman hari ini.", style: TextStyle(fontSize: 16)),
+                const Text(
+                  "Belum ada tugas pengiriman hari ini.",
+                  style: TextStyle(fontSize: 16),
+                ),
               ],
             ),
           );
@@ -2893,7 +4196,7 @@ class DashboardKurirScreen extends StatelessWidget {
 
         return RefreshIndicator(
           onRefresh: () async {
-            (context as Element).markNeedsBuild(); 
+            (context as Element).markNeedsBuild();
           },
           child: ListView.builder(
             padding: const EdgeInsets.all(12),
@@ -2907,7 +4210,10 @@ class DashboardKurirScreen extends StatelessWidget {
                 elevation: 3,
                 margin: const EdgeInsets.only(bottom: 12),
                 child: ListTile(
-                  leading: const Icon(Icons.delivery_dining, color: Colors.blue),
+                  leading: const Icon(
+                    Icons.delivery_dining,
+                    color: Colors.blue,
+                  ),
                   title: Text(
                     "Tugas Tgl: $dateStr",
                     style: const TextStyle(fontWeight: FontWeight.bold),
@@ -2921,7 +4227,11 @@ class DashboardKurirScreen extends StatelessWidget {
                     ),
                     child: Text(
                       route.status.toUpperCase(),
-                      style: TextStyle(color: _getStatusColor(route.status), fontWeight: FontWeight.bold, fontSize: 11),
+                      style: TextStyle(
+                        color: _getStatusColor(route.status),
+                        fontWeight: FontWeight.bold,
+                        fontSize: 11,
+                      ),
                     ),
                   ),
                   onTap: () {
@@ -2947,9 +4257,12 @@ class DashboardKurirScreen extends StatelessWidget {
 
   Color _getStatusColor(String status) {
     switch (status) {
-      case 'completed': return Colors.green;
-      case 'active': return Colors.blue;
-      default: return Colors.orange; // pending
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      default:
+        return Colors.orange; // pending
     }
   }
 
@@ -2961,13 +4274,23 @@ class DashboardKurirScreen extends StatelessWidget {
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => _logout(context)),
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
         ],
       ),
-      body: _buildRouteList(context), 
+      body: _buildRouteList(context),
     );
   }
 }
+
 
 === FILE: lib\features\kurir\screens\route_detail_screen.dart ===
 
@@ -3536,14 +4859,180 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
   }
 }
 
+=== FILE: lib\features\pengawas\screens\bgn_report_screen.dart ===
+
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../services/bgn_monitoring_service.dart';
+
+class BgnReportScreen extends StatefulWidget {
+  const BgnReportScreen({super.key});
+
+  @override
+  State<BgnReportScreen> createState() => _BgnReportScreenState();
+}
+
+class _BgnReportScreenState extends State<BgnReportScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  final BgnMonitoringService _service = BgnMonitoringService();
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        // [UBAH] Judul lebih relevan
+        title: const Text("Laporan & Pengaduan"),
+        backgroundColor: Colors.blue[800], // Ganti jadi Biru (Warna BGN) atau tetap Merah kalau mau highlight isu
+        foregroundColor: Colors.white,
+        bottom: TabBar(
+          controller: _tabController,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(text: "Logistik & Kemasan"),
+            Tab(text: "Kualitas Makanan"),
+          ],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _buildLogisticsIssues(),
+          _buildFoodQualityIssues(),
+        ],
+      ),
+    );
+  }
+
+  // TAB 1: MASALAH LOGISTIK (DARI KOORDINATOR)
+  Widget _buildLogisticsIssues() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getGlobalCoordinatorComplaints(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return _buildEmptyState("Belum ada laporan logistik.");
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            final sppgName = item['delivery_routes']['sppgs']['name'];
+            final schoolName = item['schools']['name'];
+            final date = item['delivery_routes']['date'];
+            final notes = item['reception_notes'];
+            final response = item['admin_response'];
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              color: response == null ? Colors.red[50] : Colors.white,
+              child: ListTile(
+                leading: const Icon(Icons.local_shipping, color: Colors.red),
+                title: Text("$sppgName -> $schoolName", style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Tgl: $date"),
+                    Text("Laporan: $notes", style: const TextStyle(color: Colors.black87)),
+                    const SizedBox(height: 5),
+                    if (response != null)
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(5)),
+                        child: Text("Tindak Lanjut: $response", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                      )
+                    else
+                      const Text("BELUM DITANGANI ADMIN SPPG", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // TAB 2: MASALAH KUALITAS MAKANAN (DARI WALI KELAS)
+  Widget _buildFoodQualityIssues() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getGlobalTeacherComplaints(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return _buildEmptyState("Belum ada laporan kualitas makanan.");
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(10),
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            final sppgName = item['delivery_stops']['delivery_routes']['sppgs']['name'];
+            final schoolName = item['delivery_stops']['schools']['name'];
+            final className = item['class_name'];
+            final issue = item['issue_type'];
+            final notes = item['notes'];
+            final response = item['admin_response'];
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 10),
+              color: response == null ? Colors.red[50] : Colors.white,
+              child: ListTile(
+                leading: const Icon(Icons.dangerous, color: Colors.red),
+                title: Text("$sppgName -> $schoolName ($className)", style: const TextStyle(fontWeight: FontWeight.bold)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("ISU: ${issue.toString().toUpperCase()}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
+                    Text("Detail: $notes"),
+                    const SizedBox(height: 5),
+                    if (response != null)
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(5)),
+                        child: Text("Tindak Lanjut: $response", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                      )
+                    else
+                      const Text("BELUM DITANGANI ADMIN SPPG", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildEmptyState(String text) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.check_circle_outline, size: 80, color: Colors.grey),
+          const SizedBox(height: 15),
+          Text(text, style: const TextStyle(fontSize: 16, color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+}
+
 === FILE: lib\features\pengawas\screens\dashboard_bgn_screen.dart ===
 
 import 'package:flutter/material.dart';
-// Sesuaikan path import ini dengan struktur foldermu
 import '../../autentikasi/services/auth_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
-// Nanti kita buat halaman ini di langkah selanjutnya:
-import 'list_sppg_screen.dart'; 
+import 'list_sppg_screen.dart';
+import 'bgn_report_screen.dart';
 
 class DashboardBgnScreen extends StatelessWidget {
   const DashboardBgnScreen({super.key});
@@ -3585,7 +5074,9 @@ class DashboardBgnScreen extends StatelessWidget {
                       // Navigasi ke Halaman List SPPG
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const ListSppgScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const ListSppgScreen(),
+                        ),
                       );
                     },
                   ),
@@ -3598,7 +5089,9 @@ class DashboardBgnScreen extends StatelessWidget {
                     color: Colors.green,
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Peta akan dibuat...")),
+                        const SnackBar(
+                          content: Text("Fitur Peta akan dibuat..."),
+                        ),
                       );
                     },
                   ),
@@ -3607,11 +5100,15 @@ class DashboardBgnScreen extends StatelessWidget {
                   _buildMenuCard(
                     context,
                     icon: Icons.warning_amber_rounded,
-                    title: "Laporan Insiden",
+                    title:
+                        "Laporan & Pengaduan", // Ganti judul menu juga biar seragam
                     color: Colors.redAccent,
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Laporan akan dibuat...")),
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BgnReportScreen(),
+                        ), // Arahkan ke screen baru
                       );
                     },
                   ),
@@ -3624,7 +5121,9 @@ class DashboardBgnScreen extends StatelessWidget {
                     color: Colors.purple,
                     onTap: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Statistik akan dibuat...")),
+                        const SnackBar(
+                          content: Text("Fitur Statistik akan dibuat..."),
+                        ),
                       );
                     },
                   ),
@@ -3634,7 +5133,7 @@ class DashboardBgnScreen extends StatelessWidget {
           ],
         ),
       ),
-      
+
       // Tombol Logout
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () async {
@@ -3654,8 +5153,8 @@ class DashboardBgnScreen extends StatelessWidget {
     );
   }
 
-  // --- FUNGSI INI HARUS ADA DI DALAM KELAS, TAPI DI LUAR 'build' ---
-  Widget _buildMenuCard(BuildContext context, {
+  Widget _buildMenuCard(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required Color color,
@@ -3688,10 +5187,7 @@ class DashboardBgnScreen extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
           ],
         ),
@@ -3699,6 +5195,7 @@ class DashboardBgnScreen extends StatelessWidget {
     );
   }
 }
+
 
 === FILE: lib\features\pengawas\screens\detail_sppg_screen.dart ===
 
@@ -4395,6 +5892,47 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
   }
 }
 
+=== FILE: lib\features\pengawas\services\bgn_monitoring_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+class BgnMonitoringService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL SEMUA MASALAH DARI KOORDINATOR (GLOBAL)
+  Future<List<Map<String, dynamic>>> getGlobalCoordinatorComplaints() async {
+    try {
+      // Ambil delivery_stops yg bermasalah
+      // Join: schools (nama sekolah), delivery_routes -> sppgs (nama dapur)
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('*, schools(name), delivery_routes!inner(date, sppgs(name))')
+          .eq('status', 'issue_reported') // Ambil yang lapor masalah
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception("Gagal ambil data BGN: $e");
+    }
+  }
+
+  // 2. AMBIL SEMUA MASALAH DARI WALI KELAS (GLOBAL)
+  Future<List<Map<String, dynamic>>> getGlobalTeacherComplaints() async {
+    try {
+      // Join: delivery_stops -> delivery_routes -> sppgs
+      final response = await _supabase
+          .from('class_receptions')
+          .select('*, delivery_stops!inner(schools(name), delivery_routes!inner(sppgs(name)))')
+          .not('issue_type', 'is', null) // Ambil yang ada isunya
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception("Gagal ambil data BGN: $e");
+    }
+  }
+}
+
 === FILE: lib\features\pengawas\services\sppg_service.dart ===
 
 import 'dart:convert'; // Wajib ada buat JSON
@@ -4521,6 +6059,443 @@ class SppgService {
     }
   }
 }
+
+=== FILE: lib\features\walikelas\screens\dashboard_teacher_screen.dart ===
+
+import 'dart:io';
+import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import '../../autentikasi/screens/login_screen.dart';
+import '../services/teacher_reception_service.dart';
+// Import Storage Service
+import '../../../core/services/storage_service.dart';
+import '../../../core/screens/profile_screen.dart';
+
+class DashboardTeacherScreen extends StatefulWidget {
+  const DashboardTeacherScreen({super.key});
+
+  @override
+  State<DashboardTeacherScreen> createState() => _DashboardTeacherScreenState();
+}
+
+class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
+  final TeacherReceptionService _service = TeacherReceptionService();
+  final StorageService _storageService = StorageService();
+
+  Map<String, dynamic>? _deliveryData;
+  bool _isLoading = true;
+  bool _alreadyReceived = false;
+  String _className = "";
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+    try {
+      final data = await _service.getSchoolDeliveryStatus();
+      if (mounted) {
+        setState(() {
+          _deliveryData = data;
+          if (data != null) {
+            _alreadyReceived = data['already_received'] ?? false;
+            _className = data['my_class_name'] ?? "-";
+          }
+        });
+      }
+    } catch (e) {
+      // ignore
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _logout() async {
+    await Supabase.instance.client.auth.signOut();
+    if (!mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
+
+  // --- DIALOG CANGGIH (QC & FOTO) ---
+  void _showReceiveDialog() {
+    final qtyController = TextEditingController();
+    final noteController = TextEditingController();
+
+    // State lokal dialog
+    File? photoFile;
+    bool isProblem = false;
+    bool isSubmitting = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: Text("Laporan Kelas $_className"),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Pilihan Status QC
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text("✅ Aman"),
+                          selected: !isProblem,
+                          selectedColor: Colors.green[100],
+                          onSelected: (val) =>
+                              setDialogState(() => isProblem = !val),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: ChoiceChip(
+                          label: const Text("⚠️ Masalah"),
+                          selected: isProblem,
+                          selectedColor: Colors.red[100],
+                          onSelected: (val) =>
+                              setDialogState(() => isProblem = val),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 15),
+
+                  TextField(
+                    controller: qtyController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Jumlah Box Diterima",
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteController,
+                    decoration: InputDecoration(
+                      labelText: isProblem
+                          ? "Detail Masalah (Basi/Asing/dll)"
+                          : "Catatan (Opsional)",
+                      border: const OutlineInputBorder(),
+                    ),
+                    maxLines: 2,
+                  ),
+                  const SizedBox(height: 10),
+
+                  // Tombol Kamera (Wajib jika Masalah)
+                  if (isProblem)
+                    GestureDetector(
+                      onTap: () async {
+                        final file = await _storageService.pickImage(
+                          ImageSource.camera,
+                        );
+                        if (file != null) {
+                          setDialogState(() => photoFile = file);
+                        }
+                      },
+                      child: Container(
+                        height: 100,
+                        width: double.infinity,
+                        decoration: BoxDecoration(
+                          color: Colors.grey[200],
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: photoFile == null
+                            ? const Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.camera_alt),
+                                  Text("FOTO BUKTI (WAJIB)"),
+                                ],
+                              )
+                            : Image.file(photoFile!, fit: BoxFit.cover),
+                      ),
+                    ),
+
+                  if (isSubmitting)
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: CircularProgressIndicator(),
+                    ),
+                ],
+              ),
+            ),
+            actions: [
+              if (!isSubmitting)
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text("Batal"),
+                ),
+
+              if (!isSubmitting)
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: isProblem ? Colors.red : Colors.indigo,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () async {
+                    // Validasi
+                    if (isProblem && photoFile == null) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Wajib sertakan foto jika ada masalah!",
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
+                    setDialogState(() => isSubmitting = true);
+                    try {
+                      String? imageUrl;
+                      if (photoFile != null) {
+                        imageUrl = await _storageService.uploadEvidence(
+                          photoFile!,
+                          'classroom_issues',
+                        );
+                      }
+
+                      await _service.submitClassReception(
+                        stopId: _deliveryData!['id'],
+                        className: _className,
+                        qty: int.tryParse(qtyController.text) ?? 0,
+                        notes: noteController.text,
+                        issueType: isProblem ? 'food_quality_issue' : null,
+                        proofUrl: imageUrl,
+                      );
+
+                      if (!mounted) return;
+                      Navigator.pop(ctx);
+                      _fetchData();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Laporan Kelas Berhasil!"),
+                        ),
+                      );
+                    } catch (e) {
+                      setDialogState(() => isSubmitting = false);
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text("Error: $e")));
+                    }
+                  },
+                  child: const Text("Simpan Laporan"),
+                ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text("Wali Kelas $_className"),
+        backgroundColor: Colors.indigo,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
+      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : _deliveryData == null
+          ? const Center(child: Text("Belum ada jadwal pengiriman."))
+          : _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    // Status Pengiriman Global (dari tabel delivery_stops)
+    final String status = _deliveryData!['status'];
+
+    String message = "Makanan sedang diproses.";
+    Color color = Colors.grey;
+    bool canReceive = false;
+
+    if (status == 'completed') {
+      message =
+          "Makanan sudah tiba di Sekolah.\nMenunggu pengecekan Koordinator.";
+      color = Colors.orange;
+    } else if (status == 'received' || status == 'issue_reported') {
+      // Kalau Koordinator sudah terima (baik aman atau ada masalah kemasan),
+      // Wali Kelas tetap boleh ambil jatahnya.
+      message = "Makanan SIAP DIBAGIKAN KE SISWA.";
+      color = Colors.green;
+      canReceive = true;
+    }
+
+    if (_alreadyReceived) {
+      message = "Laporan kelas Anda sudah masuk.\nTerima kasih.";
+      color = Colors.blue;
+      canReceive = false;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(20.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Card(
+            color: color.withOpacity(0.1),
+            elevation: 0,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+              side: BorderSide(color: color),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(
+                children: [
+                  Icon(
+                    _alreadyReceived ? Icons.check_circle : Icons.local_dining,
+                    size: 50,
+                    color: color,
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 30),
+
+          if (canReceive)
+            ElevatedButton.icon(
+              onPressed: _showReceiveDialog,
+              icon: const Icon(Icons.inventory),
+              label: const Text("TERIMA & CEK KUALITAS MAKANAN"),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.indigo,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 15),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+
+=== FILE: lib\features\walikelas\services\teacher_reception_service.dart ===
+
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:intl/intl.dart';
+
+class TeacherReceptionService {
+  final _supabase = Supabase.instance.client;
+
+  // 1. AMBIL STATUS PENGIRIMAN SEKOLAH HARI INI
+  // Wali Kelas perlu tahu: "Barang udah sampe gerbang belum?"
+  Future<Map<String, dynamic>?> getSchoolDeliveryStatus() async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+
+      // A. Cari Profile Wali Kelas (untuk tau school_id)
+      final profile = await _supabase
+          .from('profiles')
+          .select('school_id, class_name')
+          .eq('id', userId)
+          .single();
+
+      final String? mySchoolId = profile['school_id'];
+      if (mySchoolId == null) throw Exception("Akun tidak terhubung sekolah.");
+
+      // B. Cari Pengiriman Hari Ini ke sekolah itu
+      final String today = DateFormat('yyyy-MM-dd').format(DateTime.now());
+
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('*, delivery_routes!inner(date)')
+          .eq('school_id', mySchoolId)
+          .eq('delivery_routes.date', today)
+          .maybeSingle();
+
+      // C. Cek apakah kelas ini SUDAH pernah konfirmasi sebelumnya?
+      bool alreadyReceived = false;
+      if (response != null) {
+        final stopId = response['id'];
+        final receptionCheck = await _supabase
+            .from('class_receptions')
+            .select('id')
+            .eq('stop_id', stopId)
+            .eq('teacher_id', userId)
+            .maybeSingle();
+
+        if (receptionCheck != null) alreadyReceived = true;
+      }
+
+      // Gabungkan data
+      if (response != null) {
+        response['already_received'] = alreadyReceived;
+        response['my_class_name'] = profile['class_name'];
+      }
+
+      return response;
+    } catch (e) {
+      throw Exception("Gagal cek status: $e");
+    }
+  }
+
+  // 2. SIMPAN KONFIRMASI KELAS
+  Future<void> submitClassReception({
+    required String stopId,
+    required String className,
+    required int qty,
+    required String notes,
+    String? issueType, // [BARU]
+    String? proofUrl, // [BARU]
+  }) async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+
+      await _supabase.from('class_receptions').insert({
+        'stop_id': stopId,
+        'teacher_id': userId,
+        'class_name': className,
+        'qty_received': qty,
+        'notes': notes,
+        'issue_type': issueType, // Simpan tipe masalah
+        'proof_photo_url': proofUrl, // Simpan bukti foto
+      });
+    } catch (e) {
+      throw Exception("Gagal simpan data: $e");
+    }
+  }
+}
+
 
 === FILE: lib\models\courier_model.dart ===
 
@@ -4843,6 +6818,7 @@ dependencies:
   latlong2: ^0.9.1
   http: ^1.6.0
   url_launcher: ^6.3.2
+  fl_chart: ^1.1.1
 
 dev_dependencies:
   flutter_test:

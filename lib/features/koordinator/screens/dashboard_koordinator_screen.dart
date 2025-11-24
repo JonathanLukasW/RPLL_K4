@@ -6,7 +6,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import '../services/receiving_service.dart';
 // Import Storage Service baru
-import '../../../core/services/storage_service.dart'; // Sesuaikan path
+import '../../../core/services/storage_service.dart'; 
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardKoordinatorScreen extends StatefulWidget {
   const DashboardKoordinatorScreen({super.key});
@@ -209,7 +210,17 @@ class _DashboardKoordinatorScreenState extends State<DashboardKoordinatorScreen>
         title: const Text("Portal Sekolah"),
         backgroundColor: Colors.teal[700],
         foregroundColor: Colors.white,
-        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _logout)],
+        actions: [IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: _isLoading 
         ? const Center(child: CircularProgressIndicator())

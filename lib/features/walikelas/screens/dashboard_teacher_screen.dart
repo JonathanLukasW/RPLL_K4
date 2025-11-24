@@ -6,7 +6,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import '../services/teacher_reception_service.dart';
 // Import Storage Service
-import '../../../core/services/storage_service.dart'; 
+import '../../../core/services/storage_service.dart';
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardTeacherScreen extends StatefulWidget {
   const DashboardTeacherScreen({super.key});
@@ -46,7 +47,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
     } catch (e) {
       // ignore
     } finally {
-      if(mounted) setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -54,17 +55,19 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
     await Supabase.instance.client.auth.signOut();
     if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
   }
 
   // --- DIALOG CANGGIH (QC & FOTO) ---
   void _showReceiveDialog() {
     final qtyController = TextEditingController();
     final noteController = TextEditingController();
-    
+
     // State lokal dialog
     File? photoFile;
-    bool isProblem = false; 
+    bool isProblem = false;
     bool isSubmitting = false;
 
     showDialog(
@@ -86,7 +89,8 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                           label: const Text("✅ Aman"),
                           selected: !isProblem,
                           selectedColor: Colors.green[100],
-                          onSelected: (val) => setDialogState(() => isProblem = !val),
+                          onSelected: (val) =>
+                              setDialogState(() => isProblem = !val),
                         ),
                       ),
                       const SizedBox(width: 10),
@@ -95,7 +99,8 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                           label: const Text("⚠️ Masalah"),
                           selected: isProblem,
                           selectedColor: Colors.red[100],
-                          onSelected: (val) => setDialogState(() => isProblem = val),
+                          onSelected: (val) =>
+                              setDialogState(() => isProblem = val),
                         ),
                       ),
                     ],
@@ -105,14 +110,19 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                   TextField(
                     controller: qtyController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: "Jumlah Box Diterima", border: OutlineInputBorder()),
+                    decoration: const InputDecoration(
+                      labelText: "Jumlah Box Diterima",
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
                     controller: noteController,
                     decoration: InputDecoration(
-                      labelText: isProblem ? "Detail Masalah (Basi/Asing/dll)" : "Catatan (Opsional)", 
-                      border: const OutlineInputBorder()
+                      labelText: isProblem
+                          ? "Detail Masalah (Basi/Asing/dll)"
+                          : "Catatan (Opsional)",
+                      border: const OutlineInputBorder(),
                     ),
                     maxLines: 2,
                   ),
@@ -122,7 +132,9 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                   if (isProblem)
                     GestureDetector(
                       onTap: () async {
-                        final file = await _storageService.pickImage(ImageSource.camera);
+                        final file = await _storageService.pickImage(
+                          ImageSource.camera,
+                        );
                         if (file != null) {
                           setDialogState(() => photoFile = file);
                         }
@@ -138,31 +150,46 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                         child: photoFile == null
                             ? const Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
-                                children: [Icon(Icons.camera_alt), Text("FOTO BUKTI (WAJIB)")],
+                                children: [
+                                  Icon(Icons.camera_alt),
+                                  Text("FOTO BUKTI (WAJIB)"),
+                                ],
                               )
                             : Image.file(photoFile!, fit: BoxFit.cover),
                       ),
                     ),
 
                   if (isSubmitting)
-                     const Padding(padding: EdgeInsets.only(top: 10), child: CircularProgressIndicator())
+                    const Padding(
+                      padding: EdgeInsets.only(top: 10),
+                      child: CircularProgressIndicator(),
+                    ),
                 ],
               ),
             ),
             actions: [
               if (!isSubmitting)
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-              
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text("Batal"),
+                ),
+
               if (!isSubmitting)
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isProblem ? Colors.red : Colors.indigo,
-                    foregroundColor: Colors.white
+                    foregroundColor: Colors.white,
                   ),
                   onPressed: () async {
                     // Validasi
                     if (isProblem && photoFile == null) {
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib sertakan foto jika ada masalah!")));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            "Wajib sertakan foto jika ada masalah!",
+                          ),
+                        ),
+                      );
                       return;
                     }
 
@@ -170,7 +197,10 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                     try {
                       String? imageUrl;
                       if (photoFile != null) {
-                        imageUrl = await _storageService.uploadEvidence(photoFile!, 'classroom_issues');
+                        imageUrl = await _storageService.uploadEvidence(
+                          photoFile!,
+                          'classroom_issues',
+                        );
                       }
 
                       await _service.submitClassReception(
@@ -181,19 +211,24 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                         issueType: isProblem ? 'food_quality_issue' : null,
                         proofUrl: imageUrl,
                       );
-                      
+
                       if (!mounted) return;
                       Navigator.pop(ctx);
-                      _fetchData(); 
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Laporan Kelas Berhasil!")));
-
+                      _fetchData();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text("Laporan Kelas Berhasil!"),
+                        ),
+                      );
                     } catch (e) {
                       setDialogState(() => isSubmitting = false);
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text("Error: $e")));
                     }
                   },
                   child: const Text("Simpan Laporan"),
-                )
+                ),
             ],
           );
         },
@@ -205,36 +240,48 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text("Wali Kelas $_className"), 
+        title: Text("Wali Kelas $_className"),
         backgroundColor: Colors.indigo,
         foregroundColor: Colors.white,
-        actions: [IconButton(icon: const Icon(Icons.logout), onPressed: _logout)],
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30), // Ikon Profil
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
       ),
-      body: _isLoading 
+      body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _deliveryData == null
-              ? const Center(child: Text("Belum ada jadwal pengiriman."))
-              : _buildBody(),
+          ? const Center(child: Text("Belum ada jadwal pengiriman."))
+          : _buildBody(),
     );
   }
 
   Widget _buildBody() {
     // Status Pengiriman Global (dari tabel delivery_stops)
     final String status = _deliveryData!['status'];
-    
+
     String message = "Makanan sedang diproses.";
     Color color = Colors.grey;
     bool canReceive = false;
 
     if (status == 'completed') {
-      message = "Makanan sudah tiba di Sekolah.\nMenunggu pengecekan Koordinator.";
+      message =
+          "Makanan sudah tiba di Sekolah.\nMenunggu pengecekan Koordinator.";
       color = Colors.orange;
     } else if (status == 'received' || status == 'issue_reported') {
       // Kalau Koordinator sudah terima (baik aman atau ada masalah kemasan),
       // Wali Kelas tetap boleh ambil jatahnya.
       message = "Makanan SIAP DIBAGIKAN KE SISWA.";
       color = Colors.green;
-      canReceive = true; 
+      canReceive = true;
     }
 
     if (_alreadyReceived) {
@@ -253,24 +300,33 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
             elevation: 0,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(10),
-              side: BorderSide(color: color)
+              side: BorderSide(color: color),
             ),
             child: Padding(
               padding: const EdgeInsets.all(20),
               child: Column(
                 children: [
                   Icon(
-                    _alreadyReceived ? Icons.check_circle : Icons.local_dining, 
-                    size: 50, color: color
+                    _alreadyReceived ? Icons.check_circle : Icons.local_dining,
+                    size: 50,
+                    color: color,
                   ),
                   const SizedBox(height: 10),
-                  Text(message, textAlign: TextAlign.center, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color)),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
+                  ),
                 ],
               ),
             ),
           ),
           const SizedBox(height: 30),
-          
+
           if (canReceive)
             ElevatedButton.icon(
               onPressed: _showReceiveDialog,
@@ -281,7 +337,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                 foregroundColor: Colors.white,
                 padding: const EdgeInsets.symmetric(vertical: 15),
               ),
-            )
+            ),
         ],
       ),
     );

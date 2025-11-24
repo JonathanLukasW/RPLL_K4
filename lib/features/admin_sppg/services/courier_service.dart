@@ -6,39 +6,29 @@ import '../../../models/courier_model.dart';
 class CourierService {
   final _supabase = Supabase.instance.client;
 
-  // Helper untuk mendapatkan SPPG ID Admin
   Future<String> _getMySppgId() async {
     final userId = _supabase.auth.currentUser!.id;
-    final profile = await _supabase
-        .from('profiles')
-        .select('sppg_id')
-        .eq('id', userId)
-        .single();
+    final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
     return profile['sppg_id'];
   }
 
-  // 1. AMBIL LIST KURIR
   Future<List<CourierModel>> getMyCouriers() async {
     try {
       final mySppgId = await _getMySppgId();
       
-      // Ambil data profile kurir (full_name, email) yang sppg_id-nya sama
-      // Pastikan kolom 'email' sudah ada di tabel profiles
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, sppg_id') 
+          .select('id, full_name, email, sppg_id')
           .eq('sppg_id', mySppgId)
           .eq('role', 'kurir');
 
       final List<dynamic> data = response;
       return data.map((json) => CourierModel.fromJson(json)).toList();
-      
     } catch (e) {
       throw Exception('Gagal ambil data kurir: $e');
     }
   }
 
-  // 2. BUAT AKUN KURIR BARU (HTTP Request Aman)
   Future<void> createCourierAccount({
     required String email,
     required String password,
@@ -77,7 +67,6 @@ class CourierService {
           'sppg_id': mySppgId,
           'school_id': null,
         });
-
       } else {
         final errorData = jsonDecode(response.body);
         throw Exception(errorData['msg'] ?? 'Gagal mendaftar');

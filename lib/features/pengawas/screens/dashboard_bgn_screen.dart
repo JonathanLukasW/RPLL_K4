@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-// Sesuaikan path import ini dengan struktur foldermu
-import '../../autentikasi/services/auth_service.dart';
-import '../../autentikasi/screens/login_screen.dart';
-// Nanti kita buat halaman ini di langkah selanjutnya:
-import 'list_sppg_screen.dart'; 
+import '../../../core/screens/profile_screen.dart'; // Import Profil
+import 'list_sppg_screen.dart';
+import 'bgn_report_screen.dart';
+import 'bgn_statistics_screen.dart'; // Import Statistik
+import 'bgn_tracking_screen.dart';   // Import Tracking
 
 class DashboardBgnScreen extends StatelessWidget {
   const DashboardBgnScreen({super.key});
@@ -15,6 +15,19 @@ class DashboardBgnScreen extends StatelessWidget {
         title: const Text("BGN Monitoring"),
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
+        actions: [
+          // [PERBAIKAN] Ganti Logout dengan Profil
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30),
+            tooltip: "Profil Saya",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -25,7 +38,7 @@ class DashboardBgnScreen extends StatelessWidget {
               "Selamat Datang, Pengawas",
               style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
             ),
-            const Text("Pilih menu di bawah untuk memulai:"),
+            const Text("Pantauan Nasional Program Makan Bergizi Gratis"),
             const SizedBox(height: 20),
 
             // Grid Menu
@@ -41,52 +54,34 @@ class DashboardBgnScreen extends StatelessWidget {
                     icon: Icons.business_outlined,
                     title: "Data Master SPPG",
                     color: Colors.blue,
-                    onTap: () {
-                      // Navigasi ke Halaman List SPPG
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const ListSppgScreen()),
-                      );
-                    },
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ListSppgScreen())),
                   ),
 
-                  // Menu 2: Peta Tracking
+                  // Menu 2: Peta Tracking (SUDAH AKTIF)
                   _buildMenuCard(
                     context,
                     icon: Icons.map_outlined,
-                    title: "Peta Tracking Live",
+                    title: "Peta Sebaran SPPG",
                     color: Colors.green,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Peta akan dibuat...")),
-                      );
-                    },
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BgnTrackingScreen())),
                   ),
 
                   // Menu 3: Laporan Insiden
                   _buildMenuCard(
                     context,
                     icon: Icons.warning_amber_rounded,
-                    title: "Laporan Insiden",
+                    title: "Laporan & Pengaduan",
                     color: Colors.redAccent,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Laporan akan dibuat...")),
-                      );
-                    },
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BgnReportScreen())),
                   ),
 
-                  // Menu 4: Statistik
+                  // Menu 4: Statistik (SUDAH AKTIF)
                   _buildMenuCard(
                     context,
                     icon: Icons.bar_chart,
-                    title: "Statistik Kinerja",
+                    title: "Statistik Nasional",
                     color: Colors.purple,
-                    onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text("Fitur Statistik akan dibuat...")),
-                      );
-                    },
+                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BgnStatisticsScreen())),
                   ),
                 ],
               ),
@@ -94,27 +89,9 @@ class DashboardBgnScreen extends StatelessWidget {
           ],
         ),
       ),
-      
-      // Tombol Logout
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          // Logout logic
-          await AuthService().signOut();
-          if (!context.mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (route) => false,
-          );
-        },
-        label: const Text("Logout"),
-        icon: const Icon(Icons.logout),
-        backgroundColor: Colors.grey[800],
-        foregroundColor: Colors.white,
-      ),
     );
   }
 
-  // --- FUNGSI INI HARUS ADA DI DALAM KELAS, TAPI DI LUAR 'build' ---
   Widget _buildMenuCard(BuildContext context, {
     required IconData icon,
     required String title,
@@ -128,11 +105,7 @@ class DashboardBgnScreen extends StatelessWidget {
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
-              blurRadius: 10,
-              spreadRadius: 2,
-            ),
+            BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, spreadRadius: 2),
           ],
           border: Border.all(color: color.withOpacity(0.3)),
         ),
@@ -145,14 +118,7 @@ class DashboardBgnScreen extends StatelessWidget {
               child: Icon(icon, size: 30, color: color),
             ),
             const SizedBox(height: 16),
-            Text(
-              title,
-              textAlign: TextAlign.center,
-              style: const TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 16,
-              ),
-            ),
+            Text(title, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           ],
         ),
       ),
