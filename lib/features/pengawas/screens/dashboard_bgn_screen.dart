@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import '../../autentikasi/services/auth_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import 'list_sppg_screen.dart';
-import 'bgn_report_screen.dart'; // Screen baru UC03
+import 'bgn_report_screen.dart'; // Screen Laporan Terpadu
 
 class DashboardBgnScreen extends StatelessWidget {
   const DashboardBgnScreen({super.key});
@@ -20,10 +20,14 @@ class DashboardBgnScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Selamat Datang, Pengawas", style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+            const Text(
+              "Selamat Datang, Pengawas",
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
             const Text("Pilih menu di bawah untuk memulai:"),
             const SizedBox(height: 20),
 
+            // Grid Menu
             Expanded(
               child: GridView.count(
                 crossAxisCount: 2,
@@ -36,7 +40,14 @@ class DashboardBgnScreen extends StatelessWidget {
                     icon: Icons.manage_accounts,
                     title: "Manajemen Akun SPPG",
                     color: Colors.blue,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ListSppgScreen())),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const ListSppgScreen(),
+                        ),
+                      );
+                    },
                   ),
 
                   // MENU 2: LAPORAN DISTRIBUSI & KUALITAS (UC03)
@@ -46,7 +57,14 @@ class DashboardBgnScreen extends StatelessWidget {
                     icon: Icons.analytics,
                     title: "Laporan Distribusi & Kualitas",
                     color: Colors.green,
-                    onTap: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const BgnReportScreen())),
+                    onTap: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const BgnReportScreen(),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),
@@ -58,7 +76,10 @@ class DashboardBgnScreen extends StatelessWidget {
         onPressed: () async {
           await AuthService().signOut();
           if (!context.mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(MaterialPageRoute(builder: (_) => const LoginScreen()), (route) => false);
+          Navigator.of(context).pushAndRemoveUntil(
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+            (route) => false,
+          );
         },
         label: const Text("Logout"),
         icon: const Icon(Icons.logout),
@@ -68,24 +89,47 @@ class DashboardBgnScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuCard(BuildContext context, {required IconData icon, required String title, required Color color, required VoidCallback onTap}) {
+  Widget _buildMenuCard(
+    BuildContext context, {
+    required IconData icon,
+    required String title,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
     return InkWell(
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: Colors.grey.withOpacity(0.1), blurRadius: 10, spreadRadius: 2)],
+          boxShadow: [
+            BoxShadow(
+              color: Colors.grey.withOpacity(0.1),
+              blurRadius: 10,
+              spreadRadius: 2,
+            ),
+          ],
           border: Border.all(color: color.withOpacity(0.3)),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            CircleAvatar(radius: 30, backgroundColor: color.withOpacity(0.1), child: Icon(icon, size: 30, color: color)),
+            CircleAvatar(
+              radius: 30,
+              backgroundColor: color.withOpacity(0.1),
+              child: Icon(icon, size: 30, color: color),
+            ),
             const SizedBox(height: 16),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 8.0),
-              child: Text(title, textAlign: TextAlign.center, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+              child: Text(
+                title,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
             ),
           ],
         ),

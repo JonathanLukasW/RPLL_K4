@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-// Import Dashboard
+// Import Layar Lupa Password
+import 'forgot_password_screen.dart';
+
+// Import Semua Dashboard
 import '../../pengawas/screens/dashboard_bgn_screen.dart';
 import '../../admin_sppg/screens/dashboard_admin_screen.dart';
 import '../../kurir/screens/dashboard_kurir_screen.dart';
@@ -31,6 +34,7 @@ class _LoginScreenState extends State<LoginScreen> {
         throw Exception("Email dan Password harus diisi.");
       }
 
+      // 1. Login Auth
       final AuthResponse res = await Supabase.instance.client.auth.signInWithPassword(
         email: email,
         password: password,
@@ -42,6 +46,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (!mounted) return;
 
+      // 2. Cek Role di Database
       final userId = res.user!.id;
       final profileData = await Supabase.instance.client
           .from('profiles')
@@ -51,21 +56,24 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (profileData == null) throw Exception("Profil user tidak ditemukan.");
 
+      // Normalisasi Role (Kecilkan huruf & hapus spasi)
       final String rawRole = profileData['role'] ?? 'unknown';
       final String role = rawRole.toLowerCase().trim(); 
 
       if (!mounted) return;
 
+      // 3. Navigasi Sesuai Role
+      // (Saya hapus 'const' di sini agar aman dari error constructor di masa depan)
       if (role == 'bgn') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardBgnScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardBgnScreen()));
       } else if (role == 'admin_sppg') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardAdminScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardAdminScreen()));
       } else if (role == 'kurir') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardKurirScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardKurirScreen()));
       } else if (role == 'koordinator') {
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardKoordinatorScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardKoordinatorScreen()));
       } else if (role == 'walikelas') { 
-        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => const DashboardTeacherScreen()));
+        Navigator.pushReplacement(context, MaterialPageRoute(builder: (_) => DashboardTeacherScreen()));
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Akses Ditolak: Role '$rawRole' tidak dikenali."), backgroundColor: Colors.red),
@@ -103,18 +111,41 @@ class _LoginScreenState extends State<LoginScreen> {
               const Text("MBG Monitoring", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
               const Text("Silakan masuk untuk melanjutkan", style: TextStyle(color: Colors.grey)),
               const SizedBox(height: 40),
+              
+              // Input Email
               TextField(
                 controller: _emailController,
                 keyboardType: TextInputType.emailAddress,
                 decoration: const InputDecoration(labelText: "Email", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
               ),
               const SizedBox(height: 16),
+              
+              // Input Password
               TextField(
                 controller: _passwordController,
                 obscureText: true,
                 decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
               ),
-              const SizedBox(height: 30),
+              
+              const SizedBox(height: 10),
+              
+              // [BARU] Tombol Lupa Password
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+                    );
+                  },
+                  child: const Text("Lupa Password?", style: TextStyle(color: Colors.blue)),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Tombol Masuk
               SizedBox(
                 width: double.infinity,
                 height: 50,
