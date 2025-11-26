@@ -29,13 +29,19 @@ class SppgService {
       throw Exception('Gagal ambil data: $e');
     }
   }
+  
+  Future<void> updateSppg(String id, Map<String, dynamic> data) async {
+    try {
+      await _supabase.from('sppgs').update(data).eq('id', id);
+    } catch (e) {
+      throw Exception('Gagal update SPPG: $e');
+    }
+  }
 
-  // [BARU] Hapus SPPG (UC06)
-  // Note: Ini akan error jika tabel lain tidak di-set "ON DELETE CASCADE" di database.
-  // Tapi secara logika aplikasi, ini kodenya.
+  // [SUDAH ADA - PASTIKAN SAJA] 4. HAPUS SPPG
   Future<void> deleteSppg(String sppgId) async {
     try {
-      // Hapus SPPG (User admin-nya harus dihapus manual lewat Auth atau trigger database)
+      // Hapus SPPG (Cascade delete di database akan menghapus data terkait jika disetting)
       await _supabase.from('sppgs').delete().eq('id', sppgId);
     } catch (e) {
       throw Exception('Gagal hapus SPPG: $e');
@@ -99,4 +105,6 @@ class SppgService {
       throw Exception('Error Create User: $e');
     }
   }
+
+
 }

@@ -1,10 +1,7 @@
 import 'package:flutter/material.dart';
-// Pastikan service ini sudah diperbaiki dengan langkah nomor 1
 import '../services/sppg_service.dart';
-// Sesuaikan path model
 import '../../../models/sppg_model.dart';
 import 'add_sppg_screen.dart'; 
-// IMPORT INI PENTING (file detail yang kita buat sebelumnya)
 import 'detail_sppg_screen.dart';
 
 class ListSppgScreen extends StatefulWidget {
@@ -28,9 +25,7 @@ class _ListSppgScreenState extends State<ListSppgScreen> {
 
   Future<void> _fetchData() async {
     setState(() => _isLoading = true);
-
     try {
-      // Ini tidak akan merah lagi kalau SppgService sudah diperbaiki
       final data = await _sppgService.getAllSppgs();
       if (!mounted) return;
       setState(() {
@@ -41,6 +36,26 @@ class _ListSppgScreenState extends State<ListSppgScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       setState(() => _isLoading = false);
+    }
+  }
+
+  // Fungsi Delete
+  Future<void> _deleteSppg(String id) async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus SPPG?"),
+        content: const Text("Data yang dihapus tidak bisa dikembalikan."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Batal")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Hapus", style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      await _sppgService.deleteSppg(id);
+      _fetchData(); // Refresh list
     }
   }
 
@@ -71,25 +86,44 @@ class _ListSppgScreenState extends State<ListSppgScreen> {
                             backgroundColor: Colors.blue[50],
                             child: Icon(Icons.kitchen, color: Colors.blue[800]),
                           ),
-                          title: Text(
-                            sppg.name,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
-                          ),
+                          title: Text(sppg.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                           subtitle: Text(
                             sppg.address ?? "Alamat belum diisi",
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                           ),
-                          trailing: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                          onTap: () {
-                            // Navigasi ke Detail
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (context) => DetailSppgScreen(sppg: sppg),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              // TOMBOL EDIT
+                              IconButton(
+                                icon: const Icon(Icons.edit, color: Colors.blue),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (_) => AddSppgScreen(sppgToEdit: sppg)),
+                                  ).then((val) {
+                                    if (val == true) _fetchData();
+                                  });
+                                },
                               ),
-                            );
-                          },
+                              // TOMBOL DELETE
+                              IconButton(
+                                icon: const Icon(Icons.delete, color: Colors.red),
+                                onPressed: () => _deleteSppg(sppg.id),
+                              ),
+                              // TOMBOL DETAIL (PANAH)
+                              IconButton(
+                                icon: const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(builder: (context) => DetailSppgScreen(sppg: sppg)),
+                                  );
+                                },
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },
