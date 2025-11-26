@@ -1,0 +1,2 @@
+INSERT INTO "public"."sppgs" ("id", "name", "address", "gps_lat", "gps_long", "created_at", "email", "phone") VALUES ('894cc1e5-d726-4f7b-8f49-2fe8970ce539', 'SPPG Sukajaya Lembang 1', 'Jl. Kolonel Masturi No.155, Sukajaya, Kec. Lembang, Kabupaten Bandung Barat, Jawa Barat 40391. 
+', '-6.81424249120099', '107.602458303493', '2025-11-19 09:41:36.789025+00', 'sukajaya@gmail.com', '085143271864'), ('b4af86a0-f881-4352-9f3e-ca61bf634875', 'SPPG LIKMI', 'jl. jshsk', '-6.8955242', '107.61335', '2025-11-20 06:22:12.783703+00', 'likmi@gmail.com', '1234567899');

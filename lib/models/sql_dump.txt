@@ -1,0 +1,155 @@
+CREATE TABLE IF NOT EXISTS public.profiles (
+    id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL PRIMARY KEY,
+    full_name text,
+    role text CHECK (role IN ('bgn', 'admin_sppg', 'kurir', 'koordinator', 'walikelas')),
+    sppg_id uuid, 
+    school_id uuid, 
+    class_name text, 
+    email text, 
+    created_at timestamp with time zone DEFAULT timezone('utc'::text, now())
+);
+
+CREATE TABLE IF NOT EXISTS public.sppgs (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    name text NOT NULL,
+    address text,
+    gps_lat float,
+    gps_long float,
+    email text,
+    phone text,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.schools (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    sppg_id uuid REFERENCES public.sppgs(id), 
+    name text NOT NULL,
+    address text,
+    gps_lat float,
+    gps_long float,
+    student_count int DEFAULT 0, 
+    deadline_time time, 
+    service_time_minutes int DEFAULT 10, 
+    is_high_risk boolean DEFAULT false,
+    tolerance_minutes integer DEFAULT 45, 
+    menu_default text
+);
+
+CREATE TABLE IF NOT EXISTS public.vehicles (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    sppg_id uuid REFERENCES public.sppgs(id),
+    plate_number text NOT NULL,
+    driver_name text,
+    capacity_limit int DEFAULT 0,
+    is_active boolean DEFAULT true 
+);
+
+CREATE TABLE IF NOT EXISTS public.menus (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    sppg_id uuid REFERENCES public.sppgs(id) ON DELETE CASCADE,
+    name text NOT NULL,
+    category text,
+    cooking_duration_minutes integer DEFAULT 0,
+    created_at timestamp with time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.production_schedules (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    sppg_id uuid REFERENCES public.sppgs(id),
+    date date NOT NULL,                        
+    menu_id uuid REFERENCES public.menus(id),  
+    total_portions integer DEFAULT 0,          
+    start_cooking_time time,    
+    target_finish_time time,    
+    notes text,                                
+    created_at timestamp WITH time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.delivery_routes (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    date date DEFAULT CURRENT_DATE,
+    sppg_id uuid REFERENCES public.sppgs(id),
+    vehicle_id uuid REFERENCES public.vehicles(id),
+    courier_id uuid REFERENCES public.profiles(id), -- FIX: Refer ke profiles, bukan auth.users
+    status text CHECK (status IN ('pending', 'active', 'completed')) DEFAULT 'pending',
+    start_time timestamp with time zone,
+    end_time timestamp with time zone
+);
+
+CREATE TABLE IF NOT EXISTS public.delivery_stops (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    route_id uuid REFERENCES public.delivery_routes(id),
+    school_id uuid REFERENCES public.schools(id),
+    sequence_order int, 
+    status text CHECK (status IN ('pending', 'arrived', 'completed', 'received', 'issue_reported')) DEFAULT 'pending',
+    arrival_time timestamp with time zone, 
+    completion_time timestamp with time zone,
+    -- Data Penerimaan Koordinator
+    received_qty integer DEFAULT 0,
+    reception_notes text,
+    proof_photo_url text,
+    recipient_name text,
+    -- Data Tindak Lanjut Admin
+    admin_response text,
+    resolved_at timestamp with time zone
+);
+
+CREATE TABLE IF NOT EXISTS public.class_receptions (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    stop_id uuid REFERENCES public.delivery_stops(id),
+    teacher_id uuid REFERENCES auth.users(id),
+    class_name text,
+    qty_received integer DEFAULT 0,
+    notes text,
+    issue_type text,
+    proof_photo_url text,
+    admin_response text, 
+    resolved_at timestamp with time zone,
+    created_at timestamp WITH time zone DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS public.change_requests (
+    id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+    sppg_id uuid REFERENCES public.sppgs(id),
+    school_id uuid REFERENCES public.schools(id),
+    requester_id uuid REFERENCES auth.users(id),
+    request_type text, 
+    details text,
+    status text DEFAULT 'pending', 
+    admin_response text,          
+    created_at timestamp WITH time zone DEFAULT now(),
+    updated_at timestamp WITH time zone
+);
+
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.sppgs ENABLE ROW LEVEL SECURITY; 
+ALTER TABLE public.schools ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.vehicles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.menus ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.production_schedules ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_routes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.delivery_stops ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.class_receptions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.change_requests ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Enable all for authenticated users" ON public.profiles;
+DROP POLICY IF EXISTS "Enable all for authenticated users on profiles" ON public.profiles;
+
+CREATE POLICY "Allow All Auth Profiles" ON public.profiles FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Schools" ON public.schools FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Vehicles" ON public.vehicles FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Menus" ON public.menus FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Schedules" ON public.production_schedules FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Routes" ON public.delivery_routes FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Stops" ON public.delivery_stops FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Receptions" ON public.class_receptions FOR ALL TO authenticated USING (true) WITH CHECK (true);
+CREATE POLICY "Allow All Auth Requests" ON public.change_requests FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+CREATE POLICY "Public profiles view" ON public.profiles FOR SELECT USING (true);
+
+INSERT INTO storage.buckets (id, name, public) VALUES ('evidence', 'evidence', true) ON CONFLICT (id) DO NOTHING;
+
+CREATE POLICY "Allow Upload Evidence" ON storage.objects FOR INSERT TO authenticated WITH CHECK (bucket_id = 'evidence');
+CREATE POLICY "Allow View Evidence" ON storage.objects FOR SELECT TO public USING (bucket_id = 'evidence');
+
+    
