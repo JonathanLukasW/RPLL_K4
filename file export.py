@@ -1,17 +1,21 @@
 import os
 
 folders = [
-    "lib"
+    "lib/core",
+    "lib/models",
+    "lib/features/autentikasi",
+    "lib/features/shared",
+    "lib/features/koordinator"
 ]
 
 # allowed file types for folder scanning
-allowed_ext = [".dart"]
+allowed_ext = [".dart", ".sql", ".txt"]
 
 # single files you want to include even if they're outside those folders
 extra_files = [
     ".env",
     "pubspec.yaml",
-	"AndroidManifest.xml"
+	"android/app/src/main/AndroidManifest.xml"
 ]
 
 output = ""

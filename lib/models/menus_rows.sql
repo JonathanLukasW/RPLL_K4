@@ -1,0 +1,1 @@
+INSERT INTO "public"."menus" ("id", "sppg_id", "name", "category", "cooking_duration_minutes", "created_at") VALUES ('1e19318e-0127-46c6-886d-ec4f35e27009', '894cc1e5-d726-4f7b-8f49-2fe8970ce539', 'chicken katsu', 'Lauk Protein', '25', '2025-11-25 06:46:28.506069+00');
