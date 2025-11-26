@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../services/bgn_monitoring_service.dart';
 
 class BgnReportScreen extends StatefulWidget {
@@ -16,80 +15,79 @@ class _BgnReportScreenState extends State<BgnReportScreen> with SingleTickerProv
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // [UBAH] Judul lebih relevan
-        title: const Text("Laporan & Pengaduan"),
-        backgroundColor: Colors.blue[800], // Ganti jadi Biru (Warna BGN) atau tetap Merah kalau mau highlight isu
+        title: const Text("Laporan Distribusi & Kualitas"), // UC03
+        backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
+          isScrollable: true, // Biar muat di layar kecil
           tabs: const [
-            Tab(text: "Logistik & Kemasan"),
-            Tab(text: "Kualitas Makanan"),
+            Tab(text: "History & Bukti"),
+            Tab(text: "Jadwal SPPG"),
+            Tab(text: "Keluhan Masalah"),
           ],
         ),
       ),
       body: TabBarView(
         controller: _tabController,
         children: [
-          _buildLogisticsIssues(),
-          _buildFoodQualityIssues(),
+          _buildHistoryList(),
+          _buildScheduleList(),
+          _buildComplaintList(),
         ],
       ),
     );
   }
 
-  // TAB 1: MASALAH LOGISTIK (DARI KOORDINATOR)
-  Widget _buildLogisticsIssues() {
+  // TAB 1: HISTORY & BUKTI & KETEPATAN
+  Widget _buildHistoryList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _service.getGlobalCoordinatorComplaints(),
+      future: _service.getDeliveryHistory(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada laporan logistik.");
+        if (data.isEmpty) return const Center(child: Text("Belum ada riwayat pengiriman."));
 
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
           itemCount: data.length,
           itemBuilder: (ctx, i) {
             final item = data[i];
-            final sppgName = item['delivery_routes']['sppgs']['name'];
-            final schoolName = item['schools']['name'];
+            final sppg = item['delivery_routes']['sppgs']['name'];
+            final school = item['schools']['name'];
             final date = item['delivery_routes']['date'];
-            final notes = item['reception_notes'];
-            final response = item['admin_response'];
+            final photoUrl = item['proof_photo_url'];
+            
+            // Logika Ketepatan Waktu (Sederhana: Kalau received_time < deadline dianggap Tepat)
+            // Di sini kita labeli saja
+            bool isOnTime = true; // Placeholder logika
 
             return Card(
-              margin: const EdgeInsets.only(bottom: 10),
-              color: response == null ? Colors.red[50] : Colors.white,
-              child: ListTile(
-                leading: const Icon(Icons.local_shipping, color: Colors.red),
-                title: Text("$sppgName -> $schoolName", style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("Tgl: $date"),
-                    Text("Laporan: $notes", style: const TextStyle(color: Colors.black87)),
-                    const SizedBox(height: 5),
-                    if (response != null)
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(5)),
-                        child: Text("Tindak Lanjut: $response", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                      )
-                    else
-                      const Text("BELUM DITANGANI ADMIN SPPG", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
-                  ],
-                ),
+              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              child: ExpansionTile(
+                leading: const Icon(Icons.history, color: Colors.blue),
+                title: Text("$sppg -> $school"),
+                subtitle: Text("Tgl: $date | Status: ${isOnTime ? 'Tepat Waktu' : 'Terlambat'}"),
+                children: [
+                  if (photoUrl != null)
+                    Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Image.network(photoUrl, height: 150, fit: BoxFit.cover),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.all(8.0),
+                    child: Text("Penerima: ${item['recipient_name'] ?? '-'} \nCatatan: ${item['reception_notes'] ?? '-'}"),
+                  )
+                ],
               ),
             );
           },
@@ -98,50 +96,23 @@ class _BgnReportScreenState extends State<BgnReportScreen> with SingleTickerProv
     );
   }
 
-  // TAB 2: MASALAH KUALITAS MAKANAN (DARI WALI KELAS)
-  Widget _buildFoodQualityIssues() {
+  // TAB 2: JADWAL PENGIRIMAN SETIAP SPPG
+  Widget _buildScheduleList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _service.getGlobalTeacherComplaints(),
+      future: _service.getAllSchedules(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
         final data = snapshot.data ?? [];
-        if (data.isEmpty) return _buildEmptyState("Belum ada laporan kualitas makanan.");
+        if (data.isEmpty) return const Center(child: Text("Belum ada jadwal mendatang."));
 
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
           itemCount: data.length,
           itemBuilder: (ctx, i) {
             final item = data[i];
-            final sppgName = item['delivery_stops']['delivery_routes']['sppgs']['name'];
-            final schoolName = item['delivery_stops']['schools']['name'];
-            final className = item['class_name'];
-            final issue = item['issue_type'];
-            final notes = item['notes'];
-            final response = item['admin_response'];
-
-            return Card(
-              margin: const EdgeInsets.only(bottom: 10),
-              color: response == null ? Colors.red[50] : Colors.white,
-              child: ListTile(
-                leading: const Icon(Icons.dangerous, color: Colors.red),
-                title: Text("$sppgName -> $schoolName ($className)", style: const TextStyle(fontWeight: FontWeight.bold)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("ISU: ${issue.toString().toUpperCase()}", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.red)),
-                    Text("Detail: $notes"),
-                    const SizedBox(height: 5),
-                    if (response != null)
-                      Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(5)),
-                        child: Text("Tindak Lanjut: $response", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
-                      )
-                    else
-                      const Text("BELUM DITANGANI ADMIN SPPG", style: TextStyle(color: Colors.red, fontSize: 12, fontWeight: FontWeight.bold)),
-                  ],
-                ),
-              ),
+            return ListTile(
+              leading: const Icon(Icons.calendar_today, color: Colors.orange),
+              title: Text(item['sppgs']['name']),
+              subtitle: Text("Jadwal: ${item['date']} | Mobil: ${item['vehicles'] != null ? item['vehicles']['plate_number'] : '-'}"),
             );
           },
         );
@@ -149,16 +120,36 @@ class _BgnReportScreenState extends State<BgnReportScreen> with SingleTickerProv
     );
   }
 
-  Widget _buildEmptyState(String text) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.check_circle_outline, size: 80, color: Colors.grey),
-          const SizedBox(height: 15),
-          Text(text, style: const TextStyle(fontSize: 16, color: Colors.grey)),
-        ],
-      ),
+  // TAB 3: LAPORAN KELUHAN SEMUA SPPG
+  Widget _buildComplaintList() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getAllComplaints(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty) return const Center(child: Text("Aman! Tidak ada keluhan."));
+
+        return ListView.builder(
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            final sppg = item['delivery_routes']['sppgs']['name'];
+            final school = item['schools']['name'];
+            
+            return Card(
+              color: Colors.red[50],
+              child: ListTile(
+                leading: const Icon(Icons.warning, color: Colors.red),
+                title: Text("$sppg -> $school"),
+                subtitle: Text("Keluhan: ${item['reception_notes']}"),
+                trailing: item['admin_response'] != null 
+                    ? const Icon(Icons.check_circle, color: Colors.green)
+                    : const Text("Belum Ditangani", style: TextStyle(color: Colors.red, fontSize: 10)),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 }

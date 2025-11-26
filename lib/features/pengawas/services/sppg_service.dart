@@ -1,14 +1,12 @@
-import 'dart:convert'; // Wajib ada buat JSON
-import 'package:http/http.dart' as http; // Wajib ada buat Request
+import 'dart:convert'; 
+import 'package:http/http.dart' as http; 
 import 'package:supabase_flutter/supabase_flutter.dart';
-// Pastikan path ini benar. Kalau merah, hapus baris ini lalu ketik ulang biar auto-import
 import '../../../models/sppg_model.dart'; 
 
 class SppgService {
-  // Client utama (Admin BGN)
   final _supabase = Supabase.instance.client;
 
-  // --- FUNGSI A: DATABASE (CRUD DATA KANTOR SPPG) ---
+  // --- A. DATABASE CRUD ---
   
   Future<void> createSppg(Map<String, dynamic> data) async {
     try {
@@ -26,97 +24,77 @@ class SppgService {
           .order('created_at', ascending: false);
 
       final List<dynamic> data = response;
-      
-      return data.map((json) {
-        return Sppg(
-          id: json['id'].toString(),
-          name: json['name'] ?? 'Tanpa Nama',
-          address: json['address'],
-          email: json['email'],
-          phone: json['phone'],
-          latitude: json['gps_lat'] != null ? double.tryParse(json['gps_lat'].toString()) : null,
-          longitude: json['gps_long'] != null ? double.tryParse(json['gps_long'].toString()) : null,
-        );
-      }).toList();
+      return data.map((json) => Sppg.fromJson(json)).toList();
     } catch (e) {
       throw Exception('Gagal ambil data: $e');
     }
   }
 
-  // --- FUNGSI B: AUTH (VERSI HTTP AMAN) ---
-  
+  // [BARU] Hapus SPPG (UC06)
+  // Note: Ini akan error jika tabel lain tidak di-set "ON DELETE CASCADE" di database.
+  // Tapi secara logika aplikasi, ini kodenya.
+  Future<void> deleteSppg(String sppgId) async {
+    try {
+      // Hapus SPPG (User admin-nya harus dihapus manual lewat Auth atau trigger database)
+      await _supabase.from('sppgs').delete().eq('id', sppgId);
+    } catch (e) {
+      throw Exception('Gagal hapus SPPG: $e');
+    }
+  }
+
+  // --- B. AUTH (SIMPLIFIED - UC04) ---
+  // Kembali ke versi simpel: Cuma Nama, Email, Password
   Future<void> createSppgUser({
     required String email,
     required String password,
     required String sppgId,
     required String sppgName,
+    required String fullName, // Nama Admin
   }) async {
-    // 1. KREDENSIAL SUPABASE (Pastikan tidak ada spasi di url/key)
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
     const String anonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1xeWZycWdmcHF3bHJsb3F0cHZpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjM0NTMxMDMsImV4cCI6MjA3OTAyOTEwM30.KoXKouhFN0H7Iz9MSnRhFQuBIePVMwWyXmrzSv3rEeQ';
 
     final url = Uri.parse('$projectUrl/auth/v1/signup');
     
     try {
-      print("--- Melakukan Request HTTP ke Supabase Auth ---"); // Debugging
-
       final response = await http.post(
         url,
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': anonKey,
-        },
+        headers: {'Content-Type': 'application/json', 'apikey': anonKey},
         body: jsonEncode({
-          'email': email.trim(), // Trim biar ga ada spasi gak sengaja
+          'email': email.trim(),
           'password': password,
-          'data': { 
-             'full_name': 'Admin $sppgName' 
-          }
+          'data': { 'full_name': fullName }
         }),
       );
 
-      print("Status Code: ${response.statusCode}"); // Debugging
-      print("Response: ${response.body}"); // Debugging
-
-      // 2. CEK HASIL
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
         
-        // --- [ANTI ERROR NULL] ---
-        // Supabase kadang balikin ID di root, kadang di dalam user object
-        // Kita cek satu-satu
         String? newUserId;
-
         if (responseData['id'] != null) {
           newUserId = responseData['id'].toString();
         } else if (responseData['user'] != null && responseData['user']['id'] != null) {
           newUserId = responseData['user']['id'].toString();
         }
 
-        // Kalau masih null juga, kita paksa error biar ga lanjut
-        if (newUserId == null) {
-          throw Exception("Gagal dapat ID User (Format JSON tidak dikenali).");
-        }
+        if (newUserId == null) throw Exception("Gagal dapat ID User.");
 
-        // 3. SIMPAN KE TABEL PROFILES
+        // Simpan ke Profiles (Versi Ringkas)
         await _supabase.from('profiles').insert({
           'id': newUserId,
-          'full_name': 'Admin $sppgName',
+          'full_name': fullName,
           'role': 'admin_sppg',
           'sppg_id': sppgId,
-          'school_id': null,
+          'email': email.trim(),
         });
 
       } else {
-        // GAGAL DARI SERVER
         final errorData = jsonDecode(response.body);
-        String msg = errorData['msg'] ?? errorData['message'] ?? 'Gagal mendaftar';
-        throw Exception(msg);
+        throw Exception(errorData['msg'] ?? 'Gagal mendaftar');
       }
     } catch (e) {
-      // Tangkap error spesifik
-       if (e.toString().contains("User already registered") || e.toString().contains("already been registered")) {
-        throw Exception("Email ini sudah terdaftar! Cek menu Authentication Supabase.");
+      if (e.toString().contains("User already registered")) {
+        throw Exception("Email ini sudah terdaftar!");
       }
       throw Exception('Error Create User: $e');
     }

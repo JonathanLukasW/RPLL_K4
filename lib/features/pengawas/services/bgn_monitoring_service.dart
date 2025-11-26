@@ -3,83 +3,77 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class BgnMonitoringService {
   final _supabase = Supabase.instance.client;
 
-  // 1. AMBIL SEMUA MASALAH DARI KOORDINATOR (GLOBAL)
-  Future<List<Map<String, dynamic>>> getGlobalCoordinatorComplaints() async {
+  // ===========================================================================
+  // BAGIAN 1: UNTUK SCREEN LAPORAN (BgnReportScreen)
+  // ===========================================================================
+
+  // 1. DATA HISTORY & BUKTI DIGITAL
+  Future<List<Map<String, dynamic>>> getDeliveryHistory() async {
     try {
-      // Ambil delivery_stops yang statusnya 'issue_reported'
-      // Join: schools (nama sekolah), delivery_routes -> sppgs (nama dapur)
       final response = await _supabase
           .from('delivery_stops')
           .select('*, schools(name), delivery_routes!inner(date, sppgs(name))')
-          .eq('status', 'issue_reported') // Ambil yang lapor masalah
+          // [FIX ERROR _in]: Kita pakai .filter() manual biar aman dari error syntax
+          .filter('status', 'in', '("received","completed","issue_reported")') 
           .order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
-      throw Exception("Gagal ambil data BGN (Koordinator): $e");
+      throw Exception("Gagal ambil history: $e");
     }
   }
 
-  // 2. AMBIL SEMUA MASALAH DARI WALI KELAS (GLOBAL)
-  Future<List<Map<String, dynamic>>> getGlobalTeacherComplaints() async {
+  // 2. JADWAL PENGIRIMAN SETIAP SPPG
+  Future<List<Map<String, dynamic>>> getAllSchedules() async {
     try {
-      // Join: delivery_stops -> delivery_routes -> sppgs
       final response = await _supabase
-          .from('class_receptions')
-          .select('*, delivery_stops!inner(schools(name), delivery_routes!inner(sppgs(name)))')
-          .not('issue_type', 'is', null) // Ambil yang ada isunya
+          .from('delivery_routes')
+          .select('*, sppgs(name), vehicles(plate_number)')
+          .gte('date', DateTime.now().toIso8601String().split('T')[0]) // Hari ini ke depan
+          .order('date', ascending: true);
+      
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception("Gagal ambil jadwal: $e");
+    }
+  }
+
+  // 3. LAPORAN KELUHAN SEMUA SPPG
+  Future<List<Map<String, dynamic>>> getAllComplaints() async {
+    try {
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('*, schools(name), delivery_routes!inner(sppgs(name))')
+          .eq('status', 'issue_reported')
           .order('created_at', ascending: false);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
-      throw Exception("Gagal ambil data BGN (Wali Kelas): $e");
+      throw Exception("Gagal ambil keluhan: $e");
     }
   }
 
-  // 3. AMBIL DATA STATISTIK NASIONAL
-  Future<Map<String, int>> getGlobalStats() async {
-    try {
-      // Ambil semua status pengiriman
-      final response = await _supabase.from('delivery_stops').select('status');
-      final List<dynamic> data = response;
+  // ===========================================================================
+  // BAGIAN 2: UNTUK SCREEN STATISTIK (BgnStatisticsScreen)
+  // ===========================================================================
 
-      int received = 0;
-      int issues = 0;
-      int pending = 0;
-
-      for (var item in data) {
-        final status = item['status'];
-        if (status == 'received') received++;
-        else if (status == 'issue_reported') issues++;
-        else pending++;
-      }
-
-      return {
-        'received': received,
-        'issues': issues,
-        'pending': pending,
-        'total': data.length,
-      };
-    } catch (e) {
-      throw Exception("Gagal hitung statistik BGN: $e");
-    }
-  }
-
-  // 4. AMBIL LOKASI SEMUA SPPG (Untuk Peta Sebaran)
-  Future<List<Map<String, dynamic>>> getAllSppgLocations() async {
+  // 4. AMBIL LIST SEMUA SPPG (Untuk Dropdown)
+  Future<List<Map<String, dynamic>>> getSppgList() async {
     try {
       final response = await _supabase
           .from('sppgs')
-          .select('id, name, address, gps_lat, gps_long');
+          .select('id, name')
+          .order('name', ascending: true);
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
-      throw Exception("Gagal ambil lokasi SPPG: $e");
+      throw Exception("Gagal ambil list SPPG: $e");
     }
   }
 
+  // 5. AMBIL STATISTIK SPESIFIK PER SPPG
   Future<Map<String, int>> getSppgStats(String sppgId) async {
     try {
-      // Join: delivery_routes -> filter by sppg_id
+      // Ambil data stops berdasarkan SPPG ID
       final response = await _supabase
           .from('delivery_stops')
           .select('status, delivery_routes!inner(sppg_id)')
@@ -105,10 +99,20 @@ class BgnMonitoringService {
       throw Exception("Gagal hitung statistik SPPG: $e");
     }
   }
-  
-  // [BARU] 6. AMBIL LIST SEMUA SPPG (Untuk Dropdown/List Pilihan)
-  Future<List<Map<String, dynamic>>> getSppgList() async {
-      final response = await _supabase.from('sppgs').select('id, name');
+
+  // ===========================================================================
+  // BAGIAN 3: UNTUK SCREEN TRACKING PETA (BgnTrackingScreen)
+  // ===========================================================================
+
+  // 6. AMBIL LOKASI SEMUA SPPG
+  Future<List<Map<String, dynamic>>> getAllSppgLocations() async {
+    try {
+      final response = await _supabase
+          .from('sppgs')
+          .select('id, name, address, gps_lat, gps_long');
       return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception("Gagal ambil lokasi SPPG: $e");
+    }
   }
 }

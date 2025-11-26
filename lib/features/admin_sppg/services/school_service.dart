@@ -75,4 +75,19 @@ class SchoolService {
       throw Exception('Gagal mengupdate sekolah: $e');
     }
   }
+
+  Future<List<School>> getSchoolsBySppgId(String sppgId) async {
+    try {
+      final response = await _supabase
+          .from('schools')
+          .select()
+          .eq('sppg_id', sppgId)
+          .order('name', ascending: true);
+
+      final List<dynamic> data = response;
+      return data.map((json) => School.fromJson(json)).toList();
+    } catch (e) {
+      throw Exception('Gagal ambil sekolah: $e');
+    }
+  }
 }

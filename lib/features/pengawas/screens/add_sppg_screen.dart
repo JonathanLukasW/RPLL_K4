@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
-// Pastikan file ini ada di folder yang sama
+import 'package:supabase_flutter/supabase_flutter.dart';
+
 import 'location_picker_screen.dart'; 
-// Pastikan path ini benar menuju service yang baru diperbaiki di atas
 import '../services/sppg_service.dart'; 
 
 class AddSppgScreen extends StatefulWidget {
@@ -15,13 +15,18 @@ class AddSppgScreen extends StatefulWidget {
 class _AddSppgScreenState extends State<AddSppgScreen> {
   final _formKey = GlobalKey<FormState>();
 
-  final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _emailController = TextEditingController();
-  final TextEditingController _phoneController = TextEditingController();
-  final TextEditingController _addressController = TextEditingController();
+  // --- DATA DAPUR ---
+  final _sppgNameController = TextEditingController();
+  final _sppgAddressController = TextEditingController();
   
-  final TextEditingController _latController = TextEditingController();
-  final TextEditingController _longController = TextEditingController();
+  // Lokasi
+  final _latController = TextEditingController();
+  final _longController = TextEditingController();
+
+  // --- DATA ADMIN ---
+  final _adminNameController = TextEditingController();
+  final _adminEmailController = TextEditingController(); 
+  final _adminPasswordController = TextEditingController();
 
   bool _isSubmitting = false;
 
@@ -44,11 +49,6 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
         _latController.text = result.latitude.toString();
         _longController.text = result.longitude.toString();
       });
-      
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Koordinat berhasil diambil dari Peta!")),
-      );
     }
   }
 
@@ -57,37 +57,36 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
       setState(() => _isSubmitting = true); 
 
       try {
-        final Map<String, dynamic> newData = {
-          "name": _nameController.text,
-          "email": _emailController.text,
-          "phone": _phoneController.text,
-          "address": _addressController.text,
+        // 1. SIMPAN DATA DAPUR (SPPG) - Ringkas
+        final Map<String, dynamic> sppgData = {
+          "name": _sppgNameController.text,
+          "address": _sppgAddressController.text,
           "gps_lat": double.tryParse(_latController.text),
           "gps_long": double.tryParse(_longController.text),
         };
+        
+        final supabase = Supabase.instance.client;
+        final sppgRes = await supabase.from('sppgs').insert(sppgData).select().single();
+        final String newSppgId = sppgRes['id'];
 
-        // Memanggil fungsi createSppg yang sudah ada lagi di Service
-        await SppgService().createSppg(newData);
-
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Berhasil Mendaftarkan SPPG Baru!"),
-            backgroundColor: Colors.green,
-          ),
+        // 2. BUAT AKUN ADMIN SPPG - Ringkas
+        await SppgService().createSppgUser(
+          email: _adminEmailController.text,
+          password: _adminPasswordController.text,
+          sppgId: newSppgId,
+          sppgName: _sppgNameController.text,
+          fullName: _adminNameController.text,
         );
 
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("SPPG & Admin Berhasil Didaftarkan!"), backgroundColor: Colors.green),
+        );
         Navigator.pop(context, true);
 
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Gagal menyimpan: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red));
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }
@@ -95,21 +94,10 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
   }
 
   @override
-  void dispose() {
-    _nameController.dispose();
-    _emailController.dispose();
-    _phoneController.dispose();
-    _addressController.dispose();
-    _latController.dispose();
-    _longController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Registrasi SPPG Baru"),
+        title: const Text("Tambah Akun SPPG"),
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
       ),
@@ -120,69 +108,30 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("Informasi Dasar", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const Text("1. Detail SPPG (Dapur)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
               const SizedBox(height: 15),
-              TextFormField(
-                controller: _nameController,
-                decoration: const InputDecoration(labelText: "Nama SPPG / Dapur", border: OutlineInputBorder(), prefixIcon: Icon(Icons.store)),
-                validator: (value) => value!.isEmpty ? "Nama wajib diisi" : null,
-              ),
+              TextFormField(controller: _sppgNameController, decoration: const InputDecoration(labelText: "Nama SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.store)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+              const SizedBox(height: 10),
+              TextFormField(controller: _sppgAddressController, maxLines: 2, decoration: const InputDecoration(labelText: "Alamat SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.map)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+              
               const SizedBox(height: 15),
-              TextFormField(
-                controller: _emailController,
-                decoration: const InputDecoration(labelText: "Email Admin SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
-                keyboardType: TextInputType.emailAddress,
-              ),
-              const SizedBox(height: 15),
-              TextFormField(
-                controller: _phoneController,
-                decoration: const InputDecoration(labelText: "Nomor Telepon / WA", border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone)),
-                keyboardType: TextInputType.phone,
-              ),
-              const SizedBox(height: 15),
-              TextFormField(
-                controller: _addressController,
-                decoration: const InputDecoration(labelText: "Alamat Lengkap", border: OutlineInputBorder(), prefixIcon: Icon(Icons.home)),
-                maxLines: 3,
-                validator: (value) => value!.isEmpty ? "Alamat wajib diisi" : null,
-              ),
+              Row(children: [
+                Expanded(child: ElevatedButton.icon(onPressed: _openMapPicker, icon: const Icon(Icons.map), label: const Text("Pilih Lokasi Map"))),
+              ]),
+              if (_latController.text.isNotEmpty) 
+                Text("GPS: ${_latController.text}, ${_longController.text}", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+
               const SizedBox(height: 30),
               const Divider(thickness: 2),
-              const SizedBox(height: 10),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text("Titik Koordinat", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                  ElevatedButton.icon(
-                    onPressed: _openMapPicker,
-                    icon: const Icon(Icons.map, size: 18),
-                    label: const Text("Buka Peta"),
-                    style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[700], foregroundColor: Colors.white),
-                  ),
-                ],
-              ),
+              
+              const Text("2. Akun Admin SPPG", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
               const SizedBox(height: 15),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextFormField(
-                      controller: _latController,
-                      decoration: const InputDecoration(labelText: "Latitude", border: OutlineInputBorder()),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                      validator: (value) => value!.isEmpty ? "Wajib diisi" : null,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: TextFormField(
-                      controller: _longController,
-                      decoration: const InputDecoration(labelText: "Longitude", border: OutlineInputBorder()),
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                      validator: (value) => value!.isEmpty ? "Wajib diisi" : null,
-                    ),
-                  ),
-                ],
-              ),
+              TextFormField(controller: _adminNameController, decoration: const InputDecoration(labelText: "Nama Lengkap Admin", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+              const SizedBox(height: 15),
+              TextFormField(controller: _adminEmailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+              const SizedBox(height: 10),
+              TextFormField(controller: _adminPasswordController, obscureText: true, decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)), validator: (v) => v!.length < 6 ? "Min 6 karakter" : null),
+
               const SizedBox(height: 40),
               SizedBox(
                 width: double.infinity,
@@ -190,15 +139,23 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
                   onPressed: _isSubmitting ? null : _submitForm,
                   style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], padding: const EdgeInsets.symmetric(vertical: 16)),
                   child: _isSubmitting
-                      ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text("SIMPAN AKUN SPPG", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text("SIMPAN", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
                 ),
               ),
-              const SizedBox(height: 20),
+              const SizedBox(height: 30),
             ],
           ),
         ),
       ),
     );
+  }
+  
+  @override
+  void dispose() {
+    _sppgNameController.dispose(); _sppgAddressController.dispose(); 
+    _latController.dispose(); _longController.dispose();
+    _adminNameController.dispose(); _adminEmailController.dispose(); _adminPasswordController.dispose();
+    super.dispose();
   }
 }

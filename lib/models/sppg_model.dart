@@ -3,9 +3,11 @@ class Sppg {
   final String name;
   final String? address;
   final String? email;
-  final String? phone; 
+  final String? phone;
   final double? latitude;
   final double? longitude;
+  // [BARU]
+  final String? establishedDate; 
 
   Sppg({
     required this.id,
@@ -15,18 +17,20 @@ class Sppg {
     this.phone,
     this.latitude,
     this.longitude,
+    this.establishedDate,
   });
 
-  // Menerima data JSON dari Supabase
   factory Sppg.fromJson(Map<String, dynamic> json) {
     return Sppg(
       id: json['id'].toString(),
-      name: json['name'] ?? 'Tanpa Nama',    // FIX: Menggunakan 'name'
-      address: json['address'],              // FIX: Menggunakan 'address'
+      name: json['name'] ?? 'Tanpa Nama',
+      address: json['address'],
       email: json['email'],
-      phone: json['phone'],                  // FIX: Menggunakan 'phone'
-      latitude: json['gps_lat'] != null ? double.parse(json['gps_lat'].toString()) : null,
-      longitude: json['gps_long'] != null ? double.parse(json['gps_long'].toString()) : null,
+      phone: json['phone'],
+      latitude: json['gps_lat'] != null ? double.tryParse(json['gps_lat'].toString()) : null,
+      longitude: json['gps_long'] != null ? double.tryParse(json['gps_long'].toString()) : null,
+      // [BARU]
+      establishedDate: json['established_date'],
     );
   }
 }

@@ -1,356 +1,124 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-// Import Model
 import '../../../models/sppg_model.dart';
-// Import Service yang sudah ada fitur Ghost Client-nya
+import '../../../models/school_model.dart';
 import '../services/sppg_service.dart';
+import '../../admin_sppg/services/school_service.dart'; // Import School Service
 
 class DetailSppgScreen extends StatelessWidget {
   final Sppg sppg;
 
   const DetailSppgScreen({super.key, required this.sppg});
 
-  // ---------------------------------------------------------------------------
-  // LOGIKA DIALOG "BUAT AKUN"
-  // ---------------------------------------------------------------------------
-  void _showCreateAccountDialog(BuildContext context) {
-    final TextEditingController passwordController = TextEditingController();
-    bool isLoading = false;
-
-    showDialog(
+  // Fungsi Hapus
+  Future<void> _deleteSppg(BuildContext context) async {
+    final confirm = await showDialog(
       context: context,
-      barrierDismissible: false, // User gabisa tutup dialog sembarangan
-      builder: (context) {
-        // Kita butuh StatefulBuilder DI DALAM Dialog agar bisa update state loading
-        // khusus untuk tampilan dialog ini saja.
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text("Buat Akun Login"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    "Akun ini akan digunakan oleh Admin SPPG untuk login ke aplikasi mobile.",
-                    style: TextStyle(fontSize: 13, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 15),
-                  
-                  // Tampilkan Email (Read Only)
-                  const Text("Email Login:", style: TextStyle(fontWeight: FontWeight.bold)),
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      sppg.email ?? "Email belum diatur!",
-                      style: TextStyle(color: sppg.email == null ? Colors.red : Colors.black),
-                    ),
-                  ),
-                  const SizedBox(height: 15),
-
-                  // Input Password Baru
-                  TextField(
-                    controller: passwordController,
-                    obscureText: true,
-                    decoration: const InputDecoration(
-                      labelText: "Password Baru",
-                      hintText: "Minimal 6 karakter",
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.lock),
-                    ),
-                  ),
-                  
-                  // Loading Indicator
-                  if (isLoading)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 20),
-                      child: Center(child: CircularProgressIndicator()),
-                    )
-                ],
-              ),
-              actions: [
-                // Tombol Batal (Hilang kalau lagi loading)
-                if (!isLoading)
-                  TextButton(
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text("Batal", style: TextStyle(color: Colors.grey)),
-                  ),
-                
-                // Tombol Eksekusi
-                if (!isLoading)
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green[700], 
-                      foregroundColor: Colors.white
-                    ),
-                    onPressed: () async {
-                      // 1. Validasi Input
-                      if (sppg.email == null || sppg.email!.isEmpty) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Error: SPPG ini tidak punya email. Edit data dulu!")),
-                        );
-                        return;
-                      }
-                      if (passwordController.text.length < 6) {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Password minimal 6 karakter!")),
-                        );
-                        return;
-                      }
-
-                      // 2. Mulai Loading
-                      setState(() => isLoading = true);
-
-                      try {
-                        // 3. Panggil Service (Ghost Client)
-                        await SppgService().createSppgUser(
-                          email: sppg.email!,
-                          password: passwordController.text,
-                          sppgId: sppg.id,
-                          sppgName: sppg.name,
-                        );
-
-                        if (!context.mounted) return;
-                        
-                        // 4. Sukses
-                        Navigator.pop(context); // Tutup Dialog
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text("SUKSES! Akun Admin SPPG berhasil dibuat."),
-                            backgroundColor: Colors.green,
-                            duration: Duration(seconds: 4),
-                          ),
-                        );
-
-                      } catch (e) {
-                        // 5. Gagal
-                        setState(() => isLoading = false);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-                        );
-                      }
-                    },
-                    child: const Text("Buat Akun"),
-                  ),
-              ],
-            );
-          },
-        );
-      },
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus SPPG?"),
+        content: const Text("Tindakan ini akan menghapus data SPPG ini. Data terkait mungkin ikut terhapus."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Batal")),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Hapus", style: TextStyle(color: Colors.red))),
+        ],
+      ),
     );
+
+    if (confirm == true) {
+      try {
+        await SppgService().deleteSppg(sppg.id);
+        if(!context.mounted) return;
+        Navigator.pop(context, true); // Balik ke list dan refresh
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("SPPG Dihapus.")));
+      } catch (e) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // Validasi lokasi untuk peta
     bool hasLocation = sppg.latitude != null && sppg.longitude != null;
-    
-    // Titik tengah peta (Default Bandung kalau kosong)
     final centerLocation = hasLocation 
         ? LatLng(sppg.latitude!, sppg.longitude!) 
         : const LatLng(-6.9175, 107.6191);
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Detail SPPG"),
+        title: Text(sppg.name),
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
+        actions: [
+          // Tombol Hapus (UC06)
+          IconButton(
+            icon: const Icon(Icons.delete),
+            tooltip: "Hapus SPPG",
+            onPressed: () => _deleteSppg(context),
+          )
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // -----------------------------------------------------------------
-            // 1. PETA LOKASI (Visualisasi OSM)
-            // -----------------------------------------------------------------
+            // 1. PETA
             SizedBox(
-              height: 250,
+              height: 200,
               width: double.infinity,
-              child: Stack(
+              child: FlutterMap(
+                options: MapOptions(initialCenter: centerLocation, initialZoom: 15.0),
                 children: [
-                  FlutterMap(
-                    options: MapOptions(
-                      initialCenter: centerLocation,
-                      initialZoom: 16.0, // Zoom level dekat
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.mbg_monitoring',
-                      ),
-                      // Attribution (Wajib Legalitas)
-                      const RichAttributionWidget(
-                        attributions: [TextSourceAttribution('OpenStreetMap contributors')],
-                      ),
-                      // Pin Merah Lokasi
-                      if (hasLocation)
-                        MarkerLayer(
-                          markers: [
-                            Marker(
-                              point: centerLocation,
-                              width: 50,
-                              height: 50,
-                              child: const Icon(Icons.location_pin, color: Colors.red, size: 40),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                  // Gradient shadow di bawah
-                  Positioned(
-                    bottom: 0, left: 0, right: 0,
-                    child: Container(
-                      height: 30,
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.bottomCenter,
-                          end: Alignment.topCenter,
-                          colors: [Colors.black.withOpacity(0.1), Colors.transparent],
-                        ),
-                      ),
-                    ),
-                  ),
+                  TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.example.mbg'),
+                  if (hasLocation) MarkerLayer(markers: [Marker(point: centerLocation, width: 50, height: 50, child: const Icon(Icons.location_pin, color: Colors.red, size: 40))]),
                 ],
               ),
             ),
 
-            // -----------------------------------------------------------------
-            // 2. INFORMASI TEKS
-            // -----------------------------------------------------------------
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Nama SPPG
-                  Text(
-                    sppg.name,
-                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-                  ),
-                  const SizedBox(height: 8),
+                  const Text("Detail Info", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 10),
+                  ListTile(leading: const Icon(Icons.map), title: Text(sppg.address ?? "-"), subtitle: const Text("Alamat")),
+                  ListTile(leading: const Icon(Icons.email), title: Text(sppg.email ?? "-"), subtitle: const Text("Email Admin")),
+                  ListTile(leading: const Icon(Icons.phone), title: Text(sppg.phone ?? "-"), subtitle: const Text("Telepon")),
                   
-                  // Badge ID
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(
-                      color: Colors.blue[50],
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(color: Colors.blue.shade100),
-                    ),
-                    child: Text(
-                      "ID: ${sppg.id.split('-').first}...", // Tampilkan ID pendek aja
-                      style: TextStyle(fontSize: 12, color: Colors.blue[800]),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
+                  const Divider(height: 30),
 
-                  // Card Detail Kontak
-                  Card(
-                    elevation: 2,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        children: [
-                          _buildInfoRow(Icons.email, "Email Admin", sppg.email ?? "-"),
-                          const Divider(),
-                          _buildInfoRow(Icons.phone, "Telepon", sppg.phone ?? "-"),
-                          const Divider(),
-                          _buildInfoRow(Icons.map, "Alamat", sppg.address ?? "-"),
-                        ],
-                      ),
-                    ),
-                  ),
-
-                  const SizedBox(height: 20),
-                  const Text("Lokasi GPS", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 5),
-                  Card(
-                    color: Colors.grey[100],
-                    elevation: 0,
-                    child: ListTile(
-                      leading: const Icon(Icons.gps_fixed, color: Colors.orange),
-                      title: Text(hasLocation 
-                          ? "${sppg.latitude}, ${sppg.longitude}" 
-                          : "Koordinat belum diatur"),
-                      subtitle: const Text("Latitude, Longitude"),
-                    ),
-                  ),
-
-                  const SizedBox(height: 30),
-
-                  // -------------------------------------------------------------
-                  // 3. TOMBOL AKSI
-                  // -------------------------------------------------------------
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: () => _showCreateAccountDialog(context),
-                      icon: const Icon(Icons.person_add),
-                      label: const Text("BUAT AKUN LOGIN ADMIN"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.green[700],
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
-                    ),
-                  ),
+                  // 2. LIST SEKOLAH PENERIMA MANFAAT (UC07)
+                  const Text("Daftar Penerima Manfaat (Sekolah)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 10),
                   
-                  // Tombol Edit (Placeholder)
                   SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: () {
-                         ScaffoldMessenger.of(context).showSnackBar(
-                           const SnackBar(content: Text("Fitur Edit Data akan dibuat nanti")),
-                         );
+                    height: 300, // Fixed height untuk list
+                    child: FutureBuilder<List<School>>(
+                      future: SchoolService().getSchoolsBySppgId(sppg.id),
+                      builder: (context, snapshot) {
+                        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+                        final schools = snapshot.data ?? [];
+                        if (schools.isEmpty) return const Center(child: Text("Belum ada sekolah terdaftar."));
+                        
+                        return ListView.builder(
+                          itemCount: schools.length,
+                          itemBuilder: (ctx, i) => Card(
+                            child: ListTile(
+                              leading: const Icon(Icons.school, color: Colors.orange),
+                              title: Text(schools[i].name),
+                              subtitle: Text("${schools[i].studentCount} Siswa"),
+                            ),
+                          ),
+                        );
                       },
-                      icon: const Icon(Icons.edit),
-                      label: const Text("EDIT DATA SPPG"),
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      ),
                     ),
-                  ),
-                  const SizedBox(height: 30),
+                  )
                 ],
               ),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  // Widget kecil buat baris info
-  Widget _buildInfoRow(IconData icon, String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 20, color: Colors.grey[600]),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-                const SizedBox(height: 2),
-                Text(value, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }
