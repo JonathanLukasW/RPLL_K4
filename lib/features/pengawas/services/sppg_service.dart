@@ -29,7 +29,7 @@ class SppgService {
       throw Exception('Gagal ambil data: $e');
     }
   }
-  
+
   Future<void> updateSppg(String id, Map<String, dynamic> data) async {
     try {
       await _supabase.from('sppgs').update(data).eq('id', id);
@@ -38,13 +38,15 @@ class SppgService {
     }
   }
 
-  // [SUDAH ADA - PASTIKAN SAJA] 4. HAPUS SPPG
+
   Future<void> deleteSppg(String sppgId) async {
     try {
-      // Hapus SPPG (Cascade delete di database akan menghapus data terkait jika disetting)
-      await _supabase.from('sppgs').delete().eq('id', sppgId);
+      // Kita panggil fungsi SQL 'delete_sppg_complete' yang baru kita buat
+      await _supabase.rpc('delete_sppg_complete', params: {
+        'target_sppg_id': sppgId
+      });
     } catch (e) {
-      throw Exception('Gagal hapus SPPG: $e');
+      throw Exception('Gagal hapus SPPG & Akun: $e');
     }
   }
 
