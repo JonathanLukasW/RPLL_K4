@@ -19,20 +19,35 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
         title: const Text("Respon Pengajuan"),
         content: TextField(
           controller: responseController,
-          decoration: const InputDecoration(labelText: "Alasan / Catatan", border: OutlineInputBorder()),
+          decoration: const InputDecoration(
+            labelText: "Alasan / Catatan",
+            border: OutlineInputBorder(),
+          ),
         ),
         actions: [
           TextButton(
             onPressed: () async {
-              await _service.respondRequest(id, 'rejected', responseController.text);
-              if(!mounted) return; Navigator.pop(ctx); setState(() {});
-            }, 
+              await _service.respondRequest(
+                id,
+                'rejected',
+                responseController.text,
+              );
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              setState(() {});
+            },
             child: const Text("TOLAK", style: TextStyle(color: Colors.red)),
           ),
           ElevatedButton(
             onPressed: () async {
-              await _service.respondRequest(id, 'approved', responseController.text);
-               if(!mounted) return; Navigator.pop(ctx); setState(() {});
+              await _service.respondRequest(
+                id,
+                'approved',
+                responseController.text,
+              );
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              setState(() {});
             },
             child: const Text("TERIMA"),
           ),
@@ -52,9 +67,11 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
       body: FutureBuilder<List<ChangeRequestModel>>(
         future: _service.getIncomingRequests(),
         builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+          if (snapshot.connectionState == ConnectionState.waiting)
+            return const Center(child: CircularProgressIndicator());
           final data = snapshot.data ?? [];
-          if (data.isEmpty) return const Center(child: Text("Tidak ada pengajuan baru."));
+          if (data.isEmpty)
+            return const Center(child: Text("Tidak ada pengajuan baru."));
 
           return ListView.builder(
             itemCount: data.length,
@@ -68,14 +85,23 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text("[${item.type}] ${item.requestDate}", style: const TextStyle(fontWeight: FontWeight.bold)),
-                      Text(item.details),
+                      Text(
+                        "[${item.type}] ${item.requestDate}",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(item.oldNotes),
                       if (item.status != 'pending')
-                        Text("Status: ${item.status} (${item.adminResponse})", style: const TextStyle(color: Colors.grey)),
+                        Text(
+                          "Status: ${item.status} (${item.adminResponse})",
+                          style: const TextStyle(color: Colors.grey),
+                        ),
                     ],
                   ),
-                  trailing: item.status == 'pending' 
-                      ? ElevatedButton(onPressed: () => _showRespondDialog(item.id), child: const Text("Jawab"))
+                  trailing: item.status == 'pending'
+                      ? ElevatedButton(
+                          onPressed: () => _showRespondDialog(item.id),
+                          child: const Text("Jawab"),
+                        )
                       : const Icon(Icons.check, color: Colors.green),
                 ),
               );
