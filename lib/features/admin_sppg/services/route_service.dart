@@ -8,6 +8,7 @@ import 'package:latlong2/latlong.dart';
 class RouteService {
   final _supabase = Supabase.instance.client;
 
+  // --- 1. BUAT RUTE BARU (ADMIN) ---
   Future<void> createRoute({
     required String vehicleId,
     required String courierId,
@@ -38,12 +39,37 @@ class RouteService {
           'status': 'pending',
         });
       }
+
       await _supabase.from('delivery_stops').insert(stopsData);
+
     } catch (e) {
       throw Exception("Gagal membuat rute: $e");
     }
   }
 
+  // --- 2. AMBIL RUTE BULANAN (UNTUK KALENDER KURIR/ADMIN) ---
+  Future<List<DeliveryRoute>> getRoutesByMonth(DateTime month) async {
+    try {
+      final currentCourierId = _supabase.auth.currentUser!.id;
+      
+      final startDate = DateTime(month.year, month.month, 1);
+      final endDate = DateTime(month.year, month.month + 1, 0);
+
+      final response = await _supabase
+          .from('delivery_routes')
+          .select('*, vehicles(plate_number), profiles(full_name)') 
+          .eq('courier_id', currentCourierId)
+          .gte('date', startDate.toIso8601String())
+          .lte('date', endDate.toIso8601String());
+
+      final List<dynamic> data = response;
+      return data.map((json) => DeliveryRoute.fromJson(json)).toList();
+    } catch (e) {
+      throw Exception("Gagal ambil jadwal: $e");
+    }
+  }
+
+  // --- 3. AMBIL SEMUA RUTE (ADMIN - HISTORY) ---
   Future<List<DeliveryRoute>> getMyRoutes() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
@@ -63,9 +89,11 @@ class RouteService {
     }
   }
 
+  // --- 4. AMBIL RUTE KURIR (LIST BIASA - JIKA DIPERLUKAN) ---
   Future<List<DeliveryRoute>> getRoutesByCourier() async {
     try {
       final currentCourierId = _supabase.auth.currentUser!.id;
+
       final response = await _supabase
           .from('delivery_routes')
           .select('*, vehicles(plate_number), profiles(full_name)') 
@@ -79,10 +107,12 @@ class RouteService {
     }
   }
 
+  // --- 5. AMBIL DETAIL PERHENTIAN (STOPS) ---
   Future<List<Map<String, dynamic>>> getRouteStops(String routeId) async {
     try {
       final response = await _supabase
           .from('delivery_stops')
+          // [PENTING] Menggunakan gps_lat & gps_long sesuai DB
           .select('*, schools(name, address, gps_lat, gps_long, student_count, menu_default)')
           .eq('route_id', routeId)
           .order('sequence_order', ascending: true);
@@ -93,6 +123,7 @@ class RouteService {
     }
   }
 
+  // --- 6. UPDATE STATUS RUTE (TANPA FOTO) ---
   Future<void> updateRouteStatus(String routeId, String newStatus) async {
     try {
       await _supabase.from('delivery_routes').update({'status': newStatus}).eq('id', routeId);
@@ -101,6 +132,20 @@ class RouteService {
     }
   }
 
+  // --- 7. VALIDASI MUATAN DENGAN FOTO (KURIR) ---
+  Future<void> validateLoadWithPhoto(String routeId, String photoUrl) async {
+    try {
+      await _supabase.from('delivery_routes').update({
+        'status': 'active',
+        'load_proof_photo_url': photoUrl, 
+        'start_time': DateTime.now().toIso8601String(), 
+      }).eq('id', routeId);
+    } catch (e) {
+      throw Exception("Gagal validasi muatan: $e");
+    }
+  }
+
+  // --- 8. UPDATE STATUS PERHENTIAN (TANPA FOTO) ---
   Future<void> updateStopStatus(String stopId, String newStatus) async {
     try {
       await _supabase.from('delivery_stops').update({
@@ -112,19 +157,41 @@ class RouteService {
     }
   }
 
-  Future<List<LatLng>> getRoutePolyline(List<LatLng> coordinates) async {
-    if (coordinates.length < 2) return []; 
+  // --- 9. SELESAI PENGIRIMAN DENGAN FOTO (KURIR) ---
+  Future<void> completeStopWithPhoto(String stopId, String photoUrl) async {
+    try {
+      await _supabase.from('delivery_stops').update({
+        'status': 'completed',
+        'courier_proof_photo_url': photoUrl, 
+        'arrival_time': DateTime.now().toIso8601String(),
+      }).eq('id', stopId);
+    } catch (e) {
+      throw Exception("Gagal update stop: $e");
+    }
+  }
 
-    String coordString = coordinates.map((p) => "${p.longitude},${p.latitude}").join(';');
-    final url = Uri.parse('https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
+  // --- 10. AMBIL GARIS RUTE (OSRM) ---
+  Future<List<LatLng>> getRoutePolyline(List<LatLng> coordinates) async {
+    if (coordinates.length < 2) return [];
+
+    String coordString = coordinates
+        .map((p) => "${p.longitude},${p.latitude}")
+        .join(';');
+
+    final url = Uri.parse(
+        'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
 
     try {
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (data['code'] != 'Ok') return [];
+
         final List<dynamic> coords = data['routes'][0]['geometry']['coordinates'];
-        return coords.map((c) => LatLng(c[1].toDouble(), c[0].toDouble())).toList();
+        
+        return coords
+            .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
+            .toList();
       } else {
         return [];
       }
@@ -133,11 +200,14 @@ class RouteService {
     }
   }
 
+  // --- 11. AMBIL LOKASI DAPUR (SPPG) ---
   Future<LatLng?> getSppgLocation() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
+      
       final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
       final String sppgId = profile['sppg_id'];
+
       final sppgData = await _supabase.from('sppgs').select('gps_lat, gps_long').eq('id', sppgId).single();
 
       if (sppgData['gps_lat'] != null && sppgData['gps_long'] != null) {

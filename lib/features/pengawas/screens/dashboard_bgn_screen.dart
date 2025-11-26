@@ -1,11 +1,28 @@
 import 'package:flutter/material.dart';
+
+// Import Auth & Login
 import '../../autentikasi/services/auth_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
+
+// Import Screens Fitur BGN
 import 'list_sppg_screen.dart';
 import 'bgn_report_screen.dart'; // Screen Laporan Terpadu
 
+// [PENTING] Import Halaman Profil (Tempat Ganti Password)
+import '../../../core/screens/profile_screen.dart'; 
+
 class DashboardBgnScreen extends StatelessWidget {
   const DashboardBgnScreen({super.key});
+
+  // Fungsi Logout (Cadangan jika tombol profil bermasalah)
+  Future<void> _logout(BuildContext context) async {
+    await AuthService().signOut();
+    if (!context.mounted) return;
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const LoginScreen()),
+      (route) => false,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -14,6 +31,21 @@ class DashboardBgnScreen extends StatelessWidget {
         title: const Text("BGN Monitoring"),
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
+        actions: [
+          // [FITUR GANTI PASSWORD ADA DI SINI]
+          // Tombol Profil (Icon Orang)
+          IconButton(
+            icon: const Icon(Icons.account_circle, size: 30),
+            tooltip: "Profil & Password",
+            onPressed: () {
+              // Navigasi ke Halaman Profil
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const ProfileScreen()),
+              );
+            },
+          ),
+        ],
       ),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -34,7 +66,7 @@ class DashboardBgnScreen extends StatelessWidget {
                 crossAxisSpacing: 16,
                 mainAxisSpacing: 16,
                 children: [
-                  // MENU 1: MANAJEMEN AKUN SPPG (UC04, UC05, UC06, UC07)
+                  // MENU 1: MANAJEMEN AKUN SPPG
                   _buildMenuCard(
                     context,
                     icon: Icons.manage_accounts,
@@ -43,15 +75,12 @@ class DashboardBgnScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const ListSppgScreen(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const ListSppgScreen()),
                       );
                     },
                   ),
 
-                  // MENU 2: LAPORAN DISTRIBUSI & KUALITAS (UC03)
-                  // Menggabungkan History, Bukti, Jadwal, Ketepatan, Keluhan
+                  // MENU 2: LAPORAN DISTRIBUSI & KUALITAS
                   _buildMenuCard(
                     context,
                     icon: Icons.analytics,
@@ -60,9 +89,7 @@ class DashboardBgnScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(
-                          builder: (_) => const BgnReportScreen(),
-                        ),
+                        MaterialPageRoute(builder: (_) => const BgnReportScreen()),
                       );
                     },
                   ),
@@ -72,25 +99,10 @@ class DashboardBgnScreen extends StatelessWidget {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () async {
-          await AuthService().signOut();
-          if (!context.mounted) return;
-          Navigator.of(context).pushAndRemoveUntil(
-            MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (route) => false,
-          );
-        },
-        label: const Text("Logout"),
-        icon: const Icon(Icons.logout),
-        backgroundColor: Colors.grey[800],
-        foregroundColor: Colors.white,
-      ),
     );
   }
 
-  Widget _buildMenuCard(
-    BuildContext context, {
+  Widget _buildMenuCard(BuildContext context, {
     required IconData icon,
     required String title,
     required Color color,
