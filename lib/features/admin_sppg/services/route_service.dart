@@ -1,9 +1,9 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/route_model.dart';
-import '../../../models/school_model.dart'; 
-import 'dart:convert'; 
-import 'package:http/http.dart' as http; 
-import 'package:latlong2/latlong.dart'; 
+import '../../../models/school_model.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
+import 'package:latlong2/latlong.dart';
 
 class RouteService {
   final _supabase = Supabase.instance.client;
@@ -17,16 +17,24 @@ class RouteService {
   }) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
       final String mySppgId = profile['sppg_id'];
 
-      final routeResponse = await _supabase.from('delivery_routes').insert({
-        'date': date.toIso8601String().split('T')[0], 
-        'sppg_id': mySppgId,
-        'vehicle_id': vehicleId,
-        'courier_id': courierId,
-        'status': 'pending', 
-      }).select().single();
+      final routeResponse = await _supabase
+          .from('delivery_routes')
+          .insert({
+            'date': date.toIso8601String().split('T')[0],
+            'sppg_id': mySppgId,
+            'vehicle_id': vehicleId,
+            'courier_id': courierId,
+            'status': 'pending',
+          })
+          .select()
+          .single();
 
       final String newRouteId = routeResponse['id'];
 
@@ -35,13 +43,12 @@ class RouteService {
         stopsData.add({
           'route_id': newRouteId,
           'school_id': selectedSchools[i].id,
-          'sequence_order': i + 1, 
+          'sequence_order': i + 1,
           'status': 'pending',
         });
       }
 
       await _supabase.from('delivery_stops').insert(stopsData);
-
     } catch (e) {
       throw Exception("Gagal membuat rute: $e");
     }
@@ -51,13 +58,13 @@ class RouteService {
   Future<List<DeliveryRoute>> getRoutesByMonth(DateTime month) async {
     try {
       final currentCourierId = _supabase.auth.currentUser!.id;
-      
+
       final startDate = DateTime(month.year, month.month, 1);
       final endDate = DateTime(month.year, month.month + 1, 0);
 
       final response = await _supabase
           .from('delivery_routes')
-          .select('*, vehicles(plate_number), profiles(full_name)') 
+          .select('*, vehicles(plate_number), profiles(full_name)')
           .eq('courier_id', currentCourierId)
           .gte('date', startDate.toIso8601String())
           .lte('date', endDate.toIso8601String());
@@ -73,12 +80,16 @@ class RouteService {
   Future<List<DeliveryRoute>> getMyRoutes() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
       final String mySppgId = profile['sppg_id'];
 
       final response = await _supabase
           .from('delivery_routes')
-          .select('*, vehicles(plate_number), profiles(full_name)') 
+          .select('*, vehicles(plate_number), profiles(full_name)')
           .eq('sppg_id', mySppgId)
           .order('date', ascending: false);
 
@@ -96,8 +107,8 @@ class RouteService {
 
       final response = await _supabase
           .from('delivery_routes')
-          .select('*, vehicles(plate_number), profiles(full_name)') 
-          .eq('courier_id', currentCourierId) 
+          .select('*, vehicles(plate_number), profiles(full_name)')
+          .eq('courier_id', currentCourierId)
           .order('date', ascending: false);
 
       final List<dynamic> data = response;
@@ -113,7 +124,9 @@ class RouteService {
       final response = await _supabase
           .from('delivery_stops')
           // [PENTING] Menggunakan gps_lat & gps_long sesuai DB
-          .select('*, schools(name, address, gps_lat, gps_long, student_count, menu_default)')
+          .select(
+            '*, schools(name, address, gps_lat, gps_long, student_count, menu_default)',
+          )
           .eq('route_id', routeId)
           .order('sequence_order', ascending: true);
 
@@ -126,7 +139,10 @@ class RouteService {
   // --- 6. UPDATE STATUS RUTE (TANPA FOTO) ---
   Future<void> updateRouteStatus(String routeId, String newStatus) async {
     try {
-      await _supabase.from('delivery_routes').update({'status': newStatus}).eq('id', routeId);
+      await _supabase
+          .from('delivery_routes')
+          .update({'status': newStatus})
+          .eq('id', routeId);
     } catch (e) {
       throw Exception("Gagal update status rute: $e");
     }
@@ -135,11 +151,14 @@ class RouteService {
   // --- 7. VALIDASI MUATAN DENGAN FOTO (KURIR) ---
   Future<void> validateLoadWithPhoto(String routeId, String photoUrl) async {
     try {
-      await _supabase.from('delivery_routes').update({
-        'status': 'active',
-        'load_proof_photo_url': photoUrl, 
-        'start_time': DateTime.now().toIso8601String(), 
-      }).eq('id', routeId);
+      await _supabase
+          .from('delivery_routes')
+          .update({
+            'status': 'active',
+            'load_proof_photo_url': photoUrl,
+            'start_time': DateTime.now().toIso8601String(),
+          })
+          .eq('id', routeId);
     } catch (e) {
       throw Exception("Gagal validasi muatan: $e");
     }
@@ -148,10 +167,15 @@ class RouteService {
   // --- 8. UPDATE STATUS PERHENTIAN (TANPA FOTO) ---
   Future<void> updateStopStatus(String stopId, String newStatus) async {
     try {
-      await _supabase.from('delivery_stops').update({
-        'status': newStatus,
-        'arrival_time': newStatus == 'completed' ? DateTime.now().toIso8601String() : null,
-      }).eq('id', stopId);
+      await _supabase
+          .from('delivery_stops')
+          .update({
+            'status': newStatus,
+            'arrival_time': newStatus == 'completed'
+                ? DateTime.now().toIso8601String()
+                : null,
+          })
+          .eq('id', stopId);
     } catch (e) {
       throw Exception("Gagal update status stop: $e");
     }
@@ -160,11 +184,14 @@ class RouteService {
   // --- 9. SELESAI PENGIRIMAN DENGAN FOTO (KURIR) ---
   Future<void> completeStopWithPhoto(String stopId, String photoUrl) async {
     try {
-      await _supabase.from('delivery_stops').update({
-        'status': 'completed',
-        'courier_proof_photo_url': photoUrl, 
-        'arrival_time': DateTime.now().toIso8601String(),
-      }).eq('id', stopId);
+      await _supabase
+          .from('delivery_stops')
+          .update({
+            'status': 'completed',
+            'courier_proof_photo_url': photoUrl,
+            'arrival_time': DateTime.now().toIso8601String(),
+          })
+          .eq('id', stopId);
     } catch (e) {
       throw Exception("Gagal update stop: $e");
     }
@@ -179,7 +206,8 @@ class RouteService {
         .join(';');
 
     final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson');
+      'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson',
+    );
 
     try {
       final response = await http.get(url);
@@ -187,8 +215,9 @@ class RouteService {
         final data = jsonDecode(response.body);
         if (data['code'] != 'Ok') return [];
 
-        final List<dynamic> coords = data['routes'][0]['geometry']['coordinates'];
-        
+        final List<dynamic> coords =
+            data['routes'][0]['geometry']['coordinates'];
+
         return coords
             .map((c) => LatLng(c[1].toDouble(), c[0].toDouble()))
             .toList();
@@ -204,11 +233,19 @@ class RouteService {
   Future<LatLng?> getSppgLocation() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      
-      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
+
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
       final String sppgId = profile['sppg_id'];
 
-      final sppgData = await _supabase.from('sppgs').select('gps_lat, gps_long').eq('id', sppgId).single();
+      final sppgData = await _supabase
+          .from('sppgs')
+          .select('gps_lat, gps_long')
+          .eq('id', sppgId)
+          .single();
 
       if (sppgData['gps_lat'] != null && sppgData['gps_long'] != null) {
         return LatLng(
@@ -216,9 +253,19 @@ class RouteService {
           double.parse(sppgData['gps_long'].toString()),
         );
       }
-      return null; 
+      return null;
     } catch (e) {
       return null;
+    }
+  }
+
+  // [BARU] 12. HAPUS RUTE LENGKAP (ADMIN)
+  // RLS harus diset supaya delivery_stops juga ke-delete (Cascade Delete)
+  Future<void> deleteRoute(String routeId) async {
+    try {
+      await _supabase.from('delivery_routes').delete().eq('id', routeId);
+    } catch (e) {
+      throw Exception("Gagal menghapus rute: $e");
     }
   }
 }

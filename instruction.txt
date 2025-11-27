@@ -1,0 +1,9 @@
+pg_dump \
+  -h aws-1-ap-southeast-1.pooler.supabase.com \
+  -p 6543 \
+  -U postgres.mqyfrqgfpqwlrloqtpvi \
+  -d postgres \
+  --no-owner --no-acl \
+  > ~/Documents/RPLL/MBG_full.sql
+
+  axel@Axel:~/Documents/RPLL$ python3 compact.py MBG_full.sql

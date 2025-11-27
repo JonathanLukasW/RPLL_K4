@@ -1,1 +1,0 @@
-INSERT INTO "public"."vehicles" ("id", "sppg_id", "plate_number", "driver_name", "capacity_limit", "is_active") VALUES ('8bf98689-1fc0-421b-b3e3-23dbcfe52eb9', '894cc1e5-d726-4f7b-8f49-2fe8970ce539', 'D 1343 AC', 'Udin', '800', 'true');

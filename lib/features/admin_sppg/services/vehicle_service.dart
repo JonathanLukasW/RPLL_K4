@@ -27,7 +27,6 @@ class VehicleService {
 
       final List<dynamic> data = response;
       return data.map((json) => Vehicle.fromJson(json)).toList();
-      
     } catch (e) {
       throw Exception('Gagal ambil data transportasi: $e');
     }
@@ -37,8 +36,12 @@ class VehicleService {
   Future<void> createVehicle(Map<String, dynamic> data) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      final profile = await _supabase.from('profiles').select('sppg_id').eq('id', userId).single();
-      
+      final profile = await _supabase
+          .from('profiles')
+          .select('sppg_id')
+          .eq('id', userId)
+          .single();
+
       // Inject ID SPPG otomatis
       data['sppg_id'] = profile['sppg_id'];
 
@@ -47,23 +50,33 @@ class VehicleService {
       throw Exception('Gagal menambah transportasi: $e');
     }
   }
-  
+
   // 3. UPDATE STATUS (Aktif/Nonaktif)
   Future<void> toggleStatus(String vehicleId, bool currentStatus) async {
     try {
-      await _supabase.from('vehicles').update({
-        'is_active': !currentStatus
-      }).eq('id', vehicleId);
+      await _supabase
+          .from('vehicles')
+          .update({'is_active': !currentStatus})
+          .eq('id', vehicleId);
     } catch (e) {
-       throw Exception('Gagal update status: $e');
+      throw Exception('Gagal update status: $e');
     }
   }
-  
+
   Future<void> updateVehicle(String id, Map<String, dynamic> data) async {
     try {
       await _supabase.from('vehicles').update(data).eq('id', id);
     } catch (e) {
       throw Exception('Gagal update kendaraan: $e');
+    }
+  }
+
+  Future<void> deleteVehicle(String id) async {
+    try {
+      // Hapus kendaraan
+      await _supabase.from('vehicles').delete().eq('id', id);
+    } catch (e) {
+      throw Exception('Gagal menghapus kendaraan: $e');
     }
   }
 }

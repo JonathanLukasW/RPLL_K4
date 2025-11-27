@@ -1,0 +1,397 @@
+Dalam Analisis GAP di BAB II terlihat bahwa akar masalah potensi keracunan salah satunya terletak pada kegagalan eksekusi logistik (GAP Waktu) dan lemahnya validasi kepatuhan SOP (GAP Kualitas), maka diusulkan sebuah solusi dalam bentuk perangkat lunak. 
+Deskripsi Usulan Sistem
+Sistem yang diusulkan merupakan sistem penjadwalan otomatis MBG berbasis aplikasi mobile yang berfungsi untuk memantau, mengontrol, dan mengevaluasi seluruh proses pasca-produksi makanan dalam program Makan Bergizi Gratis (MBG), mulai dari tahap pengiriman hingga penerimaan di sekolah. Tujuan utama dari aplikasi ini adalah untuk memastikan seluruh prosedur sesuai dengan Standar Operasional Prosedur (SOP) yang ditetapkan oleh Badan Gizi Nasional (BGN), serta untuk mencegah potensi penurunan kualitas makanan atau keracunan akibat kesalahan dalam waktu distribusi.
+
+Terdapat beberapa aktor yang akan menggunakan aplikasi ini yaitu Pengawas BGN, Admin SPPG, Kurir, Koordinator MBG, serta Wali Kelas. Pengawas BGN dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta Pengawas BGN untuk memasukkan ulang username dan password. Pengawas BGN dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Setelah melakukan login, pengawas BGN dapat melihat halaman dashboard. Pengawas BGN dapat melihat laporan distribusi setiap SPPG mengenai kinerja pengiriman setiap SPPG mulai dari history pengiriman yang dilakukan setiap harinya disertai dengan bukti penerimaan digital (foto makanan saat masuk ke mobil, tanda tangan digital koordinator MBG, dan foto makanan di sekolah), jadwal pengiriman setiap SPPG, persentase ketepatan waktu pengiriman yang dibandingkan dengan estimasi waktu tempuh. dan laporan keluhan/masalah kualitas disertai dengan bukti foto. Pengawas BGN dapat memilih menu “Manajemen Akun” dan mengatur seluruh akun admin SPPG. Pengawas BGN dapat menambah, mengedit dan menghapus akun yang sudah ada. Penambahan akun SPPG baru dapat dilakukan dengan mengisi identitas detail SPPG yang bersangkutan (nama SPPG, tanggal berdiri, lokasi) serta admin SPPG (nama, tanggal lahir, alamat, posisi/jabatan, email serta nomor telepon). Pengawas BGN juga dapat memilih SPPG untuk melihat daftar lokasi penerima manfaat seperti sekolah dan posyandu, akun-akun SPPG seperti admin SPPG, Setelah selesai menggunakan aplikasi, pengawas BGN dapat melakukan logout untuk mengakhiri sesi.
+
+Admin SPPG dapat masuk ke sistem menggunakan username dan password yang telah didaftarkan oleh pengawas BGN. Jika username atau password salah, sistem akan meminta untuk memasukkan ulang username dan password. Admin SPPG dapat memilih opsi “Lupa Password” untuk mengirim OTP melalui email untuk melakukan reset password. Setelah melakukan login, admin SPPG dapat melihat tampilan dashboard. Admin SPPG dapat melihat jadwal pengiriman setiap minggunya. Admin SPPG dapat membuka halaman “Jadwal Pengiriman” untuk mengatur jadwal pengiriman setiap harinya. Admin SPPG dapat mengisi detail jadwal pengiriman seperti jumlah makanan yang dikirim, jenis makanan, serta mobil mana yang melakukan pengiriman untuk setiap jadwal. Admin SPPG dapat memilih tombol “Lihat Jadwal Pengiriman Hari Ini” untuk diarahkan ke halaman pengiriman. Di halaman pengiriman, admin SPPG dapat melihat jadwal pengiriman beserta dengan map yang menunjukan titik-titik lokasi penerima manfaat. Admin SPPG dapat membuka halaman “Daftar Penerima Manfaat” untuk melihat daftar lokasi penerima manfaat di SPPG tersebut. Admin SPPG dapat menambah lokasi dengan mengisi nama lokasi penerima manfaat, lokasi menggunakan lokasi map, jumlah penerima manfaat, jadwal pengiriman makanan, waktu toleransi kedatangan lebih awal (misal 45 menit lebih cepat), waktu service untuk penurunan makanan, serta jenis menu. Selain itu admin SPPG dapat mengedit lokasi penerima manfaat yang ada serta menghapus lokasi penerima manfaat. Jika terdapat jadwal khusus diluar jadwal rutin, Admin SPPG dapat memilih “Tambah Jadwal Khusus” di halaman lokasi penerima untuk menambah jadwal yang dikhususkan untuk hari tertentu dengan memasukkan nama jadwal, tanggal, waktu serta menu khusus disertai dengan nama makanan, kategori, dan estimasi durasi memasak. Admin SPPG juga dapat mengedit jadwal khusus yang sudah dibuat dan menghapus jadwal khusus. Jika lokasi penerima manfaat meminta untuk menambah jadwal khusus serta perubahan menu, Admin SPPG dapat melihat di halaman “Pengajuan Perubahan” dimana koordinator MBG di setiap lokasi dapat mengirim permintaan penambahan jadwal khusus atau menu. Admin SPPG dapat menerima atau menolak pengajuan perubahan tersebut dan mengirim notifikasi ke koordinator MBG. Jika diterima, sistem akan otomatis menambah jadwal khusus tersebut ke sistem. Untuk jenis menu admin SPPG dapat masuk ke halaman “Manajemen Menu” untuk melihat daftar menu yang tersedia. Admin SPPG dapat menambah jenis menu dengan memasukkan nama makanan, kategori, dan estimasi durasi memasak, lalu admin SPPG juga dapat mengedit menu dan menghapus menu. Admin SPPG juga dapat membuka halaman “Penjadwalan Produksi & Distribusi”. Di sini, sistem akan membantu Admin SPPG mengatur urutan memasak berdasarkan prioritas waktu pengiriman mobil. Admin SPPG dapat melihat jadwal memasak yang terintegrasi dengan jadwal keberangkatan mobil. Admin SPPG dapat menetapkan menu mana yang dimasak duluan dan mobil mana yang akan mengangkut menu tersebut. Admin SPPG dapat mengedit jadwal masak yang ada dengan mengatur urutan makanan yang dimasak beserta lama waktu masak, serta admin SPPG dapat menghapus jadwal masak. Pada halaman “Laporan Pengaduan”, admin SPPG dapat melihat daftar keluhan dari setiap lokasi penerima manfaat. Jika koordinator MBG atau wali kelas mengirim laporan keluhan, admin SPPG dapat menerima notifikasi dan mengirim instruksi selanjutnya mengenai keluhan yang diterima. Admin SPPG juga dapat memilih halaman “Laporan” untuk melihat kinerja SPPG seperti history pengiriman yang dilakukan setiap harinya, jadwal pengiriman yang akan datang, rata-rata waktu pengiriman, dan laporan keluhan/masalah kualitas. Selain itu admin SPPG dapat membuka halaman “Manajemen Akun” untuk mengatur akun kurir, koordinator MBG setiap lokasi penerima manfaat dan wali kelas untuk sekolah. Admin SPPG dapat menambah akun kurir dengan mengisi data nama kurir, tanggal lahir, nomor telepon, email, serta data mobil. Admin SPPG juga dapat mengedit akun kurir dan menghapus akun kurir yang sudah ada. Admin SPPG dapat menambah akun koordinator MBG sekolah dengan mengisi data nama koordinator, tanggal lahir, nomor telepon, email, serta nama lokasi penerima manfaat, serta jabatan. Admin SPPG juga dapat mengedit akun koordinator dan menghapus akun koordinator yang sudah ada. Admin SPPG dapat menambah akun wali kelas dengan mengisi data nama wali kelas, tanggal lahir, nomor telepon, email, serta nama kelas. Admin SPPG juga dapat mengedit akun kurir dan menghapus akun kurir yang sudah ada. Lalu admin SPPG juga dapat  menambah data mobil pengirim dengan mengisi jenis mobil, plat nomor, dan kapasitas maksimum berat dan kecepatan mobil. Admin SPPG dapat mengedit data mobil yang ada dan menghapus data mobil. Setelah selesai menggunakan aplikasi, admin SPPG dapat melakukan logout untuk mengakhiri sesi.
+		
+Kurir dapat masuk ke sistem menggunakan username dan password yang telah didaftarkan oleh admin SPPG. Jika username atau password salah, sistem akan meminta untuk memasukkan ulang username dan password. Kurir dapat memilih opsi “Lupa Password” untuk mengirim OTP melalui email untuk melakukan reset password. Setelah melakukan login, kurir akan diarahkan ke halaman dashboard untuk melihat jadwal pengiriman setiap minggu. Jika mobil pengirim dalam SPPG ada lebih dari 1 maka masing-masing kurir dapat memiliki akun masing-masing sesuai dengan jadwal pengiriman masing-masing. Kurir dapat memilih tombol “Lihat Jadwal Pengiriman Hari Ini” untuk diarahkan ke halaman pengiriman. Di halaman pengiriman, kurir dapat melihat jadwal pengiriman beserta dengan map yang menunjukan titik-titik lokasi penerima manfaat. Sistem secara otomatis akan mengarahkan kurir ke pengiriman yang harus dilakukan di waktu tersebut. Sebelum memulai pengiriman, Kurir harus memilih opsi "Validasi Muatan". Sistem akan menampilkan daftar menu dan jumlah porsi yang seharusnya sudah selesai dimasak dan siap dimuat ke mobil sesuai jadwal produksi. Kurir mencentang daftar tersebut untuk memastikan makanan sudah masuk ke mobil serta melampirkan foto makanan sudah siap dikirim. Setelah kurir memilih tombol “Mulai Pengiriman”, sistem akan melacak waktu keberangkatan, waktu estimasi tiba, serta rute tercepat ke tempat tujuan. Setelah kurir sampai, kurir dapat memilih tombol “Pengiriman Selesai” untuk mencatat waktu kedatangan. Kurir juga harus melampirkan foto makanan sudah diterima. Untuk pengiriman selanjutnya, kurir dapat melihat update jadwal pengiriman ke lokasi selanjutnya. Jika dalam sekali pengiriman terdapat beberapa titik lokasi, sistem akan secara otomatis mengarahkan kurir ke tujuan selanjutnya sesuai dengan urutan prioritas. Setelah kurir kembali ke SPPG untuk mengambil makanan selanjutnya, kurir dapat memilih kembali tombol “Mulai Pengiriman”. Setelah semua pengiriman pada hari tersebut dilakukan, sistem akan melakukan update jadwal dan menyelesaikan jadwal pengiriman hari ini. Setelah selesai menggunakan aplikasi, kurir dapat melakukan logout untuk mengakhiri sesi.
+
+Koordinator MBG di sekolah dapat masuk ke sistem menggunakan username dan password yang telah didaftarkan oleh admin SPPG. Jika username atau password salah, sistem akan meminta untuk memasukkan ulang username dan password. Koordinator MBG dapat memilih opsi “Lupa Password” untuk mengirim OTP melalui email untuk melakukan reset password. Setelah melakukan login, koordinator MBG dapat melihat jadwal kedatangan mobil SPPG untuk setiap minggu. Koordinator MBG dapat memilih opsi “Lihat Jadwal Pengiriman Hari Ini” untuk diarahkan ke halaman pengiriman. Jika mobil SPPG sudah datang, koordinator MBG dapat memilih tombol “Konfirmasi Pengiriman” dan mengisi jumlah total keseluruhan makanan yang datang dan kualitas kemasan. Jika tidak ada masalah, koordinator MBG dapat memilih tombol “Tidak Ada Masalah”. Namun jika terdapat kemasan makanan yang rusak seperti tidak tertutup rapat atau bocor, koordinator MBG dapat memilih tombol “Ada Masalah” dan mengisi checkbox yang berisi daftar keluhan seperti Kemasan Rusak/Bocor dan Jumlah Tidak Sesuai beserta dengan mengisi input jumlah makanan yang bermasalah di sebelah checkbox. Koordinator MBG juga dapat memasukkan foto makanan yang bermasalah. Jika sudah, koordinator MBG  dapat menekan tombol “Kirim” dan menunggu keterangan dari admin SPPG untuk instruksi selanjutnya. Jika admin SPPG sudah mengirim instruksi, koordinator MBG dapat menerima notifikasi mengenai tindakan selanjutnya. Lalu setelah makanan dibagikan ke kelas dan diproses oleh wali kelas, koordinator MBG dapat melihat status makanan setiap kelas melalui aplikasi yang menunjukan jumlah makanan yang dibagikan serta apakah ada keluhan atau tidak. Jika ada keluhan mengenai kualitas makanan, koordinator MBG dapat menerima notifikasi dari kelas yang bersangkutan. Jika ada penambahan jadwal khusus atau perubahan menu, koordinator MBG dapat membuka halaman “Pengajuan Perubahan” dan mengisi detail jadwal khusus atau menu yang akan diubah. Untuk pengajuan penambahan jadwal khusus, koordinator MBG dapat memilih tanggal, waktu serta menu khusus. Lalu untuk pengubahan menu. Koordinator MBG dapat mengubah menu sesuai dengan daftar menu yang ada di sistem. Setelah memilih, koordinator MBG dapat memilih tombol “Kirim” dan permintaan dikirim ke SPPG. Di halaman “Pengajuan Perubahan”, koordinator MBG dapat melihat riwayat pengajuan apakah pengajuan tersebut diterima atau ditolak. Setelah selesai menggunakan aplikasi, koordinator MBG dapat melakukan logout untuk mengakhiri sesi.
+
+	Wali Kelas dapat masuk ke sistem menggunakan username dan password yang telah didaftarkan oleh admin SPPG. Jika username atau password salah, sistem akan meminta untuk memasukkan ulang username dan password. Wali kelas dapat memilih opsi “Lupa Password” untuk mengirim OTP melalui email untuk melakukan reset password. Setelah masuk ke aplikasi, Wali Kelas dapat melihat jadwal kedatangan mobil SPPG untuk setiap minggu. Wali Kelas dapat memilih opsi “Lihat Jadwal Pengiriman Hari Ini” untuk diarahkan ke halaman pengiriman. Setelah koordinator MBG melakukan konfirmasi pengiriman, setiap wali kelas akan menerima notifikasi bahwa MBG sudah siap dikirim ke masing-masing kelas. Wali kelas juga dapat melihat apakah terdapat makanan yang terdapat keluhan oleh koordinator MBG. Setelah MBG datang ke kelas, wali kelas dapat memasukkan jumlah makanan yang datang dan mengisi konfirmasi kualitas makanan yang datang. Jika tidak ada masalah, Wali Kelas dapat memilih tombol “Tidak Ada Masalah”. Namun jika ada masalah, wali kelas dapat memilih tombol “Ada Masalah” dan akan diarahkan ke halaman pengaduan. Wali kelas dapat mengisi daftar checkbox yang berisi jenis keluhan seperti Makanan Basi dan Terdapat Benda Asing beserta dengan mengisi input jumlah makanan yang bermasalah di sebelah checkbox. Wali Kelas juga dapat memasukkan foto makanan yang bermasalah. Jika sudah, wali kelas dapat menekan tombol “Kirim” dan menunggu keterangan dari admin SPPG untuk instruksi selanjutnya. Jika admin SPPG sudah mengirim instruksi, wali kelas dapat menerima notifikasi mengenai tindakan selanjutnya. Jika wali kelas yang bersangkutan tidak dapat hadir, akun wali kelas dapat digunakan oleh guru lain dengan memberikan username dan password. Akun wali kelas dirancang agar perpindahan akun wali setiap kelas dapat diganti sesuai dengan kebutuhan. Setelah selesai menggunakan aplikasi, wali kelas dapat melakukan logout untuk mengakhiri sesi.
+
+Kebutuhan Fungsional
+Tabel 2. Kebutuhan Fungsional Sistem
+No.
+Kebutuhan Fungsional
+Keterangan
+Aktor : Pengawas BGN
+KF-01
+Autentikasi akun
+Pengawas BGN dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta Pengawas BGN untuk memasukkan ulang username dan password. Pengawas BGN dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Pengawas BGN juga bisa logout untuk mengakhiri sesi.
+KF-02
+Pengelolaan Laporan Distribusi dan Kualitas
+Pengawas BGN dapat melihat laporan setiap SPPG mengenai kinerja pengiriman setiap SPPG. Mulai dari history pengiriman yang dilakukan setiap harinya disertai dengan bukti penerimaan digital (foto makanan saat masuk ke mobil, tanda tangan digital koordinator MBG, dan foto makanan di sekolah), jadwal pengiriman setiap SPPG, persentase ketepatan waktu pengiriman yang dibandingkan dengan estimasi waktu tempuh. dan laporan keluhan/masalah kualitas disertai dengan bukti foto.
+KF-03
+Pengelolaan Akun
+Pengawas BGN dapat menambah, mengedit dan menghapus akun admin SPPG.
+KF04
+Memantau Detail SPPG
+Pengawas BGN dapat memilih SPPG spesifik untuk melihat daftar lokasi penerima manfaat dan daftar akun-akun (admin, kurir, dll.) yang terdaftar di bawah SPPG tersebut.
+Aktor : Admin SPPG
+KF-05
+Autentikasi akun
+Admin SPPG dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta Admin SPPG untuk memasukkan ulang username dan password. Admin SPPG dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Admin SPPG juga bisa logout untuk mengakhiri sesi.
+KF-06
+Melihat Dashboard
+Admin SPPG dapat melihat dashboard utama dan jadwal pengiriman mingguan.
+KF-07
+Mengelola Jadwal Pengiriman
+Admin SPPG dapat mengatur (CRUD) jadwal pengiriman harian, termasuk mengisi detail jumlah makanan, jenis makanan, dan alokasi mobil pengirim.
+KF-08
+Mengelola Jadwal Kegiatan Khusus
+Admin SPPG dapat mengelola jadwal khusus setiap penerima manfaat jika diperlukan.
+KF-09
+Mengelola Pengajuan  Penambahan Jadwal Khusus dan Perubahan Menu
+Admin SPPG dapat mengelola pengajuan penambahan jadwal khusus dan menu dari koordinator MBG. Admin SPPG dapat menerima atau menorah pengajuan tersebut.
+KF-10
+Mengelola Manajemen Menu
+Admin SPPG dapat mengatur (CRUD) daftar menu makanan, termasuk kategori dan estimasi durasi memasak.
+KF-11
+Mengelola Penjadwalan Produksi
+Admin SPPG dapat mengatur urutan memasak harian yang terintegrasi dengan jadwal pengiriman mobil, menentukan menu mana yang dimasak duluan sesuai prioritas.
+KF-12
+Mengelola Penerima Manfaat
+Admin SPPG dapat mengatur (CRUD) data lokasi penerima manfaat, termasuk nama, lokasi map, jumlah penerima, waktu pengiriman, waktu toleransi, waktu service, dan jenis menu.
+KF-13
+Mengelola Pengaduan
+Admin SPPG dapat melihat daftar keluhan, menerima notifikasi pengaduan, dan mengirim instruksi tindak lanjut ke Koordinator MBG atau Wali Kelas.
+KF-14
+Melihat Laporan Laporan Distribusi dan Kualitas
+Admin SPPG dapat melihat laporan distribusi internal SPPG seperti history pengiriman, bukti penerimaan digital, jadwal pengiriman, persentase ketepatan waktu pengiriman. dan laporan keluhan/masalah.
+KF-15
+Mengelola Akun Pengguna
+Admin SPPG dapat mengatur (CRUD) akun Kurir, Koordinator MBG, dan Wali Kelas di dalam lingkup SPPG-nya.
+KF-16
+Mengelola Data Mobil
+Admin SPPG dapat mengatur (CRUD) data mobil pengirim, termasuk jenis mobil, plat nomor, dan kapasitas maksimum.
+Aktor : Kurir
+KF-17
+Autentikasi akun
+Kurir dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta Kurir untuk memasukkan ulang username dan password. Kurir dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Kurir juga bisa logout untuk mengakhiri sesi.
+KF-18
+Melihat Jadwal Pengiriman
+Kurir dapat melihat dashboard dan jadwal pengiriman mingguan, serta memilih "Lihat Jadwal Pengiriman Hari Ini".
+KF-19
+Melihat Rute Pengiriman
+Kurir dapat melihat jadwal pengiriman hari ini beserta map yang menunjukkan titik lokasi penerima manfaat.
+KF-20
+Validasi Muatan
+Sebelum memulai pengiriman, Kurir wajib melakukan validasi (checklist) daftar menu dan jumlah porsi yang sudah dimasak dan dimuat ke dalam mobil. Kurir juga harus melampirkan foto bukti makanan sebelum dikirim.
+KF-21
+Memulai Pengiriman
+Kurir dapat menekan tombol "Mulai Pengiriman", dan sistem akan melacak waktu keberangkatan, estimasi tiba, dan rute tercepat.
+KF-22
+Menyelesaikan Pengiriman Per Lokasi
+Kurir dapat menekan tombol "Pengiriman Selesai" setelah tiba di lokasi untuk mencatat waktu kedatangan dan sistem mengarahkan ke lokasi selanjutnya. Kurir juga harus melampirkan foto bukti makanan sudah dikirim setiap lokasi.
+Aktor : Koordinator MBG Sekolah
+KF-23
+Autentikasi Akun
+Koordinator MBG Sekolah dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta Koordinator MBG Sekolah untuk memasukkan ulang username dan password. Koordinator MBG Sekolah dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Koordinator MBG Sekolah juga bisa logout untuk mengakhiri sesi.
+KF-25
+Melihat Jadwal Kedatangan
+Koordinator MBG dapat melihat jadwal kedatangan mobil SPPG setiap minggu dan jadwal pengiriman hari ini.
+KF-26
+Konfirmasi Penerimaan di Sekolah
+Koordinator MBG dapat menekan tombol "Konfirmasi Pengiriman" saat mobil SPPG datang dan mengisi jumlah total makanan serta kualitas kemasan.
+KF-27
+Mengirim Laporan Keluhan Kemasan dan Jumlah Porsi
+Jika ada masalah (Kemasan Rusak, Jumlah Tidak Sesuai), Koordinator MBG dapat memilih "Ada Masalah", mengisi checkbox keluhan, jumlah bermasalah, dan mengunggah foto.
+KF-28
+Menerima Instruksi Tindak Lanjut
+Koordinator MBG dapat menerima notifikasi dan melihat instruksi tindak lanjut dari Admin SPPG terkait keluhan yang dikirim.
+KF-29
+Melihat Dashboard Status Makanan Per Kelas
+Koordinator MBG dapat melihat dashboard dari status semua kelas yang terdaftar untuk melihat apakah ada keluhan atau tidak.
+KF-30
+Melihat Notifikasi Masalah Makanan
+Koordinator MBG dapat melihat notifikasi jika wali kelas melaporkan keluhan atau masalah dari kualitas makanan yang diterima.
+KF-31
+Mengirim Pengajuan Penambahan Jadwal Khusus dan Menu
+Koordinator MBG dapat mengirim pengajuan penambahan jadwal khusus dengan memilih tanggal, waktu dan menu khusus
+Aktor : Wali Kelas
+KF-32
+Autentikasi Akun
+Wali Kelas dapat melakukan login menggunakan username dan password yang sudah didaftarkan sebelumnya. Jika username atau password salah, sistem akan meminta wali kelas untuk memasukkan ulang username dan password. Wali Kelas dapat menggunakan OTP yang dikirim ke email untuk kode sementara yang akan digunakan untuk reset password. Wali kelas juga bisa logout untuk mengakhiri sesi.
+KF-33
+Melihat Jadwal Kedatangan
+Wali Kelas dapat melihat jadwal kedatangan mobil SPPG setiap minggu dan jadwal pengiriman hari ini.
+KF-34
+Menerima Notifikasi Kesiapan dan Masalah Kemasan
+Wali Kelas menerima notifikasi bahwa MBG sudah siap didistribusikan setelah Koordinator MBG melakukan konfirmasi pengiriman. Wali kelas juga dapat menerima notifikasi jika terdapat makanan yang bermasalah dari koordinator MBG.
+KF-35
+Konfirmasi Penerimaan di Kelas
+Wali Kelas dapat memasukkan jumlah makanan yang diterima di kelas dan mengkonfirmasi kualitas makanan yang datang.
+KF-36
+Mengirim Laporan Keluhan Makanan
+Jika ada masalah (Makanan Basi, Benda Asing), Wali Kelas dapat memilih "Ada Masalah", mengisi checkbox keluhan, jumlah bermasalah, dan mengupload foto.
+KF-37
+Menerima Instruksi Tindak Lanjut
+Wali Kelas dapat menerima notifikasi dan melihat instruksi tindak lanjut dari Admin SPPG terkait keluhan yang dikirim.
+
+Kebutuhan Non Fungsional
+	Tabel 3. Kebutuhan Non Fungsional Sistem
+Kode KNF
+Kebutuhan Non Fungsional
+Keterangan
+KNF01
+Ketersediaan Sistem
+Sistem harus memiliki uptime minimal 90% agar proses logistik tidak terhambat, terutama pada jam persiapan pagi yang kritis.
+KNF02
+Kecepatan Pemrosesan Algoritma Rute
+Algoritma VRP harus menghasilkan rute dalam waktu maksimal 30 detik.
+KNF03
+Keamanan Data
+Semua data QC foto aduan, data GPS, akun pengguna, dan laporan audit harus dienkripsi baik saat dikirim maupun disimpan. 
+KNF04
+Skalabilitas Sistem
+Sistem harus mampu menangani penambahan sekolah, kendaraan, dan pengguna tanpa penurunan performa.
+KNF05
+Kompatibilitas Perangkat
+Aplikasi harus bisa berjalan di perangkat Android versi 7 ke atas dengan tampilan responsif untuk layar kecil dan besar.
+KNF06
+Usability
+Antarmuka aplikasi untuk kurir, wali kelas, dan koordinator harus sederhana, bisa digunakan oleh
+
+Model Use Case
+Diagram Use Case
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Gambar 3. Diagram Use Case Sistem
+Definisi Use Case
+Tabel 4. Definisi Use Case Sistem
+Kode Use Case
+Use Case
+Deskripsi
+Aktor : Pengawas BGN
+UC01
+Login
+Memasukkan username dan password untuk masuk ke sistem.
+UC02
+Reset Password
+Meminta OTP ke email terdaftar untuk mengatur ulang password.
+UC03
+Melihat Laporan Distribusi dan Kualitas
+Melihat dashboard laporan distribusi seperti history pengiriman, bukti penerimaan digital, jadwal pengiriman setiap SPPG, persentase ketepatan waktu pengiriman. dan laporan keluhan/masalah dari semua SPPG.
+UC04
+Menambah Akun SPPG
+Mendaftarkan SPPG baru beserta detail (nama, lokasi) dan akun Admin SPPG (nama, email, dll.).
+UC05
+Mengedit Akun SPPG
+Mengubah data detail SPPG atau data akun Admin SPPG yang sudah terdaftar.
+UC06
+Menghapus Akun SPPG
+Menghapus data SPPG dan akun Admin SPPG terkait dari sistem.
+UC07
+Melihat  Detail SPPG
+Memilih SPPG spesifik untuk melihat daftar lokasi penerima manfaat dan akun-akun yang terdaftar di bawahnya.
+UC08
+Logout
+Keluar dari sesi aplikasi untuk mengakhiri akses.
+Aktor : Admin SPPG
+UC09
+Login
+Memasukkan username dan password untuk masuk ke sistem.
+UC10
+Reset Password
+Meminta OTP ke email terdaftar untuk mengatur ulang password.
+UC11
+Menambah Jenis Menu
+Menambahkan menu makanan baru beserta kategori dan estimasi durasi masak.
+UC12
+Mengedit Jenis Menu
+Mengubah data menu makanan yang sudah ada.
+UC13
+Menghapus Jenis Menu
+Menghapus menu makanan dari daftar.
+UC14
+Melihat Jadwal Produksi
+Melihat urutan prioritas memasak berdasarkan jadwal pengiriman.
+UC15
+Mengatur Jadwal Produksi
+Mengubah urutan/prioritas menu yang harus dimasak (re-ordering).
+UC16
+Menambah Jadwal Pengiriman
+Membuat jadwal pengiriman baru dengan mengisi detail makanan, pilih mobil.
+UC17
+Mengedit Jadwal Pengiriman
+Mengubah detail jadwal pengiriman yang sudah ada.
+UC18
+Menghapus Jadwal Pengiriman
+Menghapus jadwal pengiriman dari kalender.
+UC19
+Menambah Jadwal Khusus
+Menambah jadwal khusus dengan mengisi nama jadwal, tanggal, waktu, serta menu khusus.
+UC20
+Mengedit Jadwal Khusus
+Mengedit jadwal khusus dengan mengubah nama jadwal, tanggal, waktu, atau menu khusus.
+UC21
+Menghapus Jadwal Khusus
+Menghapus jadwal khusus yang ada dari halaman jadwal.
+UC22
+Menerima Pengajuan Jadwal dan Menu
+Menerima pengajuan penambahan jadwal khusus atau perubahan menu dari koordinator MBG.
+UC23
+Menolak Pengajuan Jadwal dan Menu
+Menolak pengajuan penambahan jadwal khusus atau perubahan menu dari koordinator MBG.
+UC24
+Menambah Lokasi Penerima Manfaat
+Mendaftarkan lokasi penerima baru (sekolah/posyandu) beserta detail map, jumlah, waktu, toleransi, dll.
+UC25
+Mengedit Lokasi Penerima Manfaat
+Mengubah data lokasi penerima manfaat yang sudah ada.
+UC26
+Menghapus Lokasi Penerima Manfaat
+Menghapus data lokasi penerima manfaat dari sistem.
+UC27
+Melihat Laporan Pengaduan
+Memantau daftar keluhan yang masuk dari Koordinator MBG dan Wali Kelas.
+UC28
+Memberi Instruksi Tindak Lanjut
+Mengirim balasan/instruksi penanganan masalah atas keluhan yang diterima.
+UC29
+Melihat Laporan Laporan Distribusi dan Kualitas
+Melihat laporan kinerja internal SPPG seperti history pengiriman, bukti penerimaan digital, jadwal pengiriman, persentase ketepatan waktu pengiriman. dan laporan keluhan/masalah.
+UC30
+Menambah Akun Pengguna
+Mendaftarkan akun baru untuk Kurir, Koordinator MBG, atau Wali Kelas.
+UC31
+Mengedit Akun Pengguna
+Mengubah data akun Kurir, Koordinator MBG, atau Wali Kelas.
+UC32
+Menghapus Akun Pengguna
+Menghapus akun Kurir, Koordinator MBG, atau Wali Kelas.
+UC33
+Menambah Data Mobil
+Mendaftarkan data mobil pengirim baru (jenis, plat, kapasitas).
+UC34
+Mengedit Data Mobil
+Mengubah data mobil pengirim yang sudah terdaftar.
+UC35
+Menghapus Data Mobil
+Menghapus data mobil pengirim dari sistem.
+UC36
+Logout
+Keluar dari sesi aplikasi untuk mengakhiri akses.
+Aktor : Kurir
+UC37
+Login
+Memasukkan username dan password untuk masuk ke sistem.
+UC38
+Reset Password
+Meminta OTP ke email terdaftar untuk mengatur ulang password.
+UC39
+Melihat Jadwal & Rute Pengiriman
+Melihat jadwal harian dan rute map yang harus ditempuh.
+UC40
+Melakukan Validasi Muatan
+Melakukan checklist menu & jumlah porsi yang dimuat sebelum berangkat. Kurir juga melampirkan foto bukti pengiriman.
+UC41
+Memulai Pengiriman
+Menekan tombol "Mulai Pengiriman" untuk mencatat waktu keberangkatan dan memulai pelacakan.
+UC42
+Menyelesaikan Pengiriman Per Lokasi
+Menekan tombol "Pengiriman Selesai" untuk mencatat waktu kedatangan di satu lokasi tujuan. Kurir juga melampirkan foto bukti makanan sudah sampai.
+UC43
+Logout
+Keluar dari sesi aplikasi untuk mengakhiri akses.
+Aktor : Koordinator MBG Sekolah
+UC44
+Login
+Memasukkan username dan password untuk masuk ke sistem.
+UC45
+Reset Password
+Meminta OTP ke email terdaftar untuk mengatur ulang password.
+UC46
+Melihat Jadwal Kedatangan
+Memantau jadwal kedatangan mobil SPPG harian/mingguan.
+UC47
+Melakukan Konfirmasi Penerimaan 
+Mengonfirmasi kedatangan mobil dan mengisi jumlah total makanan yang diterima dan foto bukti.
+UC48
+Mengirim Laporan Keluhan Kemasan
+Mengirim laporan (termasuk foto) jika ada masalah kemasan (rusak, bocor, jumlah tidak sesuai).
+UC49
+Menerima Instruksi Tindak Lanjut
+Menerima notifikasi dan instruksi dari Admin SPPG terkait keluhan yang dikirim.
+UC50
+Menerima Notifikasi Masalah Makanan
+Menerima notifikasi jika wali kelas melaporkan masalah terhadap makanan.
+UC51
+Mengirim Pengajuan Penambahan Jadwal Khusus
+Mengisi detail jadwal khusus dengan mengisi tanggal, waktu dan menu khusus.
+UC52
+Mengirim Pengajuan Perubahan Menu
+Mengubah detail menu dalam jadwal harian.
+UC53
+Melihat Dashboard Status Makanan
+Melihat dashboard berisi daftar kelas dan apakah ada laporan keluhan atau tidak.
+UC54
+Logout
+Keluar dari sesi aplikasi untuk mengakhiri akses.
+Aktor : Wali Kelas
+UC55
+Login
+Memasukkan username dan password untuk masuk ke sistem.
+UC56
+Reset Password
+Meminta OTP ke email terdaftar untuk mengatur ulang password.
+UC57
+Melihat Jadwal & Notifikasi
+Memantau jadwal kedatangan dan menerima notifikasi jika makanan siap didistribusikan.
+UC58
+Melakukan Konfirmasi Penerimaan Kelas
+Mengonfirmasi penerimaan makanan di kelas dan memasukkan jumlah yang diterima.
+UC59
+Mengirim Laporan Keluhan Makanan
+Mengirim laporan (termasuk foto) jika ada masalah kualitas makanan (basi, benda asing).
+UC60
+Menerima Instruksi Tindak Lanjut
+Menerima notifikasi dan instruksi dari Admin SPPG terkait keluhan yang dikirim.
+UC61
+Menerima Notifikasi Masalah Makanan
+Menerima notifikasi jika wali kelas melaporkan masalah terhadap makanan.
+UC62
+Logout
+Keluar dari sesi aplikasi untuk mengakhiri akses.
+
+

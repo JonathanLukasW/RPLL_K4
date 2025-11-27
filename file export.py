@@ -1,52 +1,49 @@
 import os
-
+import re
 folders = [
-    "lib/core",
-    "lib/models",
-    "lib/features/autentikasi",
-    "lib/features/shared",
-    "lib/features/koordinator"
+    "lib"
+    #"lib/core",
+    #"lib/models",
+    #"lib/features/autentikasi",
+   # "lib/features/shared",
+   # "lib/features/koordinator"
 ]
+allowed_ext=[".dart"]
+extra_files=[".env","pubspec.yaml","android/app/src/main/AndroidManifest.xml"]
+output=""
 
-# allowed file types for folder scanning
-allowed_ext = [".dart", ".sql", ".txt"]
+def compact_text(text):
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped:
+            stripped = re.sub(r"\s+", " ", stripped)
+            cleaned.append(stripped)
+    return "".join(cleaned)
 
-# single files you want to include even if they're outside those folders
-extra_files = [
-    ".env",
-    "pubspec.yaml",
-	"android/app/src/main/AndroidManifest.xml"
-]
-
-output = ""
-
-def dump_file(filepath):
-    """Reads a single file and appends its content to output."""
+def dump_file(path):
     global output
-    if os.path.exists(filepath):
-        with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
-            output += f"\n\n=== FILE: {filepath} ===\n\n"
-            output += f.read()
+    if os.path.exists(path):
+        with open(path,"r",encoding="utf-8",errors="ignore") as f:
+            raw = f.read()
+        compacted = compact_text(raw)
+        output += f"\n=== FILE: {path} ===\n" + compacted + "\n"
 
 def scan_folder(folder):
-    """Scan folder recursively for allowed file types."""
-    for root, dirs, files in os.walk(folder):
+    for root,dirs,files in os.walk(folder):
         for file in files:
             if any(file.endswith(ext) for ext in allowed_ext):
-                filepath = os.path.join(root, file)
-                dump_file(filepath)
+                dump_file(os.path.join(root,file))
 
-# scan all folder paths
 for folder in folders:
     if os.path.exists(folder):
         scan_folder(folder)
 
-# dump extra single files
-for filepath in extra_files:
-    dump_file(filepath)
+for p in extra_files:
+    dump_file(p)
 
-# write final result
-with open("project_dump.txt", "w", encoding="utf-8") as out:
+with open("project_file.txt","w",encoding="utf-8") as out:
     out.write(output)
 
-print("Done → project_dump.txt")
+print("Done → project_file.txt")
