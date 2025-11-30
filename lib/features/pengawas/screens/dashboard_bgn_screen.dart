@@ -9,7 +9,7 @@ import 'list_sppg_screen.dart';
 import 'bgn_report_screen.dart'; // Screen Laporan Terpadu
 
 // [PENTING] Import Halaman Profil (Tempat Ganti Password)
-import '../../../core/screens/profile_screen.dart'; 
+import '../../../core/screens/profile_screen.dart';
 
 class DashboardBgnScreen extends StatelessWidget {
   const DashboardBgnScreen({super.key});
@@ -75,7 +75,9 @@ class DashboardBgnScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const ListSppgScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const ListSppgScreen(),
+                        ),
                       );
                     },
                   ),
@@ -89,7 +91,9 @@ class DashboardBgnScreen extends StatelessWidget {
                     onTap: () {
                       Navigator.push(
                         context,
-                        MaterialPageRoute(builder: (_) => const BgnReportScreen()),
+                        MaterialPageRoute(
+                          builder: (_) => const BgnReportScreen(),
+                        ),
                       );
                     },
                   ),
@@ -102,7 +106,8 @@ class DashboardBgnScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildMenuCard(BuildContext context, {
+  Widget _buildMenuCard(
+    BuildContext context, {
     required IconData icon,
     required String title,
     required Color color,
