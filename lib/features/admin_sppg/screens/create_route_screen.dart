@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import 'package:latlong2/latlong.dart';
 
-// Import Models
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
 import '../../../models/courier_model.dart';
-
-// Import Services
+import '../../../models/menu_model.dart';
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
+import '../services/menu_service.dart';
 import '../services/route_service.dart';
 
 class CreateRouteScreen extends StatefulWidget {
@@ -22,112 +20,82 @@ class CreateRouteScreen extends StatefulWidget {
 
 class _CreateRouteScreenState extends State<CreateRouteScreen> {
   final _formKey = GlobalKey<FormState>();
-
-  // --- Services ---
-  final SchoolService _schoolService = SchoolService();
-  final VehicleService _vehicleService = VehicleService();
-  final CourierService _courierService = CourierService();
-
-  // --- Data Sources (List Pilihan) ---
-  List<School> _availableSchools = [];
-  List<Vehicle> _availableVehicles = [];
-  List<CourierModel> _availableCouriers = [];
-
-  // --- Form State (Data yang dipilih user) ---
-  DateTime _selectedDate = DateTime.now(); // Default Besok
-  String? _selectedVehicleId;
+  
+  List<School> _schools = [];
+  List<Vehicle> _vehicles = [];
+  List<CourierModel> _couriers = [];
+  List<Menu> _menus = [];
+  
+  DateTime _selectedDate = DateTime.now();
+  List<String> _selectedVehicleIds = []; // [REVISI] Multi Mobil
   String? _selectedCourierId;
-  final List<School> _selectedSchools = []; // Sekolah yang dicentang
+  String? _selectedMenuId;
+  final List<School> _selectedSchools = [];
 
-  bool _isLoadingData = true; // Loading awal (ambil data dropdown)
-  bool _isSubmitting = false; // Loading saat simpan
+  bool _isLoading = true;
+  bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _fetchAllData();
+    _loadData();
   }
 
-  // 1. AMBIL SEMUA DATA (Mobil, Kurir, Sekolah) SEKALIGUS
-  Future<void> _fetchAllData() async {
+  Future<void> _loadData() async {
     try {
-      // Future.wait biar jalan paralel (lebih cepat)
       final results = await Future.wait([
-        _schoolService.getMySchools(),
-        _vehicleService.getMyVehicles(),
-        _courierService.getMyCouriers(),
+        SchoolService().getMySchools(),
+        VehicleService().getMyVehicles(),
+        CourierService().getMyCouriers(),
+        MenuService().getMyMenus(),
       ]);
-
-      if (!mounted) return;
-
       setState(() {
-        _availableSchools = results[0] as List<School>;
-        _availableVehicles = results[1] as List<Vehicle>;
-        _availableCouriers = results[2] as List<CourierModel>;
-        _isLoadingData = false;
+        _schools = results[0] as List<School>;
+        _vehicles = results[1] as List<Vehicle>;
+        _couriers = results[2] as List<CourierModel>;
+        _menus = results[3] as List<Menu>;
+        _isLoading = false;
       });
     } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal memuat data: $e")));
-      setState(() => _isLoadingData = false);
+      setState(() => _isLoading = false);
     }
   }
 
-  // 2. FUNGSI PILIH TANGGAL
-  Future<void> _pickDate() async {
-    final picked = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime.now(),
-      lastDate: DateTime.now().add(const Duration(days: 30)),
-    );
-    if (picked != null) {
-      setState(() => _selectedDate = picked);
-    }
-  }
-
-  // 3. LOGIKA CENTANG SEKOLAH
-  void _toggleSchool(School school, bool? isChecked) {
-    setState(() {
-      if (isChecked == true) {
-        _selectedSchools.add(school);
-      } else {
-        _selectedSchools.removeWhere((element) => element.id == school.id);
-      }
-    });
-  }
-
-  // 4. SIMPAN RUTE
-  Future<void> _submitRoute() async {
+  Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
-      // Validasi Manual: Sekolah harus dipilih minimal 1
       if (_selectedSchools.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Pilih minimal satu sekolah tujuan!")),
-        );
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 sekolah")));
         return;
       }
-
+      if (_selectedVehicleIds.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 mobil")));
+        return;
+      }
+      if (_selectedSchools.length < _selectedVehicleIds.length) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Jumlah sekolah lebih sedikit dari mobil!")));
+        return;
+      }
+      
       setState(() => _isSubmitting = true);
-
       try {
-        await RouteService().createRoute(
-          vehicleId: _selectedVehicleId!,
+        final menu = _menus.firstWhere((m) => m.id == _selectedMenuId);
+
+        await RouteService().createBatchRoutes(
+          vehicleIds: _selectedVehicleIds,
           courierId: _selectedCourierId!,
+          menuId: _selectedMenuId!,
           date: _selectedDate,
           selectedSchools: _selectedSchools,
+          cookingDuration: menu.cookingDurationMinutes,
         );
-
+        
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Rute Pengiriman Berhasil Dibuat!"), backgroundColor: Colors.green),
-        );
-        Navigator.pop(context, true); // Balik ke dashboard bawa sinyal sukses
-
+        Navigator.pop(context, true);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Rute & Jadwal Otomatis Terbuat!")));
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
       } finally {
-        if (mounted) setState(() => _isSubmitting = false);
+        setState(() => _isSubmitting = false);
       }
     }
   }
@@ -135,138 +103,110 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Buat Rute Pengiriman"),
-        backgroundColor: Colors.orange[800],
-        foregroundColor: Colors.white,
-      ),
-      body: _isLoadingData
+      appBar: AppBar(title: const Text("Buat Rute Otomatis"), backgroundColor: Colors.orange[800]),
+      body: _isLoading 
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
+              padding: const EdgeInsets.all(16),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- BAGIAN 1: TANGGAL ---
-                    const Text("Tanggal Pengiriman", style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    InkWell(
-                      onTap: _pickDate,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          border: OutlineInputBorder(),
-                          prefixIcon: Icon(Icons.calendar_today),
-                        ),
-                        child: Text(
-                          DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(_selectedDate), // Pake library intl
-                          style: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 20),
-
-                    // --- BAGIAN 2: ARMADA & KURIR ---
-                    Row(
-                      children: [
-                        // Dropdown Mobil
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            decoration: const InputDecoration(labelText: "Pilih Mobil", border: OutlineInputBorder()),
-                            value: _selectedVehicleId,
-                            items: _availableVehicles.map((v) {
-                              return DropdownMenuItem(
-                                value: v.id,
-                                child: Text(v.plateNumber, overflow: TextOverflow.ellipsis),
-                              );
-                            }).toList(),
-                            onChanged: (val) => setState(() => _selectedVehicleId = val),
-                            validator: (val) => val == null ? "Wajib isi" : null,
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        // Dropdown Kurir
-                        Expanded(
-                          child: DropdownButtonFormField<String>(
-                            decoration: const InputDecoration(labelText: "Pilih Kurir", border: OutlineInputBorder()),
-                            value: _selectedCourierId,
-                            items: _availableCouriers.map((c) {
-                              return DropdownMenuItem(
-                                value: c.id,
-                                child: Text(c.name, overflow: TextOverflow.ellipsis),
-                              );
-                            }).toList(),
-                            onChanged: (val) => setState(() => _selectedCourierId = val),
-                            validator: (val) => val == null ? "Wajib isi" : null,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 25),
-                    const Divider(thickness: 2),
-                    
-                    // --- BAGIAN 3: PILIH SEKOLAH ---
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Pilih Sekolah Tujuan", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                        Text("${_selectedSchools.length} Dipilih", style: TextStyle(color: Colors.orange[800], fontWeight: FontWeight.bold)),
-                      ],
+                    // 1. TANGGAL
+                    ListTile(
+                      title: Text("Tanggal: ${DateFormat('dd MMM yyyy').format(_selectedDate)}"),
+                      trailing: const Icon(Icons.calendar_today),
+                      onTap: () async {
+                        final d = await showDatePicker(context: context, initialDate: _selectedDate, firstDate: DateTime.now(), lastDate: DateTime(2030));
+                        if (d != null) setState(() => _selectedDate = d);
+                      },
                     ),
                     const SizedBox(height: 10),
                     
-                    Container(
-                      decoration: BoxDecoration(
-                        border: Border.all(color: Colors.grey.shade400),
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      height: 300, // Tinggi fixed biar bisa discroll list sekolahnya
-                      child: _availableSchools.isEmpty 
-                        ? const Center(child: Text("Belum ada data sekolah."))
-                        : ListView.separated(
-                            itemCount: _availableSchools.length,
-                            separatorBuilder: (ctx, i) => const Divider(height: 1),
-                            itemBuilder: (context, index) {
-                              final school = _availableSchools[index];
-                              final isSelected = _selectedSchools.any((s) => s.id == school.id);
-                              
-                              return CheckboxListTile(
-                                title: Text(school.name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                                subtitle: Text("Siswa: ${school.studentCount} | Alamat: ${school.address ?? '-'}"),
-                                value: isSelected,
-                                activeColor: Colors.orange[800],
-                                onChanged: (bool? val) => _toggleSchool(school, val),
-                                secondary: isSelected 
-                                    ? const Icon(Icons.check_circle, color: Colors.orange) 
-                                    : const Icon(Icons.circle_outlined, color: Colors.grey),
-                              );
-                            },
-                          ),
+                    // 2. MENU (Wajib)
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(labelText: "Menu (Hitung Masak Otomatis)", border: OutlineInputBorder()),
+                      items: _menus.map((m) => DropdownMenuItem(value: m.id, child: Text("${m.name} (${m.cookingDurationMinutes} mnt)"))).toList(),
+                      onChanged: (v) => setState(() => _selectedMenuId = v),
+                      validator: (v) => v == null ? "Wajib pilih menu" : null,
                     ),
+                    const SizedBox(height: 15),
+
+                    // 3. PILIH KURIR
+                    DropdownButtonFormField(
+                      decoration: const InputDecoration(labelText: "Kurir Penanggung Jawab", border: OutlineInputBorder()),
+                      items: _couriers.map((c) => DropdownMenuItem(value: c.id, child: Text(c.name))).toList(),
+                      onChanged: (v) => _selectedCourierId = v,
+                      validator: (v) => v == null ? "Pilih Kurir" : null,
+                    ),
+                    const SizedBox(height: 15),
+
+                    // 4. PILIH MOBIL (MULTI SELECT)
+                    const Text("Pilih Armada (Bisa Lebih dari 1):", style: TextStyle(fontWeight: FontWeight.bold)),
+                    Container(
+                      height: 150,
+                      decoration: BoxDecoration(border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(5)),
+                      child: ListView.builder(
+                        itemCount: _vehicles.length,
+                        itemBuilder: (ctx, i) {
+                          final v = _vehicles[i];
+                          final isSelected = _selectedVehicleIds.contains(v.id);
+                          return CheckboxListTile(
+                            title: Text(v.plateNumber),
+                            subtitle: Text(v.driverName ?? '-'),
+                            value: isSelected,
+                            onChanged: (val) {
+                              setState(() {
+                                if (val!) _selectedVehicleIds.add(v.id);
+                                else _selectedVehicleIds.remove(v.id);
+                              });
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 5),
+                    Text("${_selectedVehicleIds.length} Mobil Dipilih. Sistem akan membagi sekolah secara otomatis.", style: const TextStyle(fontSize: 12, color: Colors.blue)),
 
                     const SizedBox(height: 20),
+                    const Divider(),
+                    
+                    // 5. PILIH SEKOLAH
+                    const Text("Pilih Sekolah Tujuan:", style: TextStyle(fontWeight: FontWeight.bold)),
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      itemCount: _schools.length,
+                      itemBuilder: (ctx, i) {
+                        final s = _schools[i];
+                        final isSelected = _selectedSchools.any((e) => e.id == s.id);
+                        return CheckboxListTile(
+                          title: Text(s.name),
+                          subtitle: Text("${s.studentCount} Pax (Deadline: ${s.deadlineTime ?? '12:00'})"),
+                          value: isSelected,
+                          onChanged: (val) {
+                            setState(() {
+                              if (val!) _selectedSchools.add(s);
+                              else _selectedSchools.removeWhere((e) => e.id == s.id);
+                            });
+                          },
+                        );
+                      },
+                    ),
 
-                    // --- TOMBOL SIMPAN ---
+                    const SizedBox(height: 30),
+                    
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submitRoute,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green[700],
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        child: _isSubmitting
-                            ? const CircularProgressIndicator(color: Colors.white)
-                            : const Text(
-                                "SIMPAN RUTE & TUGASKAN KURIR",
-                                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white),
-                              ),
+                        onPressed: _isSubmitting ? null : _submit,
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green, padding: const EdgeInsets.all(15)),
+                        child: _isSubmitting 
+                           ? const CircularProgressIndicator(color: Colors.white)
+                           : const Text("GENERATE BATCH RUTE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                       ),
-                    ),
-                    const SizedBox(height: 30),
+                    )
                   ],
                 ),
               ),

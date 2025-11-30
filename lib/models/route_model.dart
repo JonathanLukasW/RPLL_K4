@@ -4,8 +4,11 @@ class DeliveryRoute {
   final String vehicleId;
   final String courierId;
   final String status; // pending, active, completed
+  
+  // [BARU] Tambahan Field
+  final String? departureTime; // Jam Berangkat (HH:mm:ss)
 
-  // Variabel tambahan untuk join (opsional, buat tampilan nanti)
+  // Variabel tambahan untuk join (opsional)
   final String? vehiclePlate; 
   final String? courierName;
 
@@ -15,6 +18,7 @@ class DeliveryRoute {
     required this.vehicleId,
     required this.courierId,
     this.status = 'pending',
+    this.departureTime, 
     this.vehiclePlate,
     this.courierName,
   });
@@ -26,7 +30,10 @@ class DeliveryRoute {
       vehicleId: json['vehicle_id'].toString(),
       courierId: json['courier_id'].toString(),
       status: json['status'] ?? 'pending',
-      // Supabase bisa return nested object kalau kita select join
+      // [BARU] Ambil dari JSON
+      departureTime: json['departure_time'], 
+      
+      // Supabase join objects
       vehiclePlate: json['vehicles']?['plate_number'], 
       courierName: json['profiles']?['full_name'],
     );

@@ -3,11 +3,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart'; 
 import 'package:latlong2/latlong.dart'; 
 import 'package:url_launcher/url_launcher.dart'; 
-import 'package:image_picker/image_picker.dart'; // Untuk Foto
+import 'package:image_picker/image_picker.dart'; 
 
 import '../../admin_sppg/services/route_service.dart';
 import '../../../models/route_model.dart';
-import '../../../core/services/storage_service.dart'; // Untuk Upload
+import '../../../core/services/storage_service.dart'; 
 
 class RouteDetailScreen extends StatefulWidget {
   final DeliveryRoute route;
@@ -29,12 +29,24 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
   
   bool _isLoading = true;
   String _currentStatus = 'pending';
+  
+  // [BARU] Variabel untuk Jam Berangkat
+  String _departureTime = "--:--";
 
   @override
   void initState() {
     super.initState();
     _currentStatus = widget.route.status;
+    _departureTime = _formatTime(widget.route.departureTime); // Ambil dari Model Route
     _fetchData();
+  }
+
+  String _formatTime(String? timeStr) {
+    if (timeStr == null) return "--:--";
+    try {
+      // Format HH:mm:ss -> HH:mm
+      return timeStr.substring(0, 5);
+    } catch (_) { return timeStr; }
   }
 
   void _zoomMap(double change) {
@@ -45,14 +57,11 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
   Future<void> _fetchData() async {
     try {
-      // 1. Ambil Lokasi Dapur
       final origin = await _routeService.getSppgLocation();
       _sppgLocation = origin;
 
-      // 2. Ambil daftar sekolah
       final stopsData = await _routeService.getRouteStops(widget.route.id);
       
-      // 3. Susun Titik Peta
       List<LatLng> routingPoints = [];
       if (origin != null) routingPoints.add(origin); 
 
@@ -67,7 +76,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         }
       }
 
-      // 4. Minta Garis Rute OSRM
       List<LatLng> polyline = [];
       if (routingPoints.length >= 2) {
          polyline = await _routeService.getRoutePolyline(routingPoints);
@@ -80,7 +88,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         _isLoading = false;
       });
 
-      // 5. Fit Kamera Peta
       if (routingPoints.isNotEmpty) {
         Future.delayed(const Duration(seconds: 1), () {
           if (!mounted) return;
@@ -91,7 +98,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                 padding: const EdgeInsets.all(60), 
               ),
             );
-          } catch (e) { /* ignore */ }
+          } catch (_) {}
         });
       }
 
@@ -102,148 +109,79 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
   Future<void> _launchGoogleMaps(double lat, double long) async {
     final Uri googleMapsUrl = Uri.parse("google.navigation:q=$lat,$long&mode=d");
-    try {
-        await launchUrl(googleMapsUrl);
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal buka maps: $e")));
-    }
+    try { await launchUrl(googleMapsUrl); } 
+    catch (e) { if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e"))); }
   }
 
-  // --- VALIDASI MUATAN DENGAN FOTO ---
   void _showValidationDialog() {
     File? photoFile;
     bool isSubmitting = false;
-
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: const Text("Validasi Muatan"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text("Wajib lampirkan foto muatan di mobil."),
-                const SizedBox(height: 15),
-                GestureDetector(
-                  onTap: () async {
-                    final file = await _storageService.pickImage(ImageSource.camera);
-                    if (file != null) setDialogState(() => photoFile = file);
-                  },
-                  child: Container(
-                    height: 120,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: photoFile == null
-                        ? const Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [Icon(Icons.camera_alt, size: 30), Text("FOTO BUKTI MUAT")],
-                          )
-                        : Image.file(photoFile!, fit: BoxFit.cover),
-                  ),
-                ),
-                if (isSubmitting) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
-              ],
-            ),
-            actions: [
-              if (!isSubmitting) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-              if (!isSubmitting) ElevatedButton(
-                onPressed: () async {
-                  if (photoFile == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Foto bukti wajib ada!")));
-                    return;
-                  }
-                  setDialogState(() => isSubmitting = true);
-                  try {
-                    final url = await _storageService.uploadEvidence(photoFile!, 'loading_proof');
-                    await _routeService.validateLoadWithPhoto(widget.route.id, url);
-                    
-                    if (!mounted) return;
-                    Navigator.pop(ctx);
-                    setState(() => _currentStatus = 'active');
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pengiriman Dimulai!")));
-                  } catch (e) {
-                    setDialogState(() => isSubmitting = false);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-                  }
+    showDialog(context: context, barrierDismissible: false, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
+        return AlertDialog(
+          title: const Text("Validasi Muatan"),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text("Wajib lampirkan foto muatan di mobil."),
+              const SizedBox(height: 15),
+              GestureDetector(
+                onTap: () async {
+                  final file = await _storageService.pickImage(ImageSource.camera);
+                  if (file != null) setDialogState(() => photoFile = file);
                 },
-                child: const Text("Mulai Pengiriman"),
+                child: Container(height: 120, width: double.infinity, decoration: BoxDecoration(color: Colors.grey[200], border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(8)), child: photoFile == null ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.camera_alt, size: 30), Text("FOTO BUKTI MUAT")]) : Image.file(photoFile!, fit: BoxFit.cover)),
               ),
-            ],
-          );
-        },
-      ),
-    );
+              if (isSubmitting) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
+          ]),
+          actions: [
+            if (!isSubmitting) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+            if (!isSubmitting) ElevatedButton(onPressed: () async {
+                if (photoFile == null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Foto bukti wajib ada!"))); return; }
+                setDialogState(() => isSubmitting = true);
+                try {
+                  final url = await _storageService.uploadEvidence(photoFile!, 'loading_proof');
+                  await _routeService.validateLoadWithPhoto(widget.route.id, url);
+                  if (!mounted) return;
+                  Navigator.pop(ctx);
+                  setState(() => _currentStatus = 'active');
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pengiriman Dimulai!")));
+                } catch (e) { setDialogState(() => isSubmitting = false); }
+            }, child: const Text("Mulai Pengiriman")),
+          ],
+        );
+    }));
   }
 
-  // --- SELESAI PENGIRIMAN DENGAN FOTO ---
   void _showCompleteDialog(String stopId, String schoolName) {
     File? photoFile;
     bool isSubmitting = false;
-
-    showDialog(
-      context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          return AlertDialog(
-            title: Text("Tiba di $schoolName"),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text("Lampirkan foto bukti makanan sampai."),
-                const SizedBox(height: 15),
-                GestureDetector(
-                  onTap: () async {
-                    final file = await _storageService.pickImage(ImageSource.camera);
-                    if (file != null) setDialogState(() => photoFile = file);
-                  },
-                  child: Container(
-                    height: 120,
-                    width: double.infinity,
-                    decoration: BoxDecoration(color: Colors.grey[200], border: Border.all(color: Colors.grey)),
-                    child: photoFile == null
-                        ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.camera_alt), Text("FOTO BUKTI")])
-                        : Image.file(photoFile!, fit: BoxFit.cover),
-                  ),
-                ),
-                if (isSubmitting) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
-              ],
-            ),
-            actions: [
-              if (!isSubmitting) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
-              if (!isSubmitting) ElevatedButton(
-                onPressed: () async {
-                  if (photoFile == null) {
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Foto bukti wajib ada!")));
-                    return;
-                  }
-                  setDialogState(() => isSubmitting = true);
-                  try {
-                    final url = await _storageService.uploadEvidence(photoFile!, 'arrival_proof');
-                    await _routeService.completeStopWithPhoto(stopId, url);
-                    
-                    if (!mounted) return;
-                    Navigator.pop(ctx);
-                    _fetchData(); 
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Selesai di $schoolName!")));
-                  } catch (e) {
-                    setDialogState(() => isSubmitting = false);
-                    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-                  }
-                },
-                child: const Text("Selesai"),
+    showDialog(context: context, builder: (ctx) => StatefulBuilder(builder: (context, setDialogState) {
+        return AlertDialog(
+          title: Text("Tiba di $schoolName"),
+          content: Column(mainAxisSize: MainAxisSize.min, children: [
+              const Text("Lampirkan foto bukti makanan sampai."),
+              const SizedBox(height: 15),
+              GestureDetector(
+                onTap: () async { final file = await _storageService.pickImage(ImageSource.camera); if (file != null) setDialogState(() => photoFile = file); },
+                child: Container(height: 120, width: double.infinity, decoration: BoxDecoration(color: Colors.grey[200], border: Border.all(color: Colors.grey)), child: photoFile == null ? const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.camera_alt), Text("FOTO BUKTI")]) : Image.file(photoFile!, fit: BoxFit.cover)),
               ),
-            ],
-          );
-        },
-      ),
-    );
+              if (isSubmitting) const Padding(padding: EdgeInsets.only(top: 10), child: LinearProgressIndicator()),
+          ]),
+          actions: [
+            if (!isSubmitting) TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+            if (!isSubmitting) ElevatedButton(onPressed: () async {
+                if (photoFile == null) { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Foto bukti wajib ada!"))); return; }
+                setDialogState(() => isSubmitting = true);
+                try {
+                  final url = await _storageService.uploadEvidence(photoFile!, 'arrival_proof');
+                  await _routeService.completeStopWithPhoto(stopId, url);
+                  if (!mounted) return;
+                  Navigator.pop(ctx);
+                  _fetchData(); 
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Selesai di $schoolName!")));
+                } catch (e) { setDialogState(() => isSubmitting = false); }
+            }, child: const Text("Selesai")),
+          ],
+        );
+    }));
   }
 
   @override
@@ -256,91 +194,47 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
       ),
       body: Column(
         children: [
-          // PETA NAVIGASI
+          // --- PETA (TETAP SAMA) ---
           SizedBox(
-            height: 300, 
+            height: 250, 
             child: Stack(
               children: [
                 FlutterMap(
                   mapController: _mapController,
-                  options: const MapOptions(
-                    initialCenter: LatLng(-6.9175, 107.6191),
-                    initialZoom: 13.0,
-                    interactionOptions: InteractionOptions(flags: InteractiveFlag.all),
-                  ),
+                  options: const MapOptions(initialCenter: LatLng(-6.9175, 107.6191), initialZoom: 13.0, interactionOptions: InteractionOptions(flags: InteractiveFlag.all)),
                   children: [
-                    TileLayer(
-                      urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                      userAgentPackageName: 'com.example.mbg_monitoring',
-                    ),
-                    PolylineLayer(
-                      polylines: [
-                        Polyline(points: _polylinePoints, strokeWidth: 5.0, color: Colors.blueAccent),
-                      ],
-                    ),
+                    TileLayer(urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png', userAgentPackageName: 'com.example.mbg_monitoring'),
+                    PolylineLayer(polylines: [Polyline(points: _polylinePoints, strokeWidth: 5.0, color: Colors.blueAccent)]),
                     MarkerLayer(
                       markers: [
                         if (_sppgLocation != null)
-                          Marker(
-                            point: _sppgLocation!,
-                            width: 60, height: 60, 
-                            child: const Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.store_mall_directory, color: Colors.purple, size: 35),
-                                Text("DAPUR", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple, backgroundColor: Colors.white70)),
-                              ],
-                            ),
-                          ),
+                          Marker(point: _sppgLocation!, width: 60, height: 60, child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.store_mall_directory, color: Colors.purple, size: 35), Text("DAPUR", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.purple, backgroundColor: Colors.white70))])),
                         ..._stops.map((stop) {
                           final school = stop['schools'];
                           final isCompleted = stop['status'] == 'completed';
                           if (school['gps_lat'] == null) return const Marker(point: LatLng(0,0), child: SizedBox());
-                          
                           double lat = double.parse(school['gps_lat'].toString());
                           double long = double.parse(school['gps_long'].toString());
-
-                          return Marker(
-                            point: LatLng(lat, long),
-                            width: 60, height: 60, 
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.location_on, color: isCompleted ? Colors.green : Colors.red, size: 35),
-                                Container(
-                                   padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                                   decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.grey)),
-                                   child: Text("${stop['sequence_order']}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold))
-                                ),
-                              ],
-                            ),
-                          );
+                          return Marker(point: LatLng(lat, long), width: 60, height: 60, child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [Icon(Icons.location_on, color: isCompleted ? Colors.green : Colors.red, size: 35), Container(padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2), decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(4), border: Border.all(color: Colors.grey)), child: Text("${stop['sequence_order']}", style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold)))]));
                         }).toList(),
                       ],
                     ),
                   ],
                 ),
-                // Tombol Zoom
-                Positioned(
-                  right: 10, bottom: 10,
-                  child: Column(
-                    children: [
-                      FloatingActionButton.small(
-                        heroTag: "btnZoomIn",
-                        onPressed: () => _zoomMap(1),
-                        backgroundColor: Colors.white,
-                        child: const Icon(Icons.add, color: Colors.black),
-                      ),
-                      const SizedBox(height: 10),
-                      FloatingActionButton.small(
-                        heroTag: "btnZoomOut",
-                        onPressed: () => _zoomMap(-1),
-                        backgroundColor: Colors.white,
-                        child: const Icon(Icons.remove, color: Colors.black),
-                      ),
-                    ],
-                  ),
-                ),
+                Positioned(right: 10, bottom: 10, child: Column(children: [FloatingActionButton.small(heroTag: "btnZoomIn", onPressed: () => _zoomMap(1), backgroundColor: Colors.white, child: const Icon(Icons.add, color: Colors.black)), const SizedBox(height: 10), FloatingActionButton.small(heroTag: "btnZoomOut", onPressed: () => _zoomMap(-1), backgroundColor: Colors.white, child: const Icon(Icons.remove, color: Colors.black))])),
+              ],
+            ),
+          ),
+
+          // --- [BARU] INFO JADWAL BERANGKAT ---
+          Container(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+            color: Colors.orange[50],
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text("Jadwal Berangkat:", style: TextStyle(fontWeight: FontWeight.bold)),
+                Text(_departureTime, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.orange)),
               ],
             ),
           ),
@@ -357,8 +251,10 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       final school = stop['schools'];
                       final bool isCompleted = stop['status'] == 'completed';
                       
-                      double? lat;
-                      double? long;
+                      // Ambil ETA (Estimasi Tiba)
+                      String eta = _formatTime(stop['estimated_arrival_time']);
+                      
+                      double? lat, long;
                       if (school['gps_lat'] != null) {
                          lat = double.parse(school['gps_lat'].toString());
                          long = double.parse(school['gps_long'].toString());
@@ -374,8 +270,10 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                             backgroundColor: isCompleted ? Colors.green : Colors.grey[300],
                             child: Text("${index + 1}", style: TextStyle(color: isCompleted ? Colors.white : Colors.black, fontWeight: FontWeight.bold)),
                           ),
-                          title: Text(school['name']),
-                          subtitle: Text("Menu: ${school['menu_default'] ?? '-'} (${school['student_count']} pax)"),
+                          title: Text(school['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                          // [BARU] Tampilkan Estimasi Tiba
+                          subtitle: Text("Est. Tiba: $eta\nMenu: ${school['menu_default'] ?? '-'}"),
+                          isThreeLine: true,
                           trailing: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
@@ -383,9 +281,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                                 IconButton(
                                   icon: const Icon(Icons.directions, color: Colors.blue),
                                   onPressed: () => _launchGoogleMaps(lat!, long!),
+                                  tooltip: "Navigasi",
                                 ),
                               
-                              // Tombol Selesai (Ganti jadi Dialog Foto)
                               if (_currentStatus == 'active' && !isCompleted)
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),

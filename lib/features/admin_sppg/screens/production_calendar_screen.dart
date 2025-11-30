@@ -19,11 +19,9 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
 
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
-
-  // Data Jadwal: Map<Tanggal, List<Jadwal>>
+  
   Map<DateTime, List<ProductionSchedule>> _schedules = {};
-  List<Menu> _availableMenus = []; // Untuk dropdown saat tambah
-
+  List<Menu> _availableMenus = [];
   bool _isLoading = true;
 
   @override
@@ -35,14 +33,11 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
 
   Future<void> _loadInitialData() async {
     try {
-      // 1. Ambil Menu (buat dropdown nanti)
-      final menus = await _menuService.getMyMenus();
+      final menus = await _menuService.getMyMenus(); 
       _availableMenus = menus;
-
-      // 2. Ambil Jadwal
-      await _fetchSchedules();
+      _fetchSchedules();
     } catch (e) {
-      if (mounted) setState(() => _isLoading = false);
+      setState(() => _isLoading = false);
     }
   }
 
@@ -50,15 +45,12 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
     setState(() => _isLoading = true);
     try {
       final data = await _scheduleService.getSchedulesByMonth(_focusedDay);
-
       Map<DateTime, List<ProductionSchedule>> newMap = {};
       for (var item in data) {
-        // Normalisasi tanggal (hilangkan jam/menit)
         final dateKey = DateTime(item.date.year, item.date.month, item.date.day);
         if (newMap[dateKey] == null) newMap[dateKey] = [];
         newMap[dateKey]!.add(item);
       }
-
       if (mounted) {
         setState(() {
           _schedules = newMap;
@@ -70,20 +62,17 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
     }
   }
 
-  // Helper: Mengambil event/jadwal untuk tanggal tertentu
   List<ProductionSchedule> _getSchedulesForDay(DateTime day) {
     final dateKey = DateTime(day.year, day.month, day.day);
     return _schedules[dateKey] ?? [];
   }
 
-  // --- DIALOG TAMBAH / EDIT JADWAL ---
+  // --- DIALOG CRUD (TAMBAH KHUSUS / EDIT) ---
   void _showScheduleDialog({ProductionSchedule? scheduleToEdit}) {
-    // Variabel Form
     String? selectedMenuId = scheduleToEdit?.menuId;
-    final portionController = TextEditingController(text: scheduleToEdit?.totalPortions.toString() ?? "500");
-    final noteController = TextEditingController(text: scheduleToEdit?.notes ?? "");
-
-    // Parsing jam kirim dari data lama (atau default jam 11:00)
+    final portionController = TextEditingController(text: scheduleToEdit?.totalPortions.toString() ?? "100");
+    final noteController = TextEditingController(text: scheduleToEdit?.notes ?? "Tambahan Khusus");
+    
     TimeOfDay selectedTime = const TimeOfDay(hour: 11, minute: 0);
     if (scheduleToEdit?.targetFinishTime != null) {
       final parts = scheduleToEdit!.targetFinishTime!.split(':');
@@ -94,96 +83,70 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
-          // Cari object menu yang sedang dipilih untuk hitung durasi
           final currentMenu = _availableMenus.isNotEmpty
-              ? _availableMenus.firstWhere(
-                  (m) => m.id == selectedMenuId,
-                  orElse: () => _availableMenus.first)
+              ? _availableMenus.firstWhere((m) => m.id == selectedMenuId, orElse: () => _availableMenus.first)
               : null;
-
-          // Hitung Mundur Realtime untuk Preview
+          
           String startTimeString = "--:--";
           if (currentMenu != null) {
-            startTimeString = _scheduleService
-                .calculateStartTime(
-                    selectedTime, selectedMenuId != null ? currentMenu.cookingDurationMinutes : 0)
-                .substring(0, 5);
+            startTimeString = _scheduleService.calculateStartTime(
+              selectedTime, 
+              selectedMenuId != null ? currentMenu.cookingDurationMinutes : 0
+            ).substring(0,5);
           }
 
           return AlertDialog(
-            title: Text(scheduleToEdit == null
-                ? "Jadwal ${_selectedDay!.day}/${_selectedDay!.month}"
-                : "Edit Jadwal"),
+            title: Text(scheduleToEdit == null ? "Jadwal Khusus" : "Edit Jadwal"),
             content: SingleChildScrollView(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  if (_availableMenus.isEmpty)
-                    const Text("Belum ada menu. Tambah menu dulu di Manajemen Menu.",
-                        style: TextStyle(color: Colors.red)),
-
-                  if (_availableMenus.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(labelText: "Pilih Menu", border: OutlineInputBorder()),
-                      value: selectedMenuId,
-                      items: _availableMenus
-                          .map((m) => DropdownMenuItem(value: m.id, child: Text(m.name)))
-                          .toList(),
-                      onChanged: (val) => setDialogState(() => selectedMenuId = val),
-                    ),
+                  if(scheduleToEdit == null)
+                    const Text("Gunakan ini HANYA untuk pesanan tambahan di luar rute rutin.", style: TextStyle(fontSize: 12, color: Colors.red)),
                   const SizedBox(height: 10),
 
+                  DropdownButtonFormField<String>(
+                    decoration: const InputDecoration(labelText: "Pilih Menu", border: OutlineInputBorder()),
+                    value: selectedMenuId,
+                    items: _availableMenus.map((m) => DropdownMenuItem(value: m.id, child: Text(m.name))).toList(),
+                    onChanged: (val) => setDialogState(() => selectedMenuId = val),
+                  ),
+                  const SizedBox(height: 10),
+                  
                   TextField(
                     controller: portionController,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: "Jumlah Porsi", border: OutlineInputBorder()),
                   ),
                   const SizedBox(height: 10),
-
+                  
                   ListTile(
-                    title: const Text("Mobil Berangkat Jam:"),
-                    subtitle: Text(selectedTime.format(context),
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                    title: const Text("Target Selesai Jam:"),
+                    subtitle: Text(selectedTime.format(context), style: const TextStyle(fontWeight: FontWeight.bold)),
                     trailing: const Icon(Icons.access_time),
-                    tileColor: Colors.grey[100],
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                     onTap: () async {
                       final t = await showTimePicker(context: context, initialTime: selectedTime);
                       if (t != null) setDialogState(() => selectedTime = t);
                     },
                   ),
-
-                  // Info Hitung Mundur
+                  
                   if (selectedMenuId != null && currentMenu != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 15),
-                      child: Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                            color: Colors.blue[50],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.blue)),
-                        child: Column(
-                          children: [
-                            Text("Durasi Masak: ${currentMenu.cookingDurationMinutes} Menit"),
-                            const Divider(),
-                            const Text("JADWAL DAPUR:",
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
-                            Text("MULAI MASAK: $startTimeString",
-                                style: const TextStyle(
-                                    color: Colors.red, fontWeight: FontWeight.bold, fontSize: 20)),
-                            const Text("(Termasuk 30 menit loading)",
-                                style: TextStyle(fontSize: 10, fontStyle: FontStyle.italic)),
-                          ],
-                        ),
-                      ),
-                    ),
+                     Padding(
+                       padding: const EdgeInsets.only(top: 10),
+                       child: Container(
+                         padding: const EdgeInsets.all(8),
+                         color: Colors.blue[50],
+                         child: Text(
+                           "MULAI MASAK: $startTimeString (Durasi: ${currentMenu.cookingDurationMinutes} mnt)", 
+                           style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 12)
+                         ),
+                       ),
+                     ),
 
                   const SizedBox(height: 10),
                   TextField(
                     controller: noteController,
-                    decoration: const InputDecoration(
-                        labelText: "Catatan (Opsional)", border: OutlineInputBorder()),
+                    decoration: const InputDecoration(labelText: "Catatan", border: OutlineInputBorder()),
                   ),
                 ],
               ),
@@ -192,15 +155,12 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
               TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
               ElevatedButton(
                 onPressed: () async {
-                  if (selectedMenuId == null) {
-                    return;
-                  }
-
+                  if (selectedMenuId == null) return;
                   Navigator.pop(ctx);
                   final menu = _availableMenus.firstWhere((m) => m.id == selectedMenuId);
 
                   if (scheduleToEdit == null) {
-                    // TAMBAH
+                    // TAMBAH KHUSUS
                     await _scheduleService.addSchedule(
                       date: _selectedDay!,
                       menuId: selectedMenuId!,
@@ -210,7 +170,7 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
                       notes: noteController.text,
                     );
                   } else {
-                    // UPDATE
+                    // EDIT JADWAL (Rutin/Khusus)
                     await _scheduleService.updateSchedule(
                       id: scheduleToEdit.id,
                       menuId: selectedMenuId!,
@@ -220,10 +180,8 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
                       notes: noteController.text,
                     );
                   }
-                  _fetchSchedules(); // Refresh
+                  _fetchSchedules();
                 },
-                style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.orange[800], foregroundColor: Colors.white),
                 child: const Text("Simpan"),
               )
             ],
@@ -238,7 +196,7 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Hapus Jadwal?"),
-        content: const Text("Data produksi ini akan dihapus permanen."),
+        content: const Text("Jadwal produksi ini akan dihapus."),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
           TextButton(
@@ -272,15 +230,9 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
             calendarFormat: CalendarFormat.month,
             eventLoader: _getSchedulesForDay,
             onDaySelected: (selected, focused) {
-              setState(() {
-                _selectedDay = selected;
-                _focusedDay = focused;
-              });
+              setState(() { _selectedDay = selected; _focusedDay = focused; });
             },
-            onPageChanged: (focused) {
-              _focusedDay = focused;
-              _fetchSchedules();
-            },
+            onPageChanged: (focused) { _focusedDay = focused; _fetchSchedules(); },
             calendarStyle: const CalendarStyle(
               markerDecoration: BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
               todayDecoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
@@ -289,40 +241,39 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
             headerStyle: const HeaderStyle(formatButtonVisible: false, titleCentered: true),
           ),
           const Divider(thickness: 1),
+          const Padding(
+            padding: EdgeInsets.all(8.0),
+            child: Text("Jadwal Masak Hari Ini:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+          ),
           Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _buildDayList(),
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator())
+              : _buildDayList(),
           ),
         ],
       ),
-      // Tombol Tambah di Pojok Bawah
+      // Tombol Khusus
       floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Colors.orange[800],
+        backgroundColor: Colors.redAccent,
         foregroundColor: Colors.white,
-        label: const Text("Tambah Jadwal"),
-        icon: const Icon(Icons.add),
-        onPressed: () => _showScheduleDialog(), // Memanggil fungsi tambah tanpa parameter
+        label: const Text("Jadwal Khusus"),
+        icon: const Icon(Icons.add_alert),
+        onPressed: () => _showScheduleDialog(),
       ),
     );
   }
 
   Widget _buildDayList() {
     final events = _getSchedulesForDay(_selectedDay!);
-
-    if (events.isEmpty) {
-      return Center(
-        child: Text(
-          "Tidak ada jadwal masak tgl ${DateFormat('d MMM').format(_selectedDay!)}",
-          style: const TextStyle(color: Colors.grey, fontSize: 16),
-        ),
-      );
-    }
+    if (events.isEmpty) return const Center(child: Text("Tidak ada jadwal masak."));
 
     return ListView.builder(
       itemCount: events.length,
       itemBuilder: (context, index) {
         final schedule = events[index];
+        // Cek apakah ini jadwal otomatis atau manual (berdasarkan notes atau logika lain)
+        // Di sini kita anggap semua sama dulu, tapi Admin bisa hapus/edit.
+        
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           child: ListTile(
@@ -336,23 +287,20 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
               children: [
                 Text("Target: ${schedule.totalPortions} Porsi"),
                 Text(
-                    "Mulai Masak: ${schedule.startCookingTime?.substring(0, 5)} -> Selesai: ${schedule.targetFinishTime?.substring(0, 5)}",
-                    style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
-                if (schedule.notes != null && schedule.notes!.isNotEmpty)
-                  Text("Note: ${schedule.notes}", style: const TextStyle(fontStyle: FontStyle.italic)),
+                  "Masak: ${schedule.startCookingTime?.substring(0,5)} -> Selesai: ${schedule.targetFinishTime?.substring(0,5)}",
+                  style: const TextStyle(color: Colors.red, fontWeight: FontWeight.bold)
+                ),
+                if (schedule.notes != null) Text(schedule.notes!, style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12)),
               ],
             ),
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
-                  onPressed: () => _showScheduleDialog(scheduleToEdit: schedule), // Mode Edit
-                ),
-                IconButton(
-                  icon: const Icon(Icons.delete, color: Colors.red),
-                  onPressed: () => _confirmDelete(schedule.id),
-                ),
+            trailing: PopupMenuButton(
+              onSelected: (value) {
+                if (value == 'edit') _showScheduleDialog(scheduleToEdit: schedule);
+                if (value == 'delete') _confirmDelete(schedule.id);
+              },
+              itemBuilder: (context) => [
+                const PopupMenuItem(value: 'edit', child: Text("Edit")),
+                const PopupMenuItem(value: 'delete', child: Text("Hapus", style: TextStyle(color: Colors.red))),
               ],
             ),
           ),
