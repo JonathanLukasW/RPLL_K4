@@ -5,10 +5,10 @@ class DeliveryRoute {
   final String courierId;
   final String status; // pending, active, completed
   
-  // [BARU] Tambahan Field
+  // [PENTING] Field Baru
   final String? departureTime; // Jam Berangkat (HH:mm:ss)
 
-  // Variabel tambahan untuk join (opsional)
+  // Variabel tambahan untuk join
   final String? vehiclePlate; 
   final String? courierName;
 
@@ -30,7 +30,7 @@ class DeliveryRoute {
       vehicleId: json['vehicle_id'].toString(),
       courierId: json['courier_id'].toString(),
       status: json['status'] ?? 'pending',
-      // [BARU] Ambil dari JSON
+      // Ambil data departure_time dari database
       departureTime: json['departure_time'], 
       
       // Supabase join objects
