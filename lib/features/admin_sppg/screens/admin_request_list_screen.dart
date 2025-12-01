@@ -11,7 +11,7 @@ class AdminRequestListScreen extends StatefulWidget {
 class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
   final RequestService _service = RequestService();
 
-  void _showRespondDialog(String id) {
+  void _showRespondDialog(ChangeRequestModel request) {
     final responseController = TextEditingController();
     showDialog(
       context: context,
@@ -27,10 +27,12 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
         actions: [
           TextButton(
             onPressed: () async {
+              // FIX 1: Provide all REQUIRED NAMED PARAMETERS
               await _service.respondRequest(
-                id,
-                'rejected',
-                responseController.text,
+                requestId: request.id,
+                status: 'rejected',
+                adminNote: responseController.text,
+                requestData: request, // <--- CRITICAL: Pass the data object
               );
               if (!mounted) return;
               Navigator.pop(ctx);
@@ -40,10 +42,12 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
           ),
           ElevatedButton(
             onPressed: () async {
+              // FIX 2: Provide all REQUIRED NAMED PARAMETERS
               await _service.respondRequest(
-                id,
-                'approved',
-                responseController.text,
+                requestId: request.id,
+                status: 'approved',
+                adminNote: responseController.text,
+                requestData: request, // <--- CRITICAL: Pass the data object
               );
               if (!mounted) return;
               Navigator.pop(ctx);
@@ -99,7 +103,7 @@ class _AdminRequestListScreenState extends State<AdminRequestListScreen> {
                   ),
                   trailing: item.status == 'pending'
                       ? ElevatedButton(
-                          onPressed: () => _showRespondDialog(item.id),
+                          onPressed: () => _showRespondDialog(item),
                           child: const Text("Jawab"),
                         )
                       : const Icon(Icons.check, color: Colors.green),

@@ -27,7 +27,7 @@ import 'add_coordinator_screen.dart';
 import 'add_teacher_screen.dart';
 import 'create_route_screen.dart';
 import 'menu_management_screen.dart';
-import 'complaint_list_screen.dart';
+import 'center_info_screen.dart';
 import 'statistics_screen.dart';
 import 'production_calendar_screen.dart';
 import '../../../core/screens/profile_screen.dart';
@@ -128,7 +128,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => const ComplaintListScreen()),
+                MaterialPageRoute(builder: (_) => const CenterInfoScreen()),
               );
             },
           ),
@@ -267,6 +267,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                   "Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}",
                 ),
                 trailing: Row(
+                  // <--- RE-INSERTED ROW
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     // EDIT Button (UC25)
@@ -287,7 +288,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     // DELETE Button (UC26)
                     IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteSchool(school.id),
+                      onPressed: () =>
+                          _deleteSchool(school.id), // <--- CORRECT CALL
                     ),
                   ],
                 ),
@@ -573,20 +575,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
             } catch (_) {}
 
+            final isPending = route.status == 'pending'; // Check the status
+
             return Card(
               elevation: 3,
               margin: const EdgeInsets.only(bottom: 12),
               child: InkWell(
-                // [AKSI BARU] Buka Layar Detail Read-Only
+                // [AKSI] Tap opens the Edit/Detail screen
                 onTap: () {
-                  // [UPDATE] Arahkan ke EditRouteScreen
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => EditRouteScreen(route: route),
                     ),
                   ).then((val) {
-                    // Refresh list saat kembali (siapa tau rute dihapus/diupdate)
                     setState(() {});
                   });
                 },
@@ -604,6 +606,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                               fontSize: 16,
                             ),
                           ),
+                          // Status Text
                           Text(
                             route.status.toUpperCase(),
                             style: TextStyle(
@@ -615,31 +618,50 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       ),
                       const Divider(),
                       Row(
+                        mainAxisAlignment: MainAxisAlignment
+                            .spaceBetween, // Added this for spacing
                         children: [
-                          const Icon(
-                            Icons.person,
-                            size: 16,
-                            color: Colors.grey,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            route.courierName ?? "Kurir Hapus",
-                            style: const TextStyle(fontSize: 14),
-                          ),
-                          const Spacer(),
-                          const Icon(
-                            Icons.local_shipping,
-                            size: 16,
-                            color: Colors.grey,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            route.vehiclePlate ?? "-",
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
+                          // Left Side: Courier & Vehicle Info
+                          Expanded(
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.person,
+                                  size: 16,
+                                  color: Colors.grey,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  route.courierName ?? "Kurir Hapus",
+                                  style: const TextStyle(fontSize: 14),
+                                ),
+                                const SizedBox(width: 15),
+                                const Icon(
+                                  Icons.local_shipping,
+                                  size: 16,
+                                  color: Colors.grey,
+                                ),
+                                const SizedBox(width: 5),
+                                Text(
+                                  route.vehiclePlate ?? "-",
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
+
+                          // Right Side: DELETE BUTTON
+                          if (isPending)
+                            IconButton(
+                              icon: const Icon(Icons.delete, color: Colors.red),
+                              tooltip: "Hapus Rute",
+                              onPressed: () => _deleteRoute(
+                                route.id,
+                              ), // <--- THE DAMN BUTTON IS HERE
+                            ),
                         ],
                       ),
                     ],
@@ -653,6 +675,49 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
+  // [NEW/RESTORED] Fungsi Delete Rute (UC18)
+  Future<void> _deleteRoute(String routeId) async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Rute?"),
+        content: const Text(
+          "Menghapus rute akan menghapus semua perhentian terkait. Yakin?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Batal"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _routeService.deleteRoute(routeId);
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Rute Dihapus!")));
+        setState(() {});
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error Hapus Rute: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // [RESTORED] Fungsi Delete Sekolah (UC26)
   Future<void> _deleteSchool(String schoolId) async {
     final confirm = await showDialog(
       context: context,
@@ -674,12 +739,22 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       ),
     );
     if (confirm == true) {
-      await _schoolService.deleteSchool(schoolId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Sekolah Dihapus!")));
-      setState(() {});
+      try {
+        await _schoolService.deleteSchool(schoolId);
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Sekolah Dihapus!")));
+        setState(() {});
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Gagal menghapus: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

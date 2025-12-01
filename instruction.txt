@@ -6,4 +6,4 @@ pg_dump \
   --no-owner --no-acl \
   > ~/Documents/RPLL/MBG_full.sql
 
-  axel@Axel:~/Documents/RPLL$ python3 compact.py MBG_full.sql
+python3 compact.py MBG_full.sql

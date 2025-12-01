@@ -90,10 +90,12 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
 
       // 3. Ambil Garis Rute (Polyline) dari OSRM
       if (validRoutingPoints.length >= 2) {
-        // Check against the valid list
         _polylinePoints = await _routeService.getRoutePolyline(
           validRoutingPoints,
         );
+      } else {
+        // [FIX]: Set polyline to empty list explicitly if points are insufficient.
+        _polylinePoints = [];
       }
 
       // 4. Ambil Semua Sekolah (Untuk opsi tambah sekolah nanti)
@@ -103,33 +105,27 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
       setState(() => _isLoading = false);
 
       // 5. Fit Camera (Zoom Peta Otomatis)
-      // [FIX ERROR MERAH]: Cek routingPoints tidak kosong sebelum fitCamera
-      if (validRoutingPoints.length >= 2) {
-        Future.delayed(const Duration(milliseconds: 500), () {
-          if (!mounted) return;
-          try {
-            // [CRASH FIX] Add check for points before bounds creation
-            if (validRoutingPoints.isNotEmpty) {
+      // The original crash condition. Check must be precise.
+      if (validRoutingPoints.isNotEmpty) {
+        try {
+          // Only proceed if we have points, otherwise LatLngBounds crashes.
+          if (validRoutingPoints.length > 1) {
+            // If we have multiple points, fit the map.
+            Future.delayed(const Duration(milliseconds: 500), () {
+              if (!mounted) return;
               _mapController.fitCamera(
                 CameraFit.bounds(
                   bounds: LatLngBounds.fromPoints(validRoutingPoints),
                   padding: const EdgeInsets.all(60),
                 ),
               );
-            }
-          } catch (e) {
-            print("Map Error (Abaikan): $e");
+            });
+          } else if (validRoutingPoints.length == 1 && _sppgLocation != null) {
+            // If only the SPPG location exists, center on it.
+            _mapController.move(_sppgLocation!, 15.0);
           }
-        });
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                "Info: Hanya ada 1 titik atau kurang. Peta tidak dapat merender rute lengkap.",
-              ),
-            ),
-          );
+        } catch (e) {
+          print("Map Fit Error: $e");
         }
       }
     } catch (e) {
