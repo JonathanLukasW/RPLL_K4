@@ -1,10 +1,9 @@
+// === FILE: lib\features\admin_sppg\screens\dashboard_admin_screen.dart ===
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-
-// Import Auth & Login
+// Import Auth
 import '../../../features/autentikasi/services/auth_service.dart';
 import '../../../features/autentikasi/screens/login_screen.dart';
-
 // Import Model
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
@@ -12,27 +11,26 @@ import '../../../models/route_model.dart';
 import '../../../models/courier_model.dart';
 import '../services/coordinator_service.dart';
 import '../services/teacher_service.dart';
-
 // Import Services
 import '../services/school_service.dart';
 import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
 import '../services/route_service.dart';
-
 // Import Forms & Screens
 import 'add_school_screen.dart';
 import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
 import 'add_coordinator_screen.dart';
 import 'add_teacher_screen.dart';
-import 'create_route_screen.dart';
+import 'create_route_screen.dart'; // <<< FIX: Ini yang harus ada
 import 'menu_management_screen.dart';
-import 'center_info_screen.dart';
+import 'complaint_list_screen.dart';
 import 'statistics_screen.dart';
 import 'production_calendar_screen.dart';
 import '../../../core/screens/profile_screen.dart';
-import 'edit_account_screen.dart'; // Pastikan ini ada jika digunakan untuk edit user
-import 'edit_route_screen.dart'; // [BARU] Import Screen Read Only
+import 'edit_account_screen.dart';
+import 'edit_route_screen.dart';
+import 'admin_request_list_screen.dart';
 
 class DashboardAdminScreen extends StatefulWidget {
   const DashboardAdminScreen({super.key});
@@ -43,8 +41,6 @@ class DashboardAdminScreen extends StatefulWidget {
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   int _selectedIndex = 0;
-
-  // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
@@ -99,6 +95,119 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     }
   }
 
+  // --- ACTIONS UTILITIES ---
+  Future<void> _deleteSchool(String id) async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Sekolah?"),
+        content: const Text(
+            "Semua data terkait, termasuk akun koordinator/wali kelas, akan terpengaruh."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Batal")),
+          TextButton(
+              onPressed: () async {
+                await _schoolService.deleteSchool(id);
+                if (!mounted) return;
+                Navigator.pop(ctx, true);
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Sekolah berhasil dihapus!")));
+                setState(() {});
+              },
+              child: const Text("Hapus", style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm == true) setState(() {});
+  }
+
+  Future<void> _deleteVehicle(String id) async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Kendaraan?"),
+        content: const Text(
+            "Kendaraan ini tidak akan bisa digunakan lagi untuk rute baru."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Batal")),
+          TextButton(
+              onPressed: () async {
+                await _vehicleService.deleteVehicle(id);
+                if (!mounted) return;
+                Navigator.pop(ctx, true);
+                setState(() {});
+              },
+              child: const Text("Hapus", style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm == true) setState(() {});
+  }
+
+  Future<void> _deleteUser(String id, String role) async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text("Hapus Akun $role?"),
+        content: Text("Akun $role ini akan dihapus permanen."),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text("Batal")),
+          TextButton(
+              onPressed: () async {
+                if (role == 'Kurir') {
+                  await _courierService.deleteCourierAccount(id);
+                } else if (role == 'Koordinator') {
+                  await _coordinatorService.deleteCoordinatorAccount(id);
+                } else if (role == 'Wali Kelas') {
+                  await _teacherService.deleteTeacherAccount(id);
+                }
+                if (!mounted) return;
+                Navigator.pop(ctx, true);
+                setState(() {});
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                    content: Text("Akun $role berhasil dihapus!"),
+                    backgroundColor: Colors.green));
+              },
+              child: const Text("Hapus", style: TextStyle(color: Colors.red))),
+        ],
+      ),
+    );
+    if (confirm == true) setState(() {});
+  }
+
+  void _navigateToEditAccount(
+      String id, String role, Map<String, dynamic> data) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditAccountScreen(
+          userId: id,
+          initialRole: role,
+          initialData: data,
+        ),
+      ),
+    ).then((val) {
+      if (val == true) setState(() {});
+    });
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      default:
+        return Colors.orange;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -111,72 +220,86 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
             icon: const Icon(Icons.calendar_month),
             tooltip: "Kalender Produksi",
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ProductionCalendarScreen(),
-                ),
-              );
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ProductionCalendarScreen()));
             },
           ),
           IconButton(
-            icon: const Icon(
-              Icons.notification_important,
-              color: Colors.redAccent,
-            ),
-            tooltip: "Laporan Pengaduan",
+            icon: const Icon(Icons.account_circle),
+            tooltip: "Profil",
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const CenterInfoScreen()),
-              );
+              Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()));
             },
           ),
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            tooltip: "Laporan Kinerja",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const StatisticsScreen()),
-              );
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert),
+            onSelected: (value) {
+              if (value == 'inbox') {
+                Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (_) => const AdminRequestListScreen()));
+              } else if (value == 'complaint') {
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const ComplaintListScreen()));
+              } else if (value == 'stats') {
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const StatisticsScreen()));
+              } else if (value == 'menu') {
+                Navigator.push(context,
+                    MaterialPageRoute(builder: (_) => const MenuManagementScreen()));
+              } else if (value == 'logout') {
+                _logout();
+              }
             },
-          ),
-          IconButton(
-            icon: const Icon(Icons.restaurant_menu),
-            tooltip: "Manajemen Menu",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const MenuManagementScreen()),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_circle, size: 30),
-            tooltip: "Profil Saya",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              );
-            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'inbox',
+                child: ListTile(
+                    leading: Icon(Icons.mail, color: Colors.orange),
+                    title: Text('Kotak Masuk Pengajuan')),
+              ),
+              const PopupMenuItem<String>(
+                value: 'complaint',
+                child: ListTile(
+                    leading: Icon(Icons.warning, color: Colors.red),
+                    title: Text('Laporan Masalah')),
+              ),
+              const PopupMenuItem<String>(
+                value: 'stats',
+                child: ListTile(
+                    leading: Icon(Icons.bar_chart, color: Colors.blue),
+                    title: Text('Statistik Kinerja')),
+              ),
+              const PopupMenuItem<String>(
+                value: 'menu',
+                child: ListTile(
+                    leading: Icon(Icons.restaurant_menu, color: Colors.green),
+                    title: Text('Manajemen Menu')),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: ListTile(
+                    leading: Icon(Icons.logout, color: Colors.grey),
+                    title: Text('Logout')),
+              ),
+            ],
           ),
         ],
       ),
-
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildSchoolList(), // 0
-          _buildTransportList(), // 1
-          _buildCourierList(), // 2
-          _buildCoordinatorList(), // 3
-          _buildTeacherList(), // 4
-          _buildRouteList(), // 5
+          _buildSchoolList(),
+          _buildTransportList(),
+          _buildCourierList(),
+          _buildCoordinatorList(),
+          _buildTeacherList(),
+          _buildRouteList(), // 5. Rute
         ],
       ),
-
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
@@ -184,28 +307,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         label: Text(_getFabLabel()),
         onPressed: () {
           Widget nextPage;
-          if (_selectedIndex == 0)
-            nextPage = const AddSchoolScreen();
-          else if (_selectedIndex == 1)
-            nextPage = const AddTransportScreen();
-          else if (_selectedIndex == 2)
-            nextPage = const AddCourierScreen();
-          else if (_selectedIndex == 3)
-            nextPage = const AddCoordinatorScreen();
-          else if (_selectedIndex == 4)
-            nextPage = const AddTeacherScreen();
+          if (_selectedIndex == 0) nextPage = const AddSchoolScreen();
+          else if (_selectedIndex == 1) nextPage = const AddTransportScreen();
+          else if (_selectedIndex == 2) nextPage = const AddCourierScreen();
+          else if (_selectedIndex == 3) nextPage = const AddCoordinatorScreen();
+          else if (_selectedIndex == 4) nextPage = const AddTeacherScreen();
           else
-            nextPage = const CreateRouteScreen();
-
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => nextPage),
-          ).then((val) {
+            nextPage =
+                const CreateRouteScreen(); // <<< FIX 2: CREATE ROUTE (Sesuai dengan file aslinya, ini diarahkan ke screen, tapi di file sebelumnya ini adalah service)
+          Navigator.push(context, MaterialPageRoute(builder: (_) => nextPage))
+              .then((val) {
             if (val == true) setState(() {});
           });
         },
       ),
-
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed,
@@ -215,30 +330,20 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         items: const [
           BottomNavigationBarItem(icon: Icon(Icons.school), label: "Sekolah"),
           BottomNavigationBarItem(
-            icon: Icon(Icons.local_shipping),
-            label: "Armada",
-          ),
+              icon: Icon(Icons.local_shipping), label: "Armada"),
           BottomNavigationBarItem(
-            icon: Icon(Icons.person_pin_circle),
-            label: "Kurir",
-          ),
+              icon: Icon(Icons.person_pin_circle), label: "Kurir"),
           BottomNavigationBarItem(
-            icon: Icon(Icons.supervisor_account),
-            label: "Koord",
-          ),
+              icon: Icon(Icons.supervisor_account), label: "Koord"),
           BottomNavigationBarItem(icon: Icon(Icons.class_), label: "Wali"),
           BottomNavigationBarItem(
-            icon: Icon(Icons.map_outlined),
-            label: "Rute",
-          ),
+              icon: Icon(Icons.map_outlined), label: "Rute"),
         ],
       ),
     );
   }
 
-  // --- LIST BUILDERS (WITH RESTORED BUTTONS) ---
-
-  // 0. SEKOLAH (UC25 Edit, UC26 Delete)
+  // --- WIDGET LIST BUILDERS ---
   Widget _buildSchoolList() {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
@@ -248,6 +353,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         final schools = snapshot.data ?? [];
         if (schools.isEmpty)
           return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
+
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: schools.length,
@@ -256,43 +362,29 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
             return Card(
               child: ListTile(
                 leading: const CircleAvatar(
-                  backgroundColor: Colors.orange,
-                  child: Icon(Icons.school, color: Colors.white),
-                ),
-                title: Text(
-                  school.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  "Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}",
-                ),
-                trailing: Row(
-                  // <--- RE-INSERTED ROW
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC25)
-                    IconButton(
+                    backgroundColor: Colors.orange,
+                    child: Icon(Icons.school, color: Colors.white)),
+                title: Text(school.name,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
+                // [PERBAIKAN] Menghapus tampilan deadlineTime yang berisi JSON string
+                subtitle: Text("Siswa: ${school.studentCount} | Risiko: ${school.isHighRisk ? 'Tinggi' : 'Normal'}"),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () {
                         Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                AddSchoolScreen(schoolToEdit: school),
-                          ),
-                        ).then((val) {
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) =>
+                                    AddSchoolScreen(schoolToEdit: school))).then(
+                            (val) {
                           if (val == true) setState(() {});
                         });
-                      },
-                    ),
-                    // DELETE Button (UC26)
-                    IconButton(
+                      }),
+                  IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () =>
-                          _deleteSchool(school.id), // <--- CORRECT CALL
-                    ),
-                  ],
-                ),
+                      onPressed: () => _deleteSchool(school.id)),
+                ]),
               ),
             );
           },
@@ -301,7 +393,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // 1. ARMADA (UC34 Edit, UC35 Delete)
   Widget _buildTransportList() {
     return FutureBuilder<List<Vehicle>>(
       future: _vehicleService.getMyVehicles(),
@@ -311,9 +402,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         final vehicles = snapshot.data ?? [];
         if (vehicles.isEmpty)
           return _buildEmptyState(
-            "Belum ada kendaraan.",
-            Icons.local_shipping_outlined,
-          );
+              "Belum ada kendaraan.", Icons.local_shipping_outlined);
+
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: vehicles.length,
@@ -322,54 +412,37 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
             return Card(
               child: ListTile(
                 leading: Icon(
-                  Icons.directions_car,
-                  color: vehicle.isActive ? Colors.green : Colors.grey,
-                  size: 32,
-                ),
-                title: Text(
-                  vehicle.plateNumber,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
+                    Icons.directions_car,
+                    color: vehicle.isActive ? Colors.green : Colors.grey,
+                    size: 32),
+                title: Text(vehicle.plateNumber,
+                    style: const TextStyle(fontWeight: FontWeight.bold)),
                 subtitle: Text(
-                  "Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}",
-                ),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC34)
-                    IconButton(
+                    "Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}"),
+                trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () {
                         Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) =>
-                                AddTransportScreen(vehicleToEdit: vehicle),
-                          ),
-                        ).then((val) {
+                            context,
+                            MaterialPageRoute(
+                                builder: (_) => AddTransportScreen(
+                                    vehicleToEdit: vehicle))).then((val) {
                           if (val == true) setState(() {});
                         });
-                      },
-                    ),
-                    // DELETE Button (UC35)
-                    IconButton(
+                      }),
+                  IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteVehicle(vehicle.id),
-                    ),
-                    // Status Toggle
-                    Switch(
+                      onPressed: () => _deleteVehicle(vehicle.id)),
+                  Switch(
                       value: vehicle.isActive,
                       activeColor: Colors.green,
                       onChanged: (val) async {
                         await _vehicleService.toggleStatus(
-                          vehicle.id,
-                          vehicle.isActive,
-                        );
+                            vehicle.id, vehicle.isActive);
                         setState(() {});
-                      },
-                    ),
-                  ],
-                ),
+                      }),
+                ]),
               ),
             );
           },
@@ -378,7 +451,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // 2. KURIR (UC31 Edit, UC32 Delete)
   Widget _buildCourierList() {
     return FutureBuilder<List<CourierModel>>(
       future: _courierService.getMyCouriers(),
@@ -388,57 +460,37 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         final couriers = snapshot.data ?? [];
         if (couriers.isEmpty)
           return _buildEmptyState(
-            "Belum ada akun kurir.",
-            Icons.person_off_outlined,
-          );
+              "Belum ada akun kurir.", Icons.person_off_outlined);
+
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: couriers.length,
-          itemBuilder: (ctx, i) {
-            final courier = couriers[i];
-            return Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.blueGrey,
-                  child: Icon(Icons.person, color: Colors.white),
-                ),
-                title: Text(
-                  courier.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(courier.email),
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC31)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () =>
-                          _navigateToEditAccount(courier.id, 'kurir', {
-                            'name': courier.name,
-                            'email': courier.email,
-                            'schoolId': null, // N/A
-                            'className': null, // N/A
-                          }),
-                    ),
-                    // DELETE Button (UC32)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteUser(courier.id, 'Kurir'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+            padding: const EdgeInsets.all(10),
+            itemCount: couriers.length,
+            itemBuilder: (ctx, i) {
+              final c = couriers[i];
+              return Card(
+                  child: ListTile(
+                      leading: const CircleAvatar(
+                          backgroundColor: Colors.blueGrey,
+                          child: Icon(Icons.person, color: Colors.white)),
+                      title: Text(c.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(c.email),
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _navigateToEditAccount(c.id, 'kurir',
+                                {'name': c.name, 'email': c.email, 'schoolId': null, 'className': null})),
+                        IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteUser(c.id, 'Kurir')),
+                      ])));
+            });
       },
     );
   }
 
-  // 3. KOORDINATOR (UC31 Edit, UC32 Delete)
   Widget _buildCoordinatorList() {
-    return FutureBuilder<List<CoordinatorModel>>(
+    return FutureBuilder(
       future: _coordinatorService.getMyCoordinators(),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting)
@@ -446,56 +498,36 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         final data = snapshot.data ?? [];
         if (data.isEmpty)
           return _buildEmptyState(
-            "Belum ada koordinator.",
-            Icons.supervised_user_circle,
-          );
+              "Belum ada koordinator.", Icons.supervised_user_circle);
+
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final coord = data[i];
-            return Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.teal,
-                  child: Icon(Icons.person, color: Colors.white),
-                ),
-                title: Text(
-                  coord.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text("${coord.schoolName}\n${coord.email}"),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC31)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () =>
-                          _navigateToEditAccount(coord.id, 'koordinator', {
-                            'name': coord.name,
-                            'email': coord.email,
-                            'schoolId': coord.schoolId,
-                            'className': null,
-                          }),
-                    ),
-                    // DELETE Button (UC32)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteUser(coord.id, 'Koordinator'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+            padding: const EdgeInsets.all(10),
+            itemCount: data.length,
+            itemBuilder: (ctx, i) {
+              final c = data[i];
+              return Card(
+                  child: ListTile(
+                      leading: const CircleAvatar(
+                          backgroundColor: Colors.teal,
+                          child: Icon(Icons.person, color: Colors.white)),
+                      title: Text(c.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text("${c.schoolName}\n${c.email}"),
+                      isThreeLine: true,
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _navigateToEditAccount(c.id, 'koordinator',
+                                {'name': c.name, 'email': c.email, 'schoolId': c.schoolId, 'className': null})),
+                        IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteUser(c.id, 'Koordinator')),
+                      ])));
+            });
       },
     );
   }
 
-  // 4. WALI KELAS (UC31 Edit, UC32 Delete)
   Widget _buildTeacherList() {
     return FutureBuilder<List<TeacherModel>>(
       future: _teacherService.getMyTeachers(),
@@ -505,55 +537,36 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         final data = snapshot.data ?? [];
         if (data.isEmpty)
           return _buildEmptyState("Belum ada wali kelas.", Icons.class_);
+
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final teacher = data[i];
-            return Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.indigo,
-                  child: Icon(Icons.class_, color: Colors.white),
-                ),
-                title: Text(
-                  teacher.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  "${teacher.schoolName} - Kelas ${teacher.className}\n${teacher.email}",
-                ),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC31)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () =>
-                          _navigateToEditAccount(teacher.id, 'walikelas', {
-                            'name': teacher.name,
-                            'email': teacher.email,
-                            'schoolId': teacher.schoolId,
-                            'className': teacher.className,
-                          }),
-                    ),
-                    // DELETE Button (UC32)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteUser(teacher.id, 'Wali Kelas'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
+            padding: const EdgeInsets.all(10),
+            itemCount: data.length,
+            itemBuilder: (ctx, i) {
+              final t = data[i];
+              return Card(
+                  child: ListTile(
+                      leading: const CircleAvatar(
+                          backgroundColor: Colors.indigo,
+                          child: Icon(Icons.class_, color: Colors.white)),
+                      title: Text(t.name,
+                          style: const TextStyle(fontWeight: FontWeight.bold)),
+                      subtitle: Text(
+                          "${t.schoolName} - Kelas ${t.className}\n${t.email}"),
+                      isThreeLine: true,
+                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                        IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _navigateToEditAccount(t.id, 'walikelas',
+                                {'name': t.name, 'email': t.email, 'schoolId': t.schoolId, 'className': t.className})),
+                        IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () => _deleteUser(t.id, 'Wali Kelas')),
+                      ])));
+            });
       },
     );
   }
 
-  // [UPDATE] LIST RUTE DENGAN NAVIGASI KE READ-ONLY
   Widget _buildRouteList() {
     return FutureBuilder<List<DeliveryRoute>>(
       future: _routeService.getMyRoutes(),
@@ -562,7 +575,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           return const Center(child: CircularProgressIndicator());
         final routes = snapshot.data ?? [];
         if (routes.isEmpty)
-          return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
+          return _buildEmptyState(
+              "Belum ada jadwal rute.", Icons.map_outlined);
 
         return ListView.builder(
           padding: const EdgeInsets.all(12),
@@ -575,19 +589,16 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
               dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
             } catch (_) {}
 
-            final isPending = route.status == 'pending'; // Check the status
-
             return Card(
               elevation: 3,
               margin: const EdgeInsets.only(bottom: 12),
               child: InkWell(
-                // [AKSI] Tap opens the Edit/Detail screen
                 onTap: () {
+                  // Buka Layar Edit Rute & Peta
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => EditRouteScreen(route: route),
-                    ),
+                        builder: (_) => EditRouteScreen(route: route)),
                   ).then((val) {
                     setState(() {});
                   });
@@ -599,69 +610,29 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
-                            dateStr,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          // Status Text
-                          Text(
-                            route.status.toUpperCase(),
-                            style: TextStyle(
-                              color: _getStatusColor(route.status),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
+                          Text(dateStr,
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                          Text(route.status.toUpperCase(),
+                              style: TextStyle(
+                                  color: _getStatusColor(route.status),
+                                  fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const Divider(),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment
-                            .spaceBetween, // Added this for spacing
                         children: [
-                          // Left Side: Courier & Vehicle Info
-                          Expanded(
-                            child: Row(
-                              children: [
-                                const Icon(
-                                  Icons.person,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  route.courierName ?? "Kurir Hapus",
-                                  style: const TextStyle(fontSize: 14),
-                                ),
-                                const SizedBox(width: 15),
-                                const Icon(
-                                  Icons.local_shipping,
-                                  size: 16,
-                                  color: Colors.grey,
-                                ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  route.vehiclePlate ?? "-",
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-
-                          // Right Side: DELETE BUTTON
-                          if (isPending)
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              tooltip: "Hapus Rute",
-                              onPressed: () => _deleteRoute(
-                                route.id,
-                              ), // <--- THE DAMN BUTTON IS HERE
-                            ),
+                          const Icon(Icons.person, size: 16, color: Colors.grey),
+                          const SizedBox(width: 5),
+                          Text(route.courierName ?? "Kurir Hapus",
+                              style: const TextStyle(fontSize: 14)),
+                          const Spacer(),
+                          const Icon(Icons.local_shipping,
+                              size: 16, color: Colors.grey),
+                          const SizedBox(width: 5),
+                          Text(route.vehiclePlate ?? "-",
+                              style: const TextStyle(
+                                  fontSize: 14, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ],
@@ -675,202 +646,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // [NEW/RESTORED] Fungsi Delete Rute (UC18)
-  Future<void> _deleteRoute(String routeId) async {
-    final confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Hapus Rute?"),
-        content: const Text(
-          "Menghapus rute akan menghapus semua perhentian terkait. Yakin?",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Batal"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        await _routeService.deleteRoute(routeId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Rute Dihapus!")));
-        setState(() {});
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Error Hapus Rute: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  // [RESTORED] Fungsi Delete Sekolah (UC26)
-  Future<void> _deleteSchool(String schoolId) async {
-    final confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Hapus Sekolah?"),
-        content: const Text(
-          "Yakin mau hapus lokasi ini? Semua data terkait (koordinator/wali) mungkin kena imbas.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Batal"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirm == true) {
-      try {
-        await _schoolService.deleteSchool(schoolId);
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text("Sekolah Dihapus!")));
-        setState(() {});
-      } catch (e) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Gagal menghapus: $e"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  // [RESTORED] Fungsi Delete Mobil (UC35)
-  Future<void> _deleteVehicle(String vehicleId) async {
-    final confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Hapus Kendaraan?"),
-        content: const Text("Hapus plat ini dari armada?"),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Batal"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirm == true) {
-      await _vehicleService.deleteVehicle(vehicleId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text("Mobil Dihapus!")));
-      setState(() {});
-    }
-  }
-
-  // [RESTORED] Fungsi Delete User (Kurir/Koord/Wali) (UC32)
-  Future<void> _deleteUser(String userId, String roleName) async {
-    final confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text("Hapus Akun $roleName?"),
-        content: const Text("Tindakan ini permanen. Akun ini akan hilang."),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text("Batal"),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
-          ),
-        ],
-      ),
-    );
-
-    if (confirm == true) {
-      try {
-        if (roleName == 'Kurir')
-          await _courierService.deleteCourierAccount(userId);
-        if (roleName == 'Koordinator')
-          await _coordinatorService.deleteCoordinatorAccount(userId);
-        if (roleName == 'Wali Kelas')
-          await _teacherService.deleteTeacherAccount(userId);
-
-        if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Akun $roleName Dihapus!")));
-        setState(() {});
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
-        );
-      }
-    }
-  }
-
-  // [RESTORED] Fungsi Navigasi ke Edit Screen (Kurir, Koord, Wali) (UC31)
-  // NOTE: Assuming this function and EditAccountScreen exists and is imported.
-  void _navigateToEditAccount(
-    String userId,
-    String role,
-    Map<String, dynamic> data,
-  ) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => EditAccountScreen(
-          userId: userId,
-          initialRole: role,
-          initialData: data,
-        ),
-      ),
-    ).then((val) {
-      if (val == true) setState(() {});
-    });
-  }
-
   Widget _buildEmptyState(String text, IconData icon) {
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 70, color: Colors.grey[300]),
-          const SizedBox(height: 10),
-          Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-        ],
-      ),
-    );
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'completed':
-        return Colors.green;
-      case 'active':
-        return Colors.blue;
-      default:
-        return Colors.orange;
-    }
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+      Icon(icon, size: 70, color: Colors.grey[300]),
+      const SizedBox(height: 10),
+      Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600]))
+    ]));
   }
 }

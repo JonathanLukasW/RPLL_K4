@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:intl/intl.dart'; 
-import 'package:table_calendar/table_calendar.dart'; 
-
+import 'package:intl/intl.dart';
+import 'package:table_calendar/table_calendar.dart';
 import '../../admin_sppg/services/route_service.dart';
 import '../../autentikasi/screens/login_screen.dart';
 import '../../../models/route_model.dart';
@@ -18,13 +17,10 @@ class DashboardKurirScreen extends StatefulWidget {
 
 class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
   final RouteService _routeService = RouteService();
-  
   DateTime _focusedDay = DateTime.now();
   DateTime _selectedDay = DateTime.now();
-  
   // Format Kalender Default
-  CalendarFormat _calendarFormat = CalendarFormat.month; 
-  
+  CalendarFormat _calendarFormat = CalendarFormat.month;
   Map<DateTime, List<DeliveryRoute>> _routes = {};
   bool _isLoading = true;
 
@@ -38,16 +34,13 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
     setState(() => _isLoading = true);
     try {
       final data = await _routeService.getRoutesByMonth(_focusedDay);
-      
       Map<DateTime, List<DeliveryRoute>> newMap = {};
       for (var route in data) {
         final date = DateTime.parse(route.date);
         final dateKey = DateTime(date.year, date.month, date.day);
-        
         if (newMap[dateKey] == null) newMap[dateKey] = [];
         newMap[dateKey]!.add(route);
       }
-
       if (mounted) {
         setState(() {
           _routes = newMap;
@@ -83,7 +76,8 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.account_circle, size: 30),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
+            onPressed: () => Navigator.push(
+                context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
           ),
         ],
       ),
@@ -96,8 +90,8 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("Tampilan Kalender:", style: TextStyle(fontWeight: FontWeight.bold)),
-                
+                const Text("Tampilan Kalender:",
+                    style: TextStyle(fontWeight: FontWeight.bold)),
                 // DROPDOWN MENU
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -112,15 +106,15 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
                       icon: const Icon(Icons.arrow_drop_down, color: Colors.blue),
                       items: const [
                         DropdownMenuItem(
-                          value: CalendarFormat.month, 
+                          value: CalendarFormat.month,
                           child: Text("Bulan (Full)"),
                         ),
                         DropdownMenuItem(
-                          value: CalendarFormat.twoWeeks, 
+                          value: CalendarFormat.twoWeeks,
                           child: Text("2 Minggu"),
                         ),
                         DropdownMenuItem(
-                          value: CalendarFormat.week, 
+                          value: CalendarFormat.week,
                           child: Text("1 Minggu"),
                         ),
                       ],
@@ -137,25 +131,20 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
               ],
             ),
           ),
-
           // --- KALENDER ---
           TableCalendar<DeliveryRoute>(
             firstDay: DateTime.utc(2024, 1, 1),
             lastDay: DateTime.utc(2030, 12, 31),
             focusedDay: _focusedDay,
             selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-            
             // Gunakan variable state yang diubah oleh Dropdown
-            calendarFormat: _calendarFormat, 
-            
+            calendarFormat: _calendarFormat,
             // Matikan tombol format bawaan karena kita sudah punya dropdown
             headerStyle: const HeaderStyle(
-              formatButtonVisible: false, 
+              formatButtonVisible: false,
               titleCentered: true,
             ),
-            
             eventLoader: _getRoutesForDay,
-            
             onDaySelected: (selected, focused) {
               setState(() {
                 _selectedDay = selected;
@@ -164,23 +153,23 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
             },
             onPageChanged: (focused) {
               _focusedDay = focused;
-              _fetchRoutes(); 
+              _fetchRoutes();
             },
-            
             calendarStyle: const CalendarStyle(
-              markerDecoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
-              todayDecoration: BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
-              selectedDecoration: BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+              markerDecoration:
+                  BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+              todayDecoration:
+                  BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
+              selectedDecoration:
+                  BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
             ),
           ),
-          
           const Divider(thickness: 1, height: 1),
-          
           // --- LIST RUTE HARI INI ---
           Expanded(
-            child: _isLoading 
-              ? const Center(child: CircularProgressIndicator())
-              : _buildDayList(),
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _buildDayList(),
           ),
         ],
       ),
@@ -189,7 +178,6 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
 
   Widget _buildDayList() {
     final routes = _getRoutesForDay(_selectedDay);
-
     if (routes.isEmpty) {
       return Center(
         child: Column(
@@ -197,20 +185,20 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
           children: [
             Icon(Icons.event_busy, size: 60, color: Colors.grey[300]),
             const SizedBox(height: 10),
-            Text(
-              "Tidak ada pengiriman tgl ${DateFormat('d MMM').format(_selectedDay)}",
-              style: const TextStyle(color: Colors.grey),
-            ),
+            Text("Tidak ada pengiriman tgl ${DateFormat('d MMM').format(_selectedDay)}",
+                style: const TextStyle(color: Colors.grey)),
           ],
         ),
       );
     }
-
     return ListView.builder(
       padding: const EdgeInsets.all(12),
       itemCount: routes.length,
       itemBuilder: (context, index) {
         final route = routes[index];
+        // [PERBAIKAN] Tampilkan nama menu dari Route Model
+        final menuText = route.menuName != null ? "Menu: ${route.menuName}" : "Menu belum diset";
+        
         return Card(
           elevation: 3,
           margin: const EdgeInsets.only(bottom: 12),
@@ -220,13 +208,19 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
               "Armada: ${route.vehiclePlate ?? '-'}",
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            subtitle: Text("Status: ${route.status.toUpperCase()}"),
+            subtitle: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text("Status: ${route.status.toUpperCase()}"),
+                Text(menuText, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+              ],
+            ),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {
               Navigator.push(
                 context,
                 MaterialPageRoute(builder: (_) => RouteDetailScreen(route: route)),
-              ).then((val) { 
+              ).then((val) {
                 _fetchRoutes();
               });
             },

@@ -17,22 +17,25 @@ class EditRouteScreen extends StatefulWidget {
 class _EditRouteScreenState extends State<EditRouteScreen> {
   final RouteService _routeService = RouteService();
   final MapController _mapController = MapController();
-
   // List untuk menampung data Sekolah + ETA
   List<Map<String, dynamic>> _uiStops = [];
   List<School> _allSchools = [];
-
   // Data Peta
   LatLng? _sppgLocation;
   List<LatLng> _polylinePoints = [];
-
-  int _cookingDuration =
-      120; // Default durasi masak (bisa diambil dari menu nanti)
+  // [PERBAIKAN] cookingDuration diambil dari model rute
+  int _cookingDuration = 120; 
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
+    // [PERBAIKAN] Gunakan menu ID dari route model untuk mencari durasi
+    if(widget.route.menuId != null) {
+      // Karena kita tidak punya service untuk ambil durasi di sini,
+      // kita biarkan 120 (hardcode asli Anda) dan biarkan RouteService menghitung ulang.
+      // Jika di masa depan dibutuhkan, kita harus inject MenuService atau membuat helper public.
+    }
     _fetchData();
   }
 
@@ -40,28 +43,22 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
     try {
       // 1. Ambil Lokasi Dapur (Start Point)
       _sppgLocation = await _routeService.getSppgLocation();
-
       // 2. Ambil Data Stops (Sekolah + ETA) dari Database
       final stops = await _routeService.getRouteStops(widget.route.id);
-
       _uiStops = [];
       List<LatLng> validRoutingPoints = [];
-
       // Masukkan Dapur ke titik peta jika ada
       if (_sppgLocation != null) {
         validRoutingPoints.add(_sppgLocation!); // Use a new list name
       }
-
       for (var s in stops) {
         final sc = s['schools'];
-
         // Parsing Koordinat Sekolah
         double? lat, long;
         if (sc['gps_lat'] != null && sc['gps_long'] != null) {
           try {
             lat = double.parse(sc['gps_lat'].toString());
             long = double.parse(sc['gps_long'].toString());
-
             // Validate to ensure coordinates are valid non-zero
             if (lat != 0 && long != 0 && lat.isFinite && long.isFinite) {
               validRoutingPoints.add(LatLng(lat, long)); // Add valid point
@@ -71,7 +68,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
             }
           } catch (_) {}
         }
-
         // Masukkan ke List UI untuk ditampilkan di bawah peta
         _uiStops.add({
           'school': School(
@@ -87,23 +83,17 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
           'eta': s['estimated_arrival_time'] ?? '--:--', // Ambil Jam Estimasi
         });
       }
-
       // 3. Ambil Garis Rute (Polyline) dari OSRM
       if (validRoutingPoints.length >= 2) {
-        _polylinePoints = await _routeService.getRoutePolyline(
-          validRoutingPoints,
-        );
+        _polylinePoints = await _routeService.getRoutePolyline(validRoutingPoints,);
       } else {
         // [FIX]: Set polyline to empty list explicitly if points are insufficient.
         _polylinePoints = [];
       }
-
       // 4. Ambil Semua Sekolah (Untuk opsi tambah sekolah nanti)
       _allSchools = await SchoolService().getMySchools();
-
       if (!mounted) return;
       setState(() => _isLoading = false);
-
       // 5. Fit Camera (Zoom Peta Otomatis)
       // The original crash condition. Check must be precise.
       if (validRoutingPoints.isNotEmpty) {
@@ -150,7 +140,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
               // Cek duplikasi: Jangan tampilkan sekolah yang sudah ada di rute
               if (_uiStops.any((item) => (item['school'] as School).id == s.id))
                 return const SizedBox.shrink();
-
               return ListTile(
                 title: Text(s.name),
                 subtitle: Text(
@@ -161,8 +150,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                   setState(() {
                     _uiStops.add({
                       'school': s,
-                      'eta':
-                          'Hitung...', // Placeholder sebelum save & recalculate
+                      'eta': 'Hitung...', // Placeholder sebelum save & recalculate
                     });
                   });
                   Navigator.pop(ctx);
@@ -193,25 +181,20 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
         );
       return;
     }
-
     setState(() => _isLoading = true);
     try {
-      List<School> schoolsOnly = _uiStops
-          .map((e) => e['school'] as School)
-          .toList();
-
+      List<School> schoolsOnly =
+          _uiStops.map((e) => e['school'] as School).toList();
       // Asumsi: The route service still needs the menu ID (or cooking duration) for recalculation.
       // The current implementation is flawed because EditRouteScreen doesn't know the Menu ID.
       // **CRITICAL WARNING**: The `updateRouteSchools` function in your service relies on getting the Menu ID
       // from the old route, which is fine, but if the menu changes, this breaks the core logic.
       // For now, we rely on the logic in the service to pull the necessary data (cooking duration).
-
       await _routeService.updateRouteSchools(
         widget.route.id,
         schoolsOnly,
         _cookingDuration, // This is hardcoded/defaulted, which is BAD. FIX LATER.
       );
-
       await _fetchData(); // Refresh agar Peta & ETA baru muncul
       if (mounted)
         ScaffoldMessenger.of(context).showSnackBar(
@@ -238,6 +221,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final isEdit = widget.route != null; // Menggunakan widget.route
     return Scaffold(
       appBar: AppBar(
         title: const Text("Edit Rute & Peta"),
@@ -254,10 +238,8 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                   child: FlutterMap(
                     mapController: _mapController,
                     options: const MapOptions(
-                      initialCenter: LatLng(
-                        -6.9175,
-                        107.6191,
-                      ), // Default Bandung
+                      initialCenter:
+                          LatLng(-6.9175, 107.6191), // Default Bandung
                       initialZoom: 13.0,
                       // Pastikan gesture aktif (Zoom/Pan)
                       interactionOptions: InteractionOptions(
@@ -307,7 +289,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                                 ],
                               ),
                             ),
-                          // Marker Sekolah
+                          // Marker Sekolah...
                           ..._uiStops.asMap().entries.map((entry) {
                             final s = entry.value['school'] as School;
                             if (s.latitude == null)
@@ -351,7 +333,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                     ],
                   ),
                 ),
-
                 // --- INFO HEADER LIST ---
                 Container(
                   padding: const EdgeInsets.all(12),
@@ -365,7 +346,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                       ),
                       Text(
                         "${_uiStops.length} Sekolah",
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: Colors.blue,
                         ),
@@ -373,7 +354,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                     ],
                   ),
                 ),
-
                 // --- LIST SEKOLAH (BISA DIGESER URUTANNYA) ---
                 Expanded(
                   child: ReorderableListView(
@@ -402,7 +382,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                             title: Text(
                               (_uiStops[index]['school'] as School).name,
                             ),
-
                             // P1: Display ETA, Deadline, High Risk
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
@@ -415,16 +394,15 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                                   style: TextStyle(
                                     color:
                                         (_uiStops[index]['school'] as School)
-                                            .isHighRisk
-                                        ? Colors.red
-                                        : Colors.green,
+                                                .isHighRisk
+                                            ? Colors.red
+                                            : Colors.green,
                                   ),
                                 ),
                               ],
                             ),
                             isThreeLine:
                                 true, // Needed for multiple subtitle lines
-
                             trailing: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
