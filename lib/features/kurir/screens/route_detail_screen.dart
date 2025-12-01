@@ -1,3 +1,4 @@
+// === FILE: lib/features/kurir/screens/route_detail_screen.dart ===
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart'; 
@@ -42,7 +43,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
   }
 
   String _formatTime(String? timeStr) {
-    if (timeStr == null) return "--:--";
+    if (timeStr == null || timeStr.isEmpty) return "--:--";
     try {
       // Format HH:mm:ss -> HH:mm
       return timeStr.substring(0, 5);
@@ -78,7 +79,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
 
       List<LatLng> polyline = [];
       if (routingPoints.length >= 2) {
-         polyline = await _routeService.getRoutePolyline(routingPoints);
+          polyline = await _routeService.getRoutePolyline(routingPoints);
       }
 
       if (!mounted) return;
@@ -92,7 +93,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
         Future.delayed(const Duration(seconds: 1), () {
           if (!mounted) return;
           try {
-             _mapController.fitCamera(
+              _mapController.fitCamera(
               CameraFit.bounds(
                 bounds: LatLngBounds.fromPoints(routingPoints),
                 padding: const EdgeInsets.all(60), 
@@ -256,8 +257,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       
                       double? lat, long;
                       if (school['gps_lat'] != null) {
-                         lat = double.parse(school['gps_lat'].toString());
-                         long = double.parse(school['gps_long'].toString());
+                          lat = double.parse(school['gps_lat'].toString());
+                          long = double.parse(school['gps_long'].toString());
                       }
 
                       return Card(
