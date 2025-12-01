@@ -21,37 +21,58 @@ class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTi
   // --- DIALOG RESPON ADMIN ---
   void _showRespondDialog(String table, String id, String currentNote) {
     final responseController = TextEditingController();
+    
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Beri Instruksi"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text("Masalah:", style: TextStyle(fontWeight: FontWeight.bold)),
-            Text(currentNote, style: const TextStyle(color: Colors.red)),
-            const SizedBox(height: 15),
-            TextField(
-              controller: responseController,
-              decoration: const InputDecoration(
-                labelText: "Instruksi Tindak Lanjut",
-                hintText: "Contoh: Segera retur, kami kirim pengganti.",
-                border: OutlineInputBorder(),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Masalah:", style: TextStyle(fontWeight: FontWeight.bold)),
+              Text(currentNote, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 15),
+              TextField(
+                controller: responseController,
+                decoration: const InputDecoration(
+                  labelText: "Instruksi Tindak Lanjut",
+                  hintText: "Contoh: Segera retur, kami kirim pengganti.",
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 3,
               ),
-              maxLines: 3,
-            ),
-          ],
+            ],
+          ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Batal")),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx), 
+            child: const Text("Batal")
+          ),
           ElevatedButton(
             onPressed: () async {
               Navigator.pop(ctx);
-              await _service.respondToComplaint(table: table, id: id, response: responseController.text);
-              setState(() {}); // Refresh list
-              if (mounted) {
-                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Instruksi Terkirim!")));
+              try {
+                await _service.respondToComplaint(
+                  table: table, 
+                  id: id, 
+                  response: responseController.text
+                );
+                
+                setState(() {}); // Refresh list
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Instruksi Terkirim!"))
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red)
+                  );
+                }
               }
             },
             child: const Text("Kirim"),
@@ -94,16 +115,22 @@ class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTi
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _service.getCoordinatorComplaints(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
         final data = snapshot.data ?? [];
-        if (data.isEmpty) return const Center(child: Text("Tidak ada laporan dari Koordinator."));
+        if (data.isEmpty) {
+          return const Center(child: Text("Tidak ada laporan dari Koordinator."));
+        }
 
         return ListView.builder(
           itemCount: data.length,
           itemBuilder: (ctx, i) {
             final item = data[i];
-            final schoolName = item['schools']['name'];
-            final note = item['reception_notes'];
+            // Ambil data dengan pengecekan null yang aman
+            final schoolName = item['schools'] != null ? item['schools']['name'] : 'Sekolah ?';
+            final note = item['reception_notes'] ?? '-';
             final isResolved = item['admin_response'] != null;
 
             return Card(
@@ -116,7 +143,8 @@ class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTi
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text("Laporan: $note"),
-                    if (isResolved) Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                    if (isResolved) 
+                      Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 trailing: isResolved 
@@ -138,19 +166,30 @@ class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTi
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _service.getTeacherComplaints(),
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+        
         final data = snapshot.data ?? [];
-        if (data.isEmpty) return const Center(child: Text("Tidak ada laporan dari Wali Kelas."));
+        if (data.isEmpty) {
+          return const Center(child: Text("Tidak ada laporan dari Wali Kelas."));
+        }
 
         return ListView.builder(
           itemCount: data.length,
           itemBuilder: (ctx, i) {
             final item = data[i];
-            // Struktur JSON agak dalam karena join berlapis
-            final schoolName = item['delivery_stops']['schools']['name'];
-            final className = item['class_name'];
-            final issue = item['issue_type'];
-            final note = item['notes'];
+            
+            // Navigasi JSON yang agak dalam karena join
+            String schoolName = 'Sekolah ?';
+            if (item['delivery_stops'] != null && 
+                item['delivery_stops']['schools'] != null) {
+               schoolName = item['delivery_stops']['schools']['name'];
+            }
+
+            final className = item['class_name'] ?? '-';
+            final issue = item['issue_type'] ?? 'Masalah';
+            final note = item['notes'] ?? '-';
             final isResolved = item['admin_response'] != null;
 
             return Card(
@@ -164,7 +203,8 @@ class _ComplaintListScreenState extends State<ComplaintListScreen> with SingleTi
                   children: [
                     Text("Masalah: $issue"),
                     Text("Catatan: $note"),
-                    if (isResolved) Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
+                    if (isResolved) 
+                      Text("Respon: ${item['admin_response']}", style: const TextStyle(color: Colors.green, fontWeight: FontWeight.bold)),
                   ],
                 ),
                 trailing: isResolved 

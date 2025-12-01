@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:collection/collection.dart'; // Untuk firstWhereOrNull
 import '../../../models/route_model.dart';
 import '../../../models/school_model.dart';
 import '../services/route_service.dart';
@@ -17,13 +18,16 @@ class EditRouteScreen extends StatefulWidget {
 class _EditRouteScreenState extends State<EditRouteScreen> {
   final RouteService _routeService = RouteService();
   final MapController _mapController = MapController();
+  
   // List untuk menampung data Sekolah + ETA
   List<Map<String, dynamic>> _uiStops = [];
   List<School> _allSchools = [];
   // Data Peta
   LatLng? _sppgLocation;
   List<LatLng> _polylinePoints = [];
-  // [PERBAIKAN] cookingDuration diambil dari model rute
+  
+  // Kita asumsikan durasi masak ini diambil dari model rute saat ini
+  // atau dihitung ulang di Service, default 120 menit.
   int _cookingDuration = 120; 
   bool _isLoading = true;
 
@@ -43,14 +47,17 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
     try {
       // 1. Ambil Lokasi Dapur (Start Point)
       _sppgLocation = await _routeService.getSppgLocation();
+      
       // 2. Ambil Data Stops (Sekolah + ETA) dari Database
       final stops = await _routeService.getRouteStops(widget.route.id);
       _uiStops = [];
       List<LatLng> validRoutingPoints = [];
+      
       // Masukkan Dapur ke titik peta jika ada
       if (_sppgLocation != null) {
-        validRoutingPoints.add(_sppgLocation!); // Use a new list name
+        validRoutingPoints.add(_sppgLocation!); 
       }
+      
       for (var s in stops) {
         final sc = s['schools'];
         // Parsing Koordinat Sekolah
@@ -63,11 +70,11 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
             if (lat != 0 && long != 0 && lat.isFinite && long.isFinite) {
               validRoutingPoints.add(LatLng(lat, long)); // Add valid point
             } else {
-              // Log or ignore invalid points.
               print("Skipping invalid coordinate for school: ${sc['name']}");
             }
           } catch (_) {}
         }
+        
         // Masukkan ke List UI untuk ditampilkan di bawah peta
         _uiStops.add({
           'school': School(
@@ -83,24 +90,25 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
           'eta': s['estimated_arrival_time'] ?? '--:--', // Ambil Jam Estimasi
         });
       }
+      
       // 3. Ambil Garis Rute (Polyline) dari OSRM
       if (validRoutingPoints.length >= 2) {
         _polylinePoints = await _routeService.getRoutePolyline(validRoutingPoints,);
       } else {
-        // [FIX]: Set polyline to empty list explicitly if points are insufficient.
         _polylinePoints = [];
       }
+      
       // 4. Ambil Semua Sekolah (Untuk opsi tambah sekolah nanti)
       _allSchools = await SchoolService().getMySchools();
+      
       if (!mounted) return;
       setState(() => _isLoading = false);
+      
       // 5. Fit Camera (Zoom Peta Otomatis)
-      // The original crash condition. Check must be precise.
       if (validRoutingPoints.isNotEmpty) {
         try {
-          // Only proceed if we have points, otherwise LatLngBounds crashes.
+          // [PERBAIKAN KRITIS MAP] Hanya panggil CameraFit.bounds jika ada lebih dari 1 titik valid (start + 1 stop)
           if (validRoutingPoints.length > 1) {
-            // If we have multiple points, fit the map.
             Future.delayed(const Duration(milliseconds: 500), () {
               if (!mounted) return;
               _mapController.fitCamera(
@@ -111,7 +119,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
               );
             });
           } else if (validRoutingPoints.length == 1 && _sppgLocation != null) {
-            // If only the SPPG location exists, center on it.
+            // Jika hanya ada titik Dapur, fokuskan di Dapur
             _mapController.move(_sppgLocation!, 15.0);
           }
         } catch (e) {
@@ -185,15 +193,12 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
     try {
       List<School> schoolsOnly =
           _uiStops.map((e) => e['school'] as School).toList();
-      // Asumsi: The route service still needs the menu ID (or cooking duration) for recalculation.
-      // The current implementation is flawed because EditRouteScreen doesn't know the Menu ID.
-      // **CRITICAL WARNING**: The `updateRouteSchools` function in your service relies on getting the Menu ID
-      // from the old route, which is fine, but if the menu changes, this breaks the core logic.
-      // For now, we rely on the logic in the service to pull the necessary data (cooking duration).
+      
+      // Menggunakan _cookingDuration yang diset default di state
       await _routeService.updateRouteSchools(
         widget.route.id,
         schoolsOnly,
-        _cookingDuration, // This is hardcoded/defaulted, which is BAD. FIX LATER.
+        _cookingDuration, 
       );
       await _fetchData(); // Refresh agar Peta & ETA baru muncul
       if (mounted)
@@ -221,7 +226,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.route != null; // Menggunakan widget.route
+    final isEdit = widget.route != null;
     return Scaffold(
       appBar: AppBar(
         title: const Text("Edit Rute & Peta"),

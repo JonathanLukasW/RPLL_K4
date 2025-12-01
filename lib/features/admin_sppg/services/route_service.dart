@@ -1,5 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:flutter/material.dart'; // Butuh untuk TimeOfDay
+import 'package:flutter/material.dart'; 
 import 'package:intl/intl.dart';
 import 'package:latlong2/latlong.dart';
 import 'dart:convert';
@@ -20,7 +20,7 @@ class RouteService {
   Future<void> createBatchRoutes({
     required List<String> vehicleIds,
     required String courierId, // FALLBACK Kurir ID
-    required List<String> menuIds, // <-- Menggunakan List<String>
+    required List<String> menuIds, 
     required DateTime date,
     required List<School> selectedSchools,
     required int cookingDuration, // Durasi terlama (Bottleneck)
@@ -62,7 +62,7 @@ class RouteService {
           sppgId: mySppgId,
           vehicleId: currentVehicleId,
           courierId: finalCourierId, 
-          menuIds: menuIds, // <-- Mengirim List<String>
+          menuIds: menuIds, 
           date: date,
           schools: assignedSchools,
           cookingDuration: cookingDuration
@@ -78,7 +78,7 @@ class RouteService {
     required String sppgId,
     required String vehicleId,
     required String courierId,
-    required List<String> menuIds, // <-- Menggunakan List<String>
+    required List<String> menuIds, 
     required DateTime date,
     required List<School> schools,
     required int cookingDuration,
