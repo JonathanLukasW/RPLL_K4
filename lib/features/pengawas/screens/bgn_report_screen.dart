@@ -29,7 +29,7 @@ class _BgnReportScreenState extends State<BgnReportScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Laporan Distribusi & Kualitas"), // UC03
+        title: const Text("Laporan Distribusi & Kualitas"), // RENAMED!
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
@@ -45,11 +45,14 @@ class _BgnReportScreenState extends State<BgnReportScreen>
           indicatorColor: Colors.white,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          isScrollable: true, // Biar muat di layar kecil
+          isScrollable: true,
           tabs: const [
-            Tab(text: "History & Bukti"),
-            Tab(text: "Jadwal SPPG"),
-            Tab(text: "Keluhan Masalah"),
+            // RENAME & FOCUS
+            Tab(text: "1. History & Kualitas"),
+            // RENAME & FOCUS
+            Tab(text: "2. Jadwal & Rute Aktif"),
+            // CONSOLIDATE
+            Tab(text: "3. Keluhan Masalah"),
           ],
         ),
       ),
@@ -57,14 +60,14 @@ class _BgnReportScreenState extends State<BgnReportScreen>
         controller: _tabController,
         children: [
           _buildHistoryList(),
-          _buildScheduleList(),
+          _buildActiveSchedulesList(), // RENAME!
           _buildComplaintList(),
         ],
       ),
     );
   }
 
-  // TAB 1: HISTORY & BUKTI & KETEPATAN
+  // TAB 1: HISTORY & KUALITAS (Updated to be more detailed)
   Widget _buildHistoryList() {
     return FutureBuilder<List<Map<String, dynamic>>>(
       future: _service.getDeliveryHistory(),
@@ -80,39 +83,94 @@ class _BgnReportScreenState extends State<BgnReportScreen>
           itemBuilder: (ctx, i) {
             final item = data[i];
             final sppg = item['delivery_routes']['sppgs']['name'];
-            final school = item['schools']['name'];
+            final school = item['schools'];
             final date = item['delivery_routes']['date'];
-            final photoUrl = item['proof_photo_url'];
-
-            // Logika Ketepatan Waktu (Sederhana: Kalau received_time < deadline dianggap Tepat)
-            // Di sini kita labeli saja
-            bool isOnTime = true; // Placeholder logika
+            final finalStatus = item['status'];
+            final isIssue = finalStatus == 'issue_reported';
 
             return Card(
+              color: isIssue ? Colors.red[50] : Colors.green[50],
               margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               child: ExpansionTile(
-                leading: const Icon(Icons.history, color: Colors.blue),
-                title: Text("$sppg -> $school"),
+                leading: Icon(
+                  isIssue ? Icons.warning : Icons.check_circle,
+                  color: isIssue ? Colors.red : Colors.green,
+                ),
+                title: Text("$sppg -> ${school['name']}"),
                 subtitle: Text(
-                  "Tgl: $date | Status: ${isOnTime ? 'Tepat Waktu' : 'Terlambat'}",
+                  "Tgl: $date | Status: ${finalStatus.toUpperCase()}",
                 ),
                 children: [
-                  if (photoUrl != null)
-                    Padding(
-                      padding: const EdgeInsets.all(8.0),
-                      child: Image.network(
-                        photoUrl,
-                        height: 150,
-                        fit: BoxFit.cover,
-                      ),
-                    ),
+                  // Detail Pengiriman
                   Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      "Penerima: ${item['recipient_name'] ?? '-'} \nCatatan: ${item['reception_notes'] ?? '-'}",
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("Penerima: ${item['recipient_name'] ?? '-'}"),
+                        Text(
+                          "Porsi Diterima: ${item['received_qty'] ?? '-'} / ${school['student_count']}",
+                        ),
+                        Text(
+                          "Deadline (Toleransi): ${school['deadline_time']} (${school['tolerance_minutes']}m)",
+                        ),
+                        Text(
+                          "Kurir Tiba: ${item['arrival_time']?.substring(11, 16) ?? '-'}",
+                        ),
+                        Text(
+                          "Catatan Penerima: ${item['reception_notes'] ?? '-'}",
+                        ),
+
+                        if (item['proof_photo_url'] != null)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 10),
+                            child: Image.network(
+                              item['proof_photo_url'],
+                              height: 150,
+                              fit: BoxFit.cover,
+                            ),
+                          ),
+                      ],
                     ),
                   ),
                 ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // TAB 2: JADWAL & RUTE AKTIF (Renamed from _buildScheduleList)
+  Widget _buildActiveSchedulesList() {
+    return FutureBuilder<List<Map<String, dynamic>>>(
+      future: _service.getAllSchedules(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting)
+          return const Center(child: CircularProgressIndicator());
+        final data = snapshot.data ?? [];
+        if (data.isEmpty)
+          return const Center(
+            child: Text("Tidak ada rute ongoing atau jadwal mendatang."),
+          );
+
+        // Separate active/pending routes from general schedule list for clarity
+        return ListView.builder(
+          itemCount: data.length,
+          itemBuilder: (ctx, i) {
+            final item = data[i];
+            final status = item['status'];
+            final isOngoing = status == 'active' || status == 'pending';
+
+            return ListTile(
+              leading: Icon(
+                isOngoing ? Icons.access_time : Icons.calendar_today,
+                color: isOngoing ? Colors.blue[800] : Colors.orange,
+              ),
+              title: Text(item['sppgs']['name']),
+              subtitle: Text(
+                "Jadwal: ${item['date']} | Status: ${status.toUpperCase()} | Mobil: ${item['vehicles'] != null ? item['vehicles']['plate_number'] : '-'}",
               ),
             );
           },
@@ -159,14 +217,12 @@ class _BgnReportScreenState extends State<BgnReportScreen>
         final data = snapshot.data ?? [];
         if (data.isEmpty)
           return const Center(child: Text("Aman! Tidak ada keluhan."));
-
         return ListView.builder(
           itemCount: data.length,
           itemBuilder: (ctx, i) {
             final item = data[i];
             final sppg = item['delivery_routes']['sppgs']['name'];
             final school = item['schools']['name'];
-
             return Card(
               color: Colors.red[50],
               child: ListTile(

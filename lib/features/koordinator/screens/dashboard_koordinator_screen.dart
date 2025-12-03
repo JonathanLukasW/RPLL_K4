@@ -112,8 +112,10 @@ class _DashboardKoordinatorScreenState
   // [BARU] Function untuk memunculkan dialog konfirmasi penerimaan
   void _showReceptionDialog(Map<String, dynamic> stopData) {
     final stopId = stopData['id'];
-    final schoolName = stopData['schools']['name'] ?? 'Sekolah?';
-    final currentQty = stopData['schools']['student_count'] ?? 0;
+    // FIX SAFE ACCESS: Gunakan null check pada sub-map
+    final schoolData = stopData['schools'];
+    final schoolName = schoolData?['name'] ?? 'Sekolah Tidak Dikenal';
+    final currentQty = schoolData?['student_count'] ?? 0;
 
     final qtyController = TextEditingController(text: currentQty.toString());
     final notesController = TextEditingController();
@@ -447,20 +449,24 @@ class _DashboardKoordinatorScreenState
         final status = stop['status'] ?? 'pending';
         final estimatedArrival = _formatTime(stop['estimated_arrival_time']);
 
-        // [PERBAIKAN LOGIC] Hanya Tampilkan Aksi Jika Belum FINALIZED oleh Koordinator
-        final isFinalized = status == 'received' || status == 'issue_reported';
+        // [LOGIC BARU]
+        // 1. Sudah di-Finalisasi Koord/Client? (received/issue_reported) -> Cuma Icon Check
+        final isFinalizedByKoord =
+            status == 'received' || status == 'issue_reported';
+        // 2. Kurir Sudah Tiba di Lokasi? (completed) -> Buka Tombol Konfirmasi Koord
+        final isCourierArrived = status == 'completed';
 
         // Ambil info pengirim dari tabel vehicles (join melalui routes)
         final vehiclePlate = route['vehicles']?['plate_number'] ?? 'N/A';
 
         return Card(
-          color: isFinalized
+          color: isFinalizedByKoord
               ? Colors.green[50]
               : (status == 'issue_reported' ? Colors.red[50] : Colors.white),
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
           child: ListTile(
             leading: Icon(
-              isFinalized
+              isFinalizedByKoord
                   ? Icons.check_circle
                   : (status == 'issue_reported' ? Icons.warning : Icons.timer),
               color: _getStatusColor(status),
@@ -473,20 +479,28 @@ class _DashboardKoordinatorScreenState
               "Armada: $vehiclePlate\nStatus: ${status.toUpperCase()}",
               style: const TextStyle(fontSize: 12),
             ),
-            trailing: isFinalized
+            trailing: isFinalizedByKoord
                 ? const Icon(Icons.check_circle_outline, color: Colors.green)
-                : ElevatedButton(
-                    // PANGGIL DIALOG KONFIRMASI
-                    onPressed: () => _showReceptionDialog(stop),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.teal,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                    child: const Text(
-                      "Konfirmasi",
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  ),
+                // HANYA TAMPILKAN KONFIRMASI JIKA KURIR SUDAH ARRIVED (STATUS='completed')
+                : (isCourierArrived
+                      ? ElevatedButton(
+                          onPressed: () => _showReceptionDialog(stop),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.teal,
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                          ),
+                          child: const Text(
+                            "Konfirmasi",
+                            style: TextStyle(color: Colors.white),
+                          ),
+                        )
+                      : Text(
+                          status.toUpperCase(),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                          ),
+                        )),
           ),
         );
       },

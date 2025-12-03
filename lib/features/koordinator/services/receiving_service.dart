@@ -33,15 +33,10 @@ class ReceivingService {
       final response = await _supabase
           .from('delivery_stops')
           .select(
-            '*, delivery_routes!inner(date, vehicles(plate_number, driver_name))',
+            // KRITIS: TAMBAHKAN JOIN KE TABEL SCHOOLS
+            '*, delivery_routes!inner(date, vehicles(plate_number, driver_name)), schools(name, student_count)',
           )
-          .eq('school_id', mySchoolId)
-          .gte('delivery_routes.date', startDate.toIso8601String())
-          .lte('delivery_routes.date', endDate.toIso8601String())
-          .neq('status', 'cancelled') // Jangan ambil yang batal.
-          // FIX KRITIS: Menghapus order by created_at yang crash karena column ambiguity.
-          // Menggunakan order by estimated_arrival_time (kolom di delivery_stops)
-          .order('estimated_arrival_time', ascending: true);
+          .eq('school_id', mySchoolId);
 
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {

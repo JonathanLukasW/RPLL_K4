@@ -90,10 +90,243 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
     return _deliveries[dateKey] ?? [];
   }
 
+  // === FILE: lib/features/walikelas/screens/dashboard_teacher_screen.dart ===
+  // ... (lines 1-100 remain the same)
+
   // Event Handler untuk konfirmasi penerimaan
   void _showReceptionDialog(Map<String, dynamic> stopData) {
-    // ... (Your existing reception dialog logic will go here. I'm stubbing it for brevity)
+    final stopId = stopData['id'];
+    final schoolName = stopData['schools']['name'] ?? 'Sekolah?';
+    // FIX: Ambil Menu Default sebagai referensi menu
+    final menuRef = stopData['schools']['menu_default'] ?? 'Menu Belum Diset';
+    // FIX: Target portions merujuk ke TOTAL siswa yang dilayani di sekolah, bukan 0.
+    final schoolPortions = stopData['schools']['student_count'] ?? 0;
+    final className = stopData['my_class_name'];
+
+    final qtyController = TextEditingController(
+      text: schoolPortions.toString(),
+    ); // Default ke total sekolah
+    final notesController = TextEditingController();
+    // Wali Kelas tidak perlu input Nama Penerima, karena itu dia sendiri
+    String? issueType; // null = aman, string = ada masalah
+    File? photoFile;
+    bool isSubmitting = false;
+
+    // List jenis masalah untuk dropdown (Kualitas Makanan)
+    const List<String> issueOptions = [
+      'Makanan Basi/Berbau',
+      'Kualitas Buruk',
+      'Porsi Kurang',
+      'Lain-lain',
+    ];
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          // Gunakan Form key untuk validasi
+          final formKey = GlobalKey<FormState>();
+
+          return AlertDialog(
+            title: Text("Konfirmasi Kelas $className: $schoolName"),
+            content: Form(
+              key: formKey,
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Menu Diterima Sekolah: $menuRef (Total $schoolPortions Porsi)",
+                    ),
+                    const SizedBox(height: 15),
+
+                    // --- Kuantitas Diterima ---
+                    TextFormField(
+                      controller: qtyController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: "Jumlah Porsi untuk Kelas Ini",
+                      ),
+                      validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                    ),
+                    const SizedBox(height: 15),
+
+                    // --- Dropdown Masalah ---
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: "Laporkan Masalah Kualitas (Opsional)",
+                      ),
+                      value: issueType,
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text("✅ Aman, Tidak Ada Masalah"),
+                        ),
+                        ...issueOptions.map(
+                          (e) => DropdownMenuItem(
+                            value: e,
+                            child: Text(
+                              e,
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ),
+                        ),
+                      ],
+                      onChanged: (val) => setDialogState(() => issueType = val),
+                    ),
+
+                    if (issueType != null) ...[
+                      const SizedBox(height: 15),
+                      // --- Catatan Komplain (Jika Ada Masalah) ---
+                      TextFormField(
+                        controller: notesController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          labelText: "Detail Masalah Kualitas (Wajib Diisi)",
+                        ),
+                        validator: (v) => (issueType != null && v!.isEmpty)
+                            ? "Detail masalah wajib diisi."
+                            : null,
+                      ),
+                      const SizedBox(height: 15),
+
+                      // --- Foto Bukti (Wajib Jika Ada Masalah) ---
+                      const Text(
+                        "Foto Bukti (Wajib jika ada masalah):",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 5),
+                      GestureDetector(
+                        onTap: () async {
+                          final file = await _storageService.pickImage(
+                            ImageSource.camera,
+                          );
+                          if (file != null)
+                            setDialogState(() => photoFile = file);
+                        },
+                        child: Container(
+                          height: 100,
+                          width: double.infinity,
+                          decoration: BoxDecoration(
+                            color: Colors.grey[200],
+                            border: Border.all(color: Colors.grey),
+                          ),
+                          child: photoFile == null
+                              ? const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(Icons.camera_alt, size: 30),
+                                    Text("Ambil Foto Bukti"),
+                                  ],
+                                )
+                              : Image.file(photoFile!, fit: BoxFit.cover),
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 15),
+                  ],
+                ),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text("Batal"),
+              ),
+              ElevatedButton(
+                onPressed: isSubmitting
+                    ? null
+                    : () async {
+                        if (formKey.currentState!.validate()) {
+                          if (issueType != null &&
+                              (notesController.text.isEmpty ||
+                                  photoFile == null)) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  "Masalah butuh detail dan foto bukti, TOLOL!",
+                                ),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                            return;
+                          }
+
+                          setDialogState(() => isSubmitting = true);
+
+                          String? uploadedUrl;
+                          try {
+                            // Upload foto jika ada masalah
+                            if (photoFile != null) {
+                              uploadedUrl = await _storageService.uploadEvidence(
+                                photoFile!,
+                                'teacher_reception', // Folder baru untuk wali kelas
+                              );
+                            }
+
+                            // Panggil service untuk konfirmasi
+                            await _service.submitClassReception(
+                              stopId: stopId,
+                              className: className,
+                              qty: int.tryParse(qtyController.text) ?? 0,
+                              notes: notesController.text.trim(),
+                              issueType: issueType,
+                              proofUrl: uploadedUrl,
+                            );
+
+                            if (!mounted) return;
+                            Navigator.pop(ctx);
+                            await _fetchDeliveries(); // Refresh jadwal
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  issueType == null
+                                      ? "Konfirmasi Kelas Berhasil!"
+                                      : "Keluhan Kualitas Terkirim ke Admin SPPG!", // FIX PESAN
+                                ),
+                                backgroundColor: issueType == null
+                                    ? Colors.green
+                                    : Colors.red,
+                              ),
+                            );
+                          } catch (e) {
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Gagal Simpan: $e"),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          } finally {
+                            if (mounted)
+                              setDialogState(() => isSubmitting = false);
+                          }
+                        }
+                      },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: issueType == null
+                      ? Colors.indigo
+                      : Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: isSubmitting
+                    ? const CircularProgressIndicator(color: Colors.white)
+                    : Text(
+                        issueType == null
+                            ? "KONFIRMASI TERIMA"
+                            : "LAPOR MASALAH",
+                      ),
+              ),
+            ],
+          );
+        },
+      ),
+    );
   }
+  // ... (rest of the file remains the same)
 
   // Helper untuk mendapatkan icon status
   IconData _getStatusIcon(bool alreadyReceived, String stopStatus) {
@@ -218,6 +451,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
       itemCount: deliveries.length,
       itemBuilder: (context, index) {
         final stop = deliveries[index];
+        final stopId = stop['id'];
         final bool isSchoolReceived =
             stop['status'] == 'received' || stop['status'] == 'issue_reported';
         final bool isClassReceived = stop['already_received'] == true;
@@ -225,42 +459,80 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
             stop['schools']['menu_default'] ?? 'Menu Default Belum Diset';
         final int portions = stop['schools']['student_count'] ?? 0;
 
-        return Card(
-          color: isClassReceived
-              ? Colors.green[50]
-              : (isSchoolReceived ? Colors.orange[50] : Colors.white),
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: ListTile(
-            leading: Icon(
-              _getStatusIcon(isClassReceived, stop['status']),
+        // --- STATUS CHECK ---
+        // Status ini mencerminkan aksi terakhir di delivery_stops (Kurir/Koordinator)
+        final bool
+        isSchoolFinalized = // Renaming the confusing isSchoolReceived
+            stop['status'] == 'received' || stop['status'] == 'issue_reported';
+
+        // --- DYNAMIC CONTENT FROM NESTED FUTUREBUILDER ---
+        return FutureBuilder<Map<String, dynamic>?>(
+          future: _service.getClassReceptionForStop(stopId),
+          builder: (context, snapshot) {
+            final receptionData = snapshot.data;
+            final hasIssue = receptionData?['issue_type'] != null;
+            final issueDetail = receptionData?['notes'] ?? 'Aman.';
+            final receptionStatusText = isClassReceived
+                ? (hasIssue
+                      ? '⚠️ Ada Keluhan: ${receptionData!['issue_type']}'
+                      : '✅ Sudah Konfirmasi')
+                : 'BELUM KONFIRMASI';
+
+            return Card(
               color: isClassReceived
-                  ? Colors.green
-                  : (isSchoolReceived ? Colors.orange : Colors.indigo),
-            ),
-            title: Text(
-              "Status Sekolah: ${isSchoolReceived ? 'SUDAH DITERIMA' : 'PENDING'}",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Text(
-              "Menu: $menuName (Total: $portions Porsi)\nKelas Anda: ${isClassReceived ? 'Sudah Konfirmasi' : 'BELUM KONFIRMASI'}",
-              style: const TextStyle(fontSize: 12),
-            ),
-            trailing: isSchoolReceived && !isClassReceived
-                ? ElevatedButton(
-                    onPressed: () => _showReceptionDialog(stop),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green,
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ? (hasIssue ? Colors.red[50] : Colors.green[50])
+                  : (isSchoolFinalized ? Colors.orange[50] : Colors.white),
+              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: ListTile(
+                leading: Icon(
+                  _getStatusIcon(isClassReceived, stop['status']),
+                  color: isClassReceived
+                      ? (hasIssue ? Colors.red : Colors.green)
+                      : (isSchoolReceived ? Colors.orange : Colors.indigo),
+                ),
+                title: Text(
+                  // FIX TAMPILAN: Ganti "Status Sekolah" menjadi "Status Penerimaan Awal"
+                  "Status Penerimaan Awal: ${isSchoolFinalized ? 'SUDAH DITERIMA' : 'PENDING'}",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Menu: $menuName (Total: $portions Porsi)"),
+                    // FIX TAMPILAN: Status kelas dan detail keluhan
+                    Text(
+                      "Kelas Anda: $receptionStatusText",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: hasIssue ? Colors.red[800] : Colors.green[800],
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    child: const Text(
-                      "Konfirmasi",
-                      style: TextStyle(color: Colors.white),
-                    ),
-                  )
-                : (isClassReceived
-                      ? const Icon(Icons.check_circle, color: Colors.green)
-                      : null),
-          ),
+                    if (hasIssue)
+                      Text(
+                        "Detail: $issueDetail",
+                        style: TextStyle(fontSize: 11, color: Colors.grey[700]),
+                      ),
+                  ],
+                ),
+                trailing: isSchoolReceived && !isClassReceived
+                    ? ElevatedButton(
+                        onPressed: () => _showReceptionDialog(stop),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                        child: const Text(
+                          "Konfirmasi",
+                          style: TextStyle(color: Colors.white),
+                        ),
+                      )
+                    : (isClassReceived
+                          ? const Icon(Icons.check_circle, color: Colors.green)
+                          : null),
+              ),
+            );
+          },
         );
       },
     );

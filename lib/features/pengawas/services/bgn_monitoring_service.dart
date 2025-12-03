@@ -6,17 +6,19 @@ class BgnMonitoringService {
   // ===========================================================================
   // BAGIAN 1: UNTUK SCREEN LAPORAN (BgnReportScreen)
   // ===========================================================================
-
   // 1. DATA HISTORY & BUKTI DIGITAL
   Future<List<Map<String, dynamic>>> getDeliveryHistory() async {
     try {
       final response = await _supabase
           .from('delivery_stops')
-          .select('*, schools(name), delivery_routes!inner(date, sppgs(name))')
-          // [FIX ERROR _in]: Kita pakai .filter() manual biar aman dari error syntax
-          .filter('status', 'in', '("received","completed","issue_reported")') 
+          .select('''
+          *, 
+          schools(name, student_count, menu_default, deadline_time, tolerance_minutes, is_high_risk), 
+          delivery_routes!inner(date, sppgs(name), vehicles(plate_number, courier_profile_id))
+        ''') // Added school details for rich report
+          // [FIX ERROR _in]: Kita pakai .filter() manual biar aman dari error syntax.
+          .filter('status', 'in', '("received","completed","issue_reported")')
           .order('created_at', ascending: false);
-
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       throw Exception("Gagal ambil history: $e");
@@ -29,9 +31,12 @@ class BgnMonitoringService {
       final response = await _supabase
           .from('delivery_routes')
           .select('*, sppgs(name), vehicles(plate_number)')
-          .gte('date', DateTime.now().toIso8601String().split('T')[0]) // Hari ini ke depan
+          .gte(
+            'date',
+            DateTime.now().toIso8601String().split('T')[0],
+          ) // Hari ini ke depan
           .order('date', ascending: true);
-      
+
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       throw Exception("Gagal ambil jadwal: $e");
@@ -84,9 +89,12 @@ class BgnMonitoringService {
 
       for (var item in data) {
         final status = item['status'];
-        if (status == 'received') received++;
-        else if (status == 'issue_reported') issues++;
-        else pending++;
+        if (status == 'received')
+          received++;
+        else if (status == 'issue_reported')
+          issues++;
+        else
+          pending++;
       }
 
       return {

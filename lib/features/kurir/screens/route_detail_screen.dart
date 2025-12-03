@@ -142,9 +142,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            "Rute SELESAI TOTAL! Good job, I guess. Status diubah ke Completed.",
-          ),
+          content: Text("Pengiriman Selesai. Status diubah ke Completed."),
           backgroundColor: Colors.green,
           duration: Duration(seconds: 3),
         ),
@@ -538,7 +536,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
             ),
           ),
 
-          // LIST SEKOLAH
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -548,8 +545,13 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                     itemBuilder: (context, index) {
                       final stop = _stops[index];
                       final school = stop['schools'];
-                      final bool isCompleted = stop['status'] == 'completed';
 
+                      // FIX KRITIS: Cek status mana saja yang sudah final dan tidak perlu tombol "Tiba"
+                      final status = stop['status'];
+                      final isFinalizedByCourierOrClient =
+                          status == 'completed' ||
+                          status == 'received' ||
+                          status == 'issue_reported';
                       // Ambil ETA (Estimasi Tiba)
                       String eta = _formatTime(stop['estimated_arrival_time']);
 
@@ -560,7 +562,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       }
 
                       return Card(
-                        color: isCompleted ? Colors.green[50] : Colors.white,
+                        color: isFinalizedByCourierOrClient
+                            ? Colors.green[50]
+                            : Colors.white,
                         elevation: 3,
                         margin: const EdgeInsets.only(bottom: 10),
                         child: ListTile(
@@ -569,13 +573,13 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                             vertical: 8,
                           ),
                           leading: CircleAvatar(
-                            backgroundColor: isCompleted
+                            backgroundColor: isFinalizedByCourierOrClient
                                 ? Colors.green
                                 : Colors.grey[300],
                             child: Text(
                               "${index + 1}",
                               style: TextStyle(
-                                color: isCompleted
+                                color: isFinalizedByCourierOrClient
                                     ? Colors.white
                                     : Colors.black,
                                 fontWeight: FontWeight.bold,
@@ -605,7 +609,9 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                                   tooltip: "Navigasi",
                                 ),
 
-                              if (_currentStatus == 'active' && !isCompleted)
+                              // UBAH LOGIK BUTTON 'TIBA'
+                              if (_currentStatus == 'active' &&
+                                  !isFinalizedByCourierOrClient)
                                 ElevatedButton(
                                   style: ElevatedButton.styleFrom(
                                     backgroundColor: Colors.green,
@@ -617,7 +623,8 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                                   ),
                                   child: const Text("Tiba"),
                                 )
-                              else if (isCompleted)
+                              // Tampilkan checklist jika sudah final (completed, received, or issue_reported)
+                              else if (isFinalizedByCourierOrClient)
                                 const Icon(
                                   Icons.check_circle,
                                   color: Colors.green,

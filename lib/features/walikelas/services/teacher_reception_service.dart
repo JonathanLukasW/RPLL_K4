@@ -31,8 +31,9 @@ class TeacherReceptionService {
       final response = await _supabase
           .from('delivery_stops')
           .select(
-            '*, delivery_routes!inner(date), schools(menu_default)',
-          ) // Ambil menu_default juga.
+            // FIX KRITIS: TAMBAHKAN student_count di schools join
+            '*, delivery_routes!inner(date), schools(menu_default, student_count)',
+          ) // Ambil menu_default dan student_count.
           .eq('school_id', mySchoolId)
           .gte('delivery_routes.date', startDate.toIso8601String())
           .lte('delivery_routes.date', endDate.toIso8601String())
