@@ -13,6 +13,12 @@ class _BgnReportScreenState extends State<BgnReportScreen>
   late TabController _tabController;
   final BgnMonitoringService _service = BgnMonitoringService();
 
+  // [BARU] Fungsi Refresh yang akan memuat ulang semua FutureBuilder
+  Future<void> _refreshAllTabs() async {
+    // Memaksa rebuild FutureBuilder dengan memanggil setState di BgnReportScreen
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
@@ -26,6 +32,14 @@ class _BgnReportScreenState extends State<BgnReportScreen>
         title: const Text("Laporan Distribusi & Kualitas"), // UC03
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
+        actions: [
+          // [BARU] TOMBOL REFRESH
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Data",
+            onPressed: _refreshAllTabs,
+          ),
+        ],
         bottom: TabBar(
           controller: _tabController,
           indicatorColor: Colors.white,

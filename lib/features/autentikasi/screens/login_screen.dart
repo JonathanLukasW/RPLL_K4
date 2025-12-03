@@ -707,7 +707,7 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
               const SizedBox(height: 40),
 
-              // --- DEBUG QUICK LOGIN SECTION ---
+              /* // --- DEBUG QUICK LOGIN SECTION ---
               Container(
                 margin: const EdgeInsets.only(bottom: 30),
                 padding: const EdgeInsets.all(15),
@@ -757,7 +757,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ],
                 ),
               ),
-              // --- END DEBUG QUICK LOGIN SECTION ---
+              // --- END DEBUG QUICK LOGIN SECTION ---*/
 
               // Input Email (Original)
               TextField(

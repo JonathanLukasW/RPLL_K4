@@ -21,14 +21,15 @@ import 'add_transport_screen.dart';
 import 'add_courier_screen.dart';
 import 'add_coordinator_screen.dart';
 import 'add_teacher_screen.dart';
-import 'create_route_screen.dart'; 
+import 'create_route_screen.dart';
 import 'menu_management_screen.dart';
-import 'complaint_list_screen.dart';
 import 'statistics_screen.dart';
 import 'production_calendar_screen.dart';
 import '../../../core/screens/profile_screen.dart';
-import 'edit_account_screen.dart'; 
-import 'edit_route_screen.dart'; 
+import 'edit_account_screen.dart';
+import 'edit_route_screen.dart';
+import 'center_info_screen.dart';
+import 'route_calendar_screen.dart';
 
 class DashboardAdminScreen extends StatefulWidget {
   const DashboardAdminScreen({super.key});
@@ -39,13 +40,15 @@ class DashboardAdminScreen extends StatefulWidget {
 
 class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   int _selectedIndex = 0;
-// Inisialisasi Service
+  // Inisialisasi Service
   final SchoolService _schoolService = SchoolService();
   final VehicleService _vehicleService = VehicleService();
   final CourierService _courierService = CourierService();
   final CoordinatorService _coordinatorService = CoordinatorService();
   final TeacherService _teacherService = TeacherService();
   final RouteService _routeService = RouteService();
+  // [FIX] State untuk tombol Generate Otomatis
+  bool _isGenerating = false;
 
   Future<void> _logout() async {
     await AuthService().signOut();
@@ -93,7 +96,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         return "Tambah";
     }
   }
-  
+
   // [BARU] Fungsi Delete Rute (UC18)
   Future<void> _deleteRoute(String routeId) async {
     final confirm = await showDialog(
@@ -101,7 +104,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text("Hapus Rute?"),
         content: const Text(
-            "Menghapus rute akan menghapus semua perhentian dan jadwal produksi terkait. Yakin?"),
+          "Menghapus rute akan menghapus semua perhentian dan jadwal produksi terkait. Yakin?",
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -116,10 +120,13 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
     if (confirm == true) {
       try {
-        await _routeService.deleteRoute(routeId); // Panggil service yang sudah di-update
+        await _routeService.deleteRoute(
+          routeId,
+        ); // Panggil service yang sudah di-update
         if (!mounted) return;
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text("Rute dan Jadwal Produksi Dihapus!")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Rute dan Jadwal Produksi Dihapus!")),
+        );
         setState(() {});
       } catch (e) {
         if (!mounted) return;
@@ -132,14 +139,16 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       }
     }
   }
-  
+
   // [FUNGSI LAIN UNTUK DELETE]
   Future<void> _deleteSchool(String schoolId) async {
     final confirm = await showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Hapus Sekolah?"),
-        content: const Text("Yakin mau hapus lokasi ini? Semua data terkait (koordinator/wali) mungkin kena imbas."),
+        content: const Text(
+          "Yakin mau hapus lokasi ini? Semua data terkait (koordinator/wali) mungkin kena imbas.",
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -156,7 +165,9 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       try {
         await _schoolService.deleteSchool(schoolId);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sekolah Dihapus!")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Sekolah Dihapus!")));
         setState(() {});
       } catch (e) {
         if (!mounted) return;
@@ -180,9 +191,9 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text("Batal"),
-          ), 
-          
-          TextButton( 
+          ),
+
+          TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text("Hapus", style: TextStyle(color: Colors.red)),
           ),
@@ -192,7 +203,9 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     if (confirm == true) {
       await _vehicleService.deleteVehicle(vehicleId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Mobil Dihapus!")));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Mobil Dihapus!")));
       setState(() {});
     }
   }
@@ -217,14 +230,21 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
     if (confirm == true) {
       try {
-        if (roleName == 'Kurir') await _courierService.deleteCourierAccount(userId);
-        if (roleName == 'Koordinator') await _coordinatorService.deleteCoordinatorAccount(userId);
-        if (roleName == 'Wali Kelas') await _teacherService.deleteTeacherAccount(userId);
+        if (roleName == 'Kurir')
+          await _courierService.deleteCourierAccount(userId);
+        if (roleName == 'Koordinator')
+          await _coordinatorService.deleteCoordinatorAccount(userId);
+        if (roleName == 'Wali Kelas')
+          await _teacherService.deleteTeacherAccount(userId);
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Akun $roleName Dihapus!")));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Akun $roleName Dihapus!")));
         setState(() {});
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
       }
     }
   }
@@ -248,6 +268,34 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     });
   }
 
+  // --- HELPER METHODS YANG HILANG (DIPINDAH DARI BAWAH) ---
+
+  Widget _buildEmptyState(String text, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 70, color: Colors.grey[300]),
+          const SizedBox(height: 10),
+          Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
+        ],
+      ),
+    );
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  // --- END HELPER METHODS ---
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -256,68 +304,117 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
+          // [BARU] TOMBOL REFRESH DATA AKTIF
           IconButton(
-            icon: const Icon(Icons.calendar_month),
-            tooltip: "Kalender Produksi",
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Data",
             onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ProductionCalendarScreen(),
-                ),
-              );
+              setState(() {}); // Memaksa rebuild FutureBuilders di IndexStack
             },
           ),
-          IconButton(
-            icon: const Icon(
-              Icons.notification_important,
-              color: Colors.redAccent,
-            ),
-            tooltip: "Laporan Pengaduan",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ComplaintListScreen(),
-                ),
-              );
+          // Tombol Daily Batch (Hanya muncul di tab Rute)
+          if (_selectedIndex == 5)
+            _isGenerating
+                ? const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      ),
+                    ),
+                  )
+                : // END _isGenerating
+                  Row(
+                    // <<< FIX: WRAP ICON BUTTONS IN A ROW IF _isGenerating IS FALSE
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 1. CALENDAR ICON (Routes/Jadwal Rutin Calendar)
+                      IconButton(
+                        icon: const Icon(Icons.calendar_today, size: 24),
+                        tooltip: "Jadwal Rutin Mingguan",
+                        onPressed: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const RouteCalendarScreen(),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+
+          // 2. HAMBURGER MENU (Consolidated Options)
+          PopupMenuButton<String>(
+            onSelected: (value) {
+              if (value == 'production') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const ProductionCalendarScreen(),
+                  ),
+                );
+              } else if (value == 'menu') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const MenuManagementScreen(),
+                  ),
+                );
+              } else if (value == 'reports') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const CenterInfoScreen()),
+                );
+              } else if (value == 'stats') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const StatisticsScreen()),
+                );
+              } else if (value == 'profile') {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                );
+              } else if (value == 'logout') {
+                _logout();
+              }
             },
-          ),
-          IconButton(
-            icon: const Icon(Icons.bar_chart),
-            tooltip: "Laporan Kinerja",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const StatisticsScreen(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.restaurant_menu),
-            tooltip: "Manajemen Menu",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const MenuManagementScreen(),
-                ),
-              );
-            },
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_circle, size: 30),
-            tooltip: "Profil Saya",
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const ProfileScreen(),
-                ),
-              );
-            },
+            itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
+              const PopupMenuItem<String>(
+                value: 'production',
+                child: Text("Kalender Produksi"),
+              ),
+              const PopupMenuItem<String>(
+                value: 'menu',
+                child: Text("Manajemen Menu"),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'reports',
+                child: Text("Pusat Informasi"),
+              ),
+
+              const PopupMenuItem<String>(
+                value: 'stats',
+                child: Text("Laporan Kinerja"),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'profile',
+                child: Text("Profil Saya"),
+              ),
+              const PopupMenuItem<String>(
+                value: 'logout',
+                child: Text("LOGOUT", style: TextStyle(color: Colors.red)),
+              ),
+            ],
+            icon: const Icon(Icons.menu, color: Colors.white),
           ),
         ],
       ),
@@ -332,6 +429,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           _buildRouteList(), // 5
         ],
       ),
+      // --- FAB MOVED TO LEFT START POSITION ---
+      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
@@ -389,7 +488,10 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-// --- LIST BUILDERS ---
+  // Widget _buildEmptyState(String text, IconData icon) { ... }
+  // Widget _getStatusColor(String status) { ... }
+  // Dipindahkan ke dalam class body.
+
   Widget _buildSchoolList() {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
@@ -427,17 +529,21 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => AddSchoolScreen(schoolToEdit: school),
+                            builder: (_) =>
+                                AddSchoolScreen(schoolToEdit: school),
                           ),
                         ).then((val) {
-                          if (val == true) setState(() {});
+                          if (val == true)
+                            setState(
+                              () {},
+                            ); // <-- THIS IS THE CORRECT REFRESH CALL
                         });
                       },
                     ),
                     // DELETE Button (UC26)
                     IconButton(
                       icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteSchool(school.id), 
+                      onPressed: () => _deleteSchool(school.id),
                     ),
                   ],
                 ),
@@ -457,7 +563,10 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           return const Center(child: CircularProgressIndicator());
         final vehicles = snapshot.data ?? [];
         if (vehicles.isEmpty)
-          return _buildEmptyState("Belum ada kendaraan.", Icons.local_shipping_outlined);
+          return _buildEmptyState(
+            "Belum ada kendaraan.",
+            Icons.local_shipping_outlined,
+          );
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: vehicles.length,
@@ -487,7 +596,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => AddTransportScreen(vehicleToEdit: vehicle),
+                            builder: (_) =>
+                                AddTransportScreen(vehicleToEdit: vehicle),
                           ),
                         ).then((val) {
                           if (val == true) setState(() {});
@@ -529,7 +639,10 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           return const Center(child: CircularProgressIndicator());
         final couriers = snapshot.data ?? [];
         if (couriers.isEmpty)
-          return _buildEmptyState("Belum ada akun kurir.", Icons.person_off_outlined);
+          return _buildEmptyState(
+            "Belum ada akun kurir.",
+            Icons.person_off_outlined,
+          );
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: couriers.length,
@@ -552,8 +665,13 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     // EDIT Button (UC31)
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () => _navigateToEditAccount(courier.id, 'kurir',
-                          {'name': courier.name, 'email': courier.email, 'schoolId': null, 'className': null}),
+                      onPressed: () =>
+                          _navigateToEditAccount(courier.id, 'kurir', {
+                            'name': courier.name,
+                            'email': courier.email,
+                            'schoolId': null,
+                            'className': null,
+                          }),
                     ),
                     // DELETE Button (UC32)
                     IconButton(
@@ -578,7 +696,10 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           return const Center(child: CircularProgressIndicator());
         final data = snapshot.data ?? [];
         if (data.isEmpty)
-          return _buildEmptyState("Belum ada koordinator.", Icons.supervised_user_circle);
+          return _buildEmptyState(
+            "Belum ada koordinator.",
+            Icons.supervised_user_circle,
+          );
         return ListView.builder(
           padding: const EdgeInsets.all(10),
           itemCount: data.length,
@@ -602,8 +723,13 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     // EDIT Button (UC31)
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () => _navigateToEditAccount(coord.id, 'koordinator',
-                          {'name': coord.name, 'email': coord.email, 'schoolId': coord.schoolId, 'className': null}),
+                      onPressed: () =>
+                          _navigateToEditAccount(coord.id, 'koordinator', {
+                            'name': coord.name,
+                            'email': coord.email,
+                            'schoolId': coord.schoolId,
+                            'className': null,
+                          }),
                     ),
                     // DELETE Button (UC32)
                     IconButton(
@@ -654,8 +780,13 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     // EDIT Button (UC31)
                     IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () => _navigateToEditAccount(teacher.id, 'walikelas',
-                          {'name': teacher.name, 'email': teacher.email, 'schoolId': teacher.schoolId, 'className': teacher.className}),
+                      onPressed: () =>
+                          _navigateToEditAccount(teacher.id, 'walikelas', {
+                            'name': teacher.name,
+                            'email': teacher.email,
+                            'schoolId': teacher.schoolId,
+                            'className': teacher.className,
+                          }),
                     ),
                     // DELETE Button (UC32)
                     IconButton(
@@ -702,7 +833,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                     context,
                     MaterialPageRoute(
                       builder: (_) => EditRouteScreen(route: route),
-                    ),
+                    ), // <<< PENTING: PANGGIL EDIT ROUTE
                   ).then((val) {
                     setState(() {});
                   });
@@ -733,24 +864,36 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       ),
                       const Divider(),
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween, // Added this for spacing
+                        mainAxisAlignment: MainAxisAlignment
+                            .spaceBetween, // Added this for spacing
                         children: [
                           // Left Side: Courier & Vehicle Info
                           Expanded(
                             child: Row(
                               children: [
-                                const Icon(Icons.person, size: 16, color: Colors.grey),
+                                const Icon(
+                                  Icons.person,
+                                  size: 16,
+                                  color: Colors.grey,
+                                ),
                                 const SizedBox(width: 5),
                                 Text(
                                   route.courierName ?? "Kurir Hapus",
                                   style: const TextStyle(fontSize: 14),
                                 ),
                                 const SizedBox(width: 15),
-                                const Icon(Icons.local_shipping, size: 16, color: Colors.grey),
+                                const Icon(
+                                  Icons.local_shipping,
+                                  size: 16,
+                                  color: Colors.grey,
+                                ),
                                 const SizedBox(width: 5),
                                 Text(
                                   route.vehiclePlate ?? "-",
-                                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w500,
+                                  ),
                                 ),
                               ],
                             ),
@@ -760,7 +903,9 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                             IconButton(
                               icon: const Icon(Icons.delete, color: Colors.red),
                               tooltip: "Hapus Rute",
-                              onPressed: () => _deleteRoute(route.id), // <-- Panggil fungsi delete
+                              onPressed: () => _deleteRoute(
+                                route.id,
+                              ), // <-- Panggil fungsi delete
                             ),
                         ],
                       ),
@@ -773,29 +918,5 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         );
       },
     );
-  }
-
-  Widget _buildEmptyState(String text, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 70, color: Colors.grey[300]),
-          const SizedBox(height: 10),
-          Text(text, style: TextStyle(fontSize: 16, color: Colors.grey[600])),
-        ],
-      ),
-    );
-  }
-
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'completed':
-        return Colors.green;
-      case 'active':
-        return Colors.blue;
-      default:
-        return Colors.orange;
-    }
   }
 }

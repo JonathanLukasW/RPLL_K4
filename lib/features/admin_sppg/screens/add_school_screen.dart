@@ -217,9 +217,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     // Check if at least one day is scheduled
     if (_weeklySchedule.values.every((time) => time == null)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Wajib mengatur jadwal minimal 1 hari, dasar bego!"),
-        ),
+        const SnackBar(content: Text("Wajib mengatur jadwal minimal 1 hari!")),
       );
       return;
     }
@@ -229,9 +227,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
         .toList();
     if (validMenuIds.length < 3) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Wajib pilih minimal 3 item menu set, dasar bego!"),
-        ),
+        const SnackBar(content: Text("Wajib pilih minimal 3 item menu set!")),
       );
       return;
     }

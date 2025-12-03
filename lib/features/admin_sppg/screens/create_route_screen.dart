@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:collection/collection.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; 
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../models/school_model.dart';
 import '../../../models/vehicle_model.dart';
 import '../../../models/courier_model.dart';
@@ -11,6 +11,7 @@ import '../services/vehicle_service.dart';
 import '../services/courier_service.dart';
 import '../services/menu_service.dart';
 import '../services/route_service.dart';
+import 'edit_route_screen.dart'; // Import biar bisa langsung navigasi ke detail
 
 class CreateRouteScreen extends StatefulWidget {
   const CreateRouteScreen({super.key});
@@ -21,118 +22,193 @@ class CreateRouteScreen extends StatefulWidget {
 
 class _CreateRouteScreenState extends State<CreateRouteScreen> {
   final _formKey = GlobalKey<FormState>();
-  List<School> _schools = [];
-  List<Vehicle> _vehicles = [];
-  List<CourierModel> _couriers = []; 
-  List<Menu> _menus = [];
+  final RouteService _routeService = RouteService();
+
+  // --- STATE DATA ---
   DateTime _selectedDate = DateTime.now();
-  List<String> _selectedVehicleIds = []; 
-  
-  // [PERUBAHAN UTAMA] List Menu IDs untuk Multi-Select (Min 3 slot)
-  List<String?> _selectedMenuIds = [null, null, null]; 
-  
-  String? _fallbackCourierId; 
-  final List<School> _selectedSchools = [];
+  List<School> _allSchools = [];
+  List<Vehicle> _availableVehicles = [];
+  List<School> _selectedSchools = [];
+  Vehicle? _selectedVehicle; // Hanya bisa 1 mobil per rute
+
+  // Menu data yang akan di-set berdasarkan sekolah yang dipilih
+  int _bottleneckDuration = 0; // Durasi masak terlama (dalam menit)
+  List<String> _requiredMenuIds = []; // ID menu unik yang dibutuhkan
+  List<String> _requiredMenuNames = []; // Nama menu
+
   bool _isLoading = true;
   bool _isSubmitting = false;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _fetchInitialData();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _fetchInitialData() async {
     try {
       final results = await Future.wait([
         SchoolService().getMySchools(),
         VehicleService().getMyVehicles(),
-        CourierService().getMyCouriers(),
-        MenuService().getMyMenus(),
+        _getRoutesBySelectedDate(
+          _selectedDate,
+        ), // Ambil rute yang sudah terpakai
       ]);
 
+      final allSchools = results[0] as List<School>;
+      final allVehicles = results[1] as List<Vehicle>;
+      final routesOnDate = results[2] as List<Map<String, dynamic>>;
+
+      // Filter mobil yang AKTIF dan BELUM terpakai di tanggal ini
+      final usedVehicleIds = routesOnDate
+          .map((r) => r['vehicle_id'].toString())
+          .toSet();
+      final availableVehicles = allVehicles
+          .where((v) => v.isActive && !usedVehicleIds.contains(v.id))
+          .toList();
+
+      if (!mounted) return;
       setState(() {
-        _schools = results[0] as List<School>;
-        _vehicles = (results[1] as List<Vehicle>).where((v) => v.isActive).toList(); 
-        _couriers = results[2] as List<CourierModel>;
-        _menus = results[3] as List<Menu>;
-
-        // Set Kurir FALLBACK Otomatis: Ambil Kurir pertama sebagai default ID
-        if (_couriers.isNotEmpty) {
-          _fallbackCourierId = _couriers.first.id;
-        }
-
+        _allSchools = allSchools;
+        _availableVehicles = availableVehicles;
         _isLoading = false;
+
+        // Atur default selected vehicle ke yang pertama tersedia
+        if (availableVehicles.isNotEmpty) {
+          _selectedVehicle = availableVehicles.first;
+        }
       });
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Gagal memuat data: $e"), backgroundColor: Colors.red));
+          SnackBar(
+            content: Text("Gagal memuat data: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        setState(() => _isLoading = false);
       }
-      setState(() => _isLoading = false);
     }
   }
 
-  // Helper untuk mendapatkan Durasi Masak Terlama (Bottleneck)
-  int _getBottleneckCookingDuration(List<String> menuIds) {
-      if (menuIds.isEmpty) return 0;
-      
-      final durations = menuIds.map((id) {
-          return _menus.firstWhereOrNull((m) => m.id == id)?.cookingDurationMinutes ?? 0;
-      }).toList();
-      
-      return durations.isNotEmpty ? durations.reduce((a, b) => a > b ? a : b) : 0;
+  Future<List<Map<String, dynamic>>> _getRoutesBySelectedDate(
+    DateTime date,
+  ) async {
+    return await _routeService.getRoutesByDate(date);
   }
 
-  Future<void> _submit() async {
-    if (_formKey.currentState!.validate()) {
-      final validMenuIds = _selectedMenuIds.whereType<String>().toList();
+  // Dipanggil saat tanggal diubah
+  void _onDateChanged(DateTime newDate) {
+    if (newDate.isBefore(DateTime.now().subtract(const Duration(hours: 24)))) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Jadwal harus hari ini atau ke depan, Goblok!"),
+        ),
+      );
+      return;
+    }
+    setState(() {
+      _selectedDate = newDate;
+      _selectedSchools = []; // Clear selection
+      _selectedVehicle = null; // Clear vehicle selection to refilter
+      _bottleneckDuration = 0;
+      _requiredMenuIds = [];
+      _requiredMenuNames = [];
+      _isLoading = true;
+    });
+    _fetchInitialData(); // Re-fetch data untuk filter ketersediaan mobil
+  }
 
-      if (validMenuIds.length < 3) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Wajib pilih minimal 3 item Menu Set.")));
-        return;
-      }
-      if (_selectedSchools.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 sekolah")));
-        return;
-      }
-      if (_selectedVehicleIds.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pilih minimal 1 mobil")));
-        return;
-      }
-      if (_selectedSchools.length < _selectedVehicleIds.length) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Jumlah sekolah lebih sedikit dari mobil!")));
-        return;
-      }
-      if (_fallbackCourierId == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Tidak ada Kurir yang terdaftar untuk fallback!")));
-        return;
-      }
-      
-      // [PENTING] BLOK PENGECEKAN WAJIB KURIR ARMADA DIHAPUS, Sesuai permintaan user
-      // Sistem akan tetap jalan meskipun Kurir di Master Armada kosong.
-      
-      setState(() => _isSubmitting = true);
-      try {
-        final int bottleneckDuration = _getBottleneckCookingDuration(validMenuIds);
-        
-        await RouteService().createBatchRoutes(
-          vehicleIds: _selectedVehicleIds,
-          courierId: _fallbackCourierId!, // Kurir Fallback (akan ditimpa jika ada di mobil)
-          menuIds: validMenuIds,
-          date: _selectedDate,
-          selectedSchools: _selectedSchools,
-          cookingDuration: bottleneckDuration,
+  // Dipanggil saat ada perubahan sekolah yang dipilih
+  Future<void> _onSchoolSelectionChanged() async {
+    if (_selectedSchools.isEmpty) {
+      setState(() {
+        _bottleneckDuration = 0;
+        _requiredMenuIds = [];
+        _requiredMenuNames = [];
+      });
+      return;
+    }
+
+    // Perhitungan Bottleneck Menu (Menu yang butuh waktu masak terlama)
+    try {
+      final result = await _routeService.getBottleneckMenuPublic(
+        _selectedSchools,
+      );
+
+      final menusData = result['menusData'] as List<Map<String, dynamic>>;
+      final menuNames = menusData
+          .map((m) => m['name'] as String)
+          .toSet()
+          .toList();
+
+      if (!mounted) return;
+      setState(() {
+        _bottleneckDuration = result['duration'] as int;
+        _requiredMenuIds = result['menuIds'] as List<String>;
+        _requiredMenuNames = menuNames;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Gagal hitung bottleneck menu: $e"),
+            backgroundColor: Colors.red,
+          ),
         );
-
-        if (!mounted) return;
-        Navigator.pop(context, true);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Rute & Jadwal Otomatis Terbuat!")));
-      } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-      } finally {
-        setState(() => _isSubmitting = false);
+        setState(() {
+          _bottleneckDuration = 0;
+          _requiredMenuIds = [];
+          _requiredMenuNames = [];
+        });
       }
+    }
+  }
+
+  // --- SUBMIT: RUTE MANUAL ---
+  Future<void> _createManualRoute() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedVehicle == null || _requiredMenuIds.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Mobil dan Menu Wajib ada, Anjing!")),
+      );
+      return;
+    }
+
+    // WARNING: Logika OSRM dan Insert Route ada di Service!
+    setState(() => _isSubmitting = true);
+    try {
+      await _routeService.createBatchRoutes(
+        vehicleIds: [_selectedVehicle!.id], // Hanya 1 mobil
+        courierId:
+            _selectedVehicle!.courierProfileId ??
+            await _routeService
+                .getFirstCourierId(), // <--- FIX: Panggil PUBLIC METHOD
+        menuIds: _requiredMenuIds,
+        date: _selectedDate,
+        selectedSchools: _selectedSchools,
+        cookingDuration: _bottleneckDuration,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Rute Manual Berhasil Dibuat dan Di-Optimasi!"),
+          backgroundColor: Colors.green,
+        ),
+      );
+      Navigator.pop(context, true); // Selesai
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("Gagal Buat Rute: ${e.toString()}"),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isSubmitting = false);
     }
   }
 
@@ -140,186 +216,224 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-          title: const Text("Buat Rute Otomatis"),
-          backgroundColor: Colors.orange[800]),
+        title: const Text("Buat Rute Pengiriman (Manual)"),
+        backgroundColor: Colors.orange[800],
+        foregroundColor: Colors.white,
+      ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(16.0),
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // 1. TANGGAL
+                    // --- STEP 1: TANGGAL (PENTING) ---
+                    const Text(
+                      "1. Tanggal Pengiriman",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     ListTile(
+                      leading: const Icon(
+                        Icons.calendar_today,
+                        color: Colors.red,
+                      ),
                       title: Text(
-                          "Tanggal: ${DateFormat('dd MMM yyyy').format(_selectedDate)}"),
-                      trailing: const Icon(Icons.calendar_today),
+                        DateFormat(
+                          'EEEE, d MMMM yyyy',
+                          'id_ID',
+                        ).format(_selectedDate),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      trailing: const Icon(Icons.edit),
                       onTap: () async {
-                        final d = await showDatePicker(
-                            context: context,
-                            initialDate: _selectedDate,
-                            firstDate: DateTime.now(),
-                            lastDate: DateTime(2030));
-                        if (d != null) setState(() => _selectedDate = d);
+                        final DateTime? picked = await showDatePicker(
+                          context: context,
+                          initialDate: _selectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(
+                            const Duration(days: 90),
+                          ),
+                        );
+                        if (picked != null && picked != _selectedDate) {
+                          _onDateChanged(picked);
+                        }
                       },
+                    ),
+                    const Divider(thickness: 2, height: 30),
+
+                    // --- STEP 2: ARMADA (MOBIL & KURIR) ---
+                    const Text(
+                      "2. Pilih Armada (Mobil & Kurir)",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<Vehicle>(
+                      decoration: const InputDecoration(
+                        labelText: "Pilih Armada Mobil",
+                        prefixIcon: Icon(Icons.local_shipping),
+                      ),
+                      value: _selectedVehicle,
+                      items: _availableVehicles.map((v) {
+                        return DropdownMenuItem(
+                          value: v,
+                          child: Text(
+                            "${v.plateNumber} (Kap: ${v.capacityLimit})",
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (val) =>
+                          setState(() => _selectedVehicle = val),
+                      validator: (v) =>
+                          v == null ? "Wajib pilih mobil, bego!" : null,
+                    ),
+                    const SizedBox(height: 10),
+                    // Display Kurir (hanya read-only, dari join ke vehicle)
+                    Text(
+                      "Kurir Bertugas: ${_selectedVehicle?.driverName ?? 'Belum Ditugaskan'}",
+                      style: TextStyle(
+                        fontStyle: FontStyle.italic,
+                        color: _selectedVehicle?.driverName != null
+                            ? Colors.green
+                            : Colors.red,
+                      ),
+                    ),
+                    const Divider(thickness: 2, height: 30),
+
+                    // --- STEP 3: SEKOLAH TUJUAN ---
+                    const Text(
+                      "3. Pilih Sekolah Tujuan (Urutan TIDAK penting, akan di-optimasi)",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey,
+                      ),
                     ),
                     const SizedBox(height: 10),
 
-                    // [PERUBAHAN UTAMA] 2. PILIH SET MENU (Multi Select 3-5)
-                    const Text("Pilih Set Menu (Min 3, Max 5):",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    
-                    // List Dropdown Menu
-                    ...List.generate(_selectedMenuIds.length, (index) {
-                      final availableItems = _menus.map((menu) {
-                        return DropdownMenuItem<String>(
-                          value: menu.id,
-                          // Logika agar menu yang sama tidak bisa dipilih dua kali
-                          enabled: !_selectedMenuIds.whereType<String>().any(
-                                (id) => id == menu.id && id != _selectedMenuIds[index],
-                              ),
-                          child: Text("${menu.name} (${menu.cookingDurationMinutes} mnt)"),
-                        );
-                      }).toList();
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: DropdownButtonFormField<String>(
-                          decoration: InputDecoration(
-                            labelText: "Menu Item #${index + 1}",
-                            border: const OutlineInputBorder(),
-                            prefixIcon: const Icon(Icons.restaurant),
+                    // Multi Select Dropdown untuk Sekolah
+                    Wrap(
+                      spacing: 8.0,
+                      children: _allSchools.map((school) {
+                        final isSelected = _selectedSchools.contains(school);
+                        return ChoiceChip(
+                          label: Text(school.name),
+                          selected: isSelected,
+                          onSelected: (selected) {
+                            setState(() {
+                              if (selected) {
+                                _selectedSchools.add(school);
+                              } else {
+                                _selectedSchools.removeWhere(
+                                  (s) => s.id == school.id,
+                                );
+                              }
+                            });
+                            _onSchoolSelectionChanged(); // Update menu bottleneck
+                          },
+                          selectedColor: Colors.orange[100],
+                          backgroundColor: Colors.grey[200],
+                          side: BorderSide(
+                            color: isSelected ? Colors.orange : Colors.grey,
                           ),
-                          value: _selectedMenuIds[index],
-                          items: [
-                            const DropdownMenuItem<String>(
-                              value: null,
-                              child: Text("--- Pilih Menu ---"),
-                            ),
-                            ...availableItems,
-                          ],
-                          onChanged: (String? newValue) =>
-                              setState(() => _selectedMenuIds[index] = newValue),
-                          // Validasi minimal 3 item
-                          validator: (v) => (index < 3 && v == null)
-                              ? "Menu Item #${index + 1} wajib diisi."
-                              : null,
-                        ),
-                      );
-                    }),
-                    
-                    // Tombol Tambah/Hapus Slot Menu
-                    Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (_selectedMenuIds.length < 5)
-                            TextButton.icon(
-                              icon: const Icon(Icons.add_circle, color: Colors.blue),
-                              label: const Text("Tambah Slot Menu"),
-                              onPressed: () => setState(() => _selectedMenuIds.add(null)),
-                            ),
-                          if (_selectedMenuIds.length > 3)
-                            TextButton.icon(
-                              icon: const Icon(Icons.remove_circle, color: Colors.red),
-                              label: const Text("Hapus Slot Menu"),
-                              onPressed: () => setState(() => _selectedMenuIds.removeLast()),
-                            ),
-                        ],
+                        );
+                      }).toList(),
                     ),
-                    const SizedBox(height: 15),
-                    
-                    // [DIHAPUS DARI UI] Bagian Kurir Fallback Dihapus
-                    
-                    // 4. PILIH MOBIL (MULTI SELECT)
-                    const Text("Pilih Armada (Bisa Lebih dari 1):",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    Container(
-                      height: 150,
-                      decoration: BoxDecoration(
-                          border: Border.all(color: Colors.grey),
-                          borderRadius: BorderRadius.circular(5)),
-                      child: ListView.builder(
-                        itemCount: _vehicles.length,
-                        itemBuilder: (ctx, i) {
-                          final v = _vehicles[i];
-                          final isSelected = _selectedVehicleIds.contains(v.id);
-                          
-                          // Cari nama kurir yang ditugaskan ke mobil ini
-                          final assignedCourier = _couriers.firstWhereOrNull(
-                              (c) => c.id == v.courierProfileId);
-                          final courierName = assignedCourier?.name ?? 'Belum Ditugaskan';
 
-                          return CheckboxListTile(
-                            title: Text(v.plateNumber),
-                            // Menampilkan Kurir yang ditugaskan di Master Armada
-                            subtitle: Text("Driver: ${v.driverName ?? '-'} | Kurir: $courierName"),
-                            value: isSelected,
-                            onChanged: (val) {
-                              setState(() {
-                                if (val!)
-                                  _selectedVehicleIds.add(v.id);
-                                else
-                                  _selectedVehicleIds.remove(v.id);
-                              });
-                            },
-                          );
-                        },
+                    if (_selectedSchools.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          "Wajib pilih minimal 1 sekolah!",
+                          style: TextStyle(color: Colors.red),
+                        ),
+                      ),
+
+                    const Divider(thickness: 2, height: 30),
+
+                    // --- STEP 4: RINGKASAN & ACTION ---
+                    const Text(
+                      "4. Ringkasan Kebutuhan",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueGrey,
                       ),
                     ),
-                    const SizedBox(height: 5),
-                    Text(
-                      "${_selectedVehicleIds.length} Mobil Dipilih. Sistem akan membagi sekolah secara otomatis.",
-                      style: const TextStyle(fontSize: 12, color: Colors.blue),
-                    ),
-                    const SizedBox(height: 20),
-                    const Divider(),
+                    const SizedBox(height: 10),
 
-                    // 5. PILIH SEKOLAH
-                    const Text("Pilih Sekolah Tujuan:",
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    ListView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: _schools.length,
-                      itemBuilder: (ctx, i) {
-                        final s = _schools[i];
-                        final isSelected =
-                            _selectedSchools.any((e) => e.id == s.id);
-                        return CheckboxListTile(
-                          title: Text(s.name),
-                          subtitle: Text(
-                              "${s.studentCount} Pax (Deadline: ${s.deadlineTime ?? '12:00'})"),
-                          value: isSelected,
-                          onChanged: (val) {
-                            setState(() {
-                              if (val!)
-                                _selectedSchools.add(s);
-                              else
-                                _selectedSchools.removeWhere((e) => e.id == s.id);
-                            });
-                          },
-                        );
-                      },
+                    Card(
+                      color: Colors.yellow[50],
+                      child: Padding(
+                        padding: const EdgeInsets.all(12.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Total Sekolah: ${_selectedSchools.length} Lokasi",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              "Total Porsi: ${_selectedSchools.fold(0, (sum, s) => sum + s.studentCount)} Porsi",
+                            ),
+                            Text(
+                              "Menu Bottleneck: ${_requiredMenuNames.join(', ')}",
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            Text(
+                              "Durasi Masak Terlama (Bottleneck): **${_bottleneckDuration} Menit**",
+                              style: const TextStyle(color: Colors.red),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
+
                     const SizedBox(height: 30),
+
                     SizedBox(
                       width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.all(15)),
-                        child: _isSubmitting
+                      child: ElevatedButton.icon(
+                        onPressed:
+                            (_isSubmitting ||
+                                _selectedSchools.isEmpty ||
+                                _selectedVehicle == null ||
+                                _bottleneckDuration == 0)
+                            ? null
+                            : _createManualRoute,
+                        icon: const Icon(Icons.route, color: Colors.white),
+                        label: _isSubmitting
                             ? const CircularProgressIndicator(
-                                color: Colors.white)
-                            : const Text("GENERATE BATCH RUTE",
+                                color: Colors.white,
+                              )
+                            : const Text(
+                                "GENERATE RUTE MANUAL & OPTIMASI",
                                 style: TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold)),
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green[700],
+                          padding: const EdgeInsets.symmetric(vertical: 15),
+                        ),
                       ),
                     ),
+                    const SizedBox(height: 30),
                   ],
                 ),
               ),

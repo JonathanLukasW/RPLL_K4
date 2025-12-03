@@ -74,10 +74,18 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
+          // [BARU] TOMBOL REFRESH
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Data",
+            onPressed: _fetchRoutes, // Panggil fungsi refresh data
+          ),
           IconButton(
             icon: const Icon(Icons.account_circle, size: 30),
             onPressed: () => Navigator.push(
-                context, MaterialPageRoute(builder: (_) => const ProfileScreen())),
+              context,
+              MaterialPageRoute(builder: (_) => const ProfileScreen()),
+            ),
           ),
         ],
       ),
@@ -90,8 +98,10 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                const Text("Tampilan Kalender:",
-                    style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text(
+                  "Tampilan Kalender:",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
                 // DROPDOWN MENU
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -103,7 +113,10 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<CalendarFormat>(
                       value: _calendarFormat,
-                      icon: const Icon(Icons.arrow_drop_down, color: Colors.blue),
+                      icon: const Icon(
+                        Icons.arrow_drop_down,
+                        color: Colors.blue,
+                      ),
                       items: const [
                         DropdownMenuItem(
                           value: CalendarFormat.month,
@@ -156,12 +169,18 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
               _fetchRoutes();
             },
             calendarStyle: const CalendarStyle(
-              markerDecoration:
-                  BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
-              todayDecoration:
-                  BoxDecoration(color: Colors.orange, shape: BoxShape.circle),
-              selectedDecoration:
-                  BoxDecoration(color: Colors.blue, shape: BoxShape.circle),
+              markerDecoration: BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+              ),
+              todayDecoration: BoxDecoration(
+                color: Colors.orange,
+                shape: BoxShape.circle,
+              ),
+              selectedDecoration: BoxDecoration(
+                color: Colors.blue,
+                shape: BoxShape.circle,
+              ),
             ),
           ),
           const Divider(thickness: 1, height: 1),
@@ -185,8 +204,10 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
           children: [
             Icon(Icons.event_busy, size: 60, color: Colors.grey[300]),
             const SizedBox(height: 10),
-            Text("Tidak ada pengiriman tgl ${DateFormat('d MMM').format(_selectedDay)}",
-                style: const TextStyle(color: Colors.grey)),
+            Text(
+              "Tidak ada pengiriman tgl ${DateFormat('d MMM').format(_selectedDay)}",
+              style: const TextStyle(color: Colors.grey),
+            ),
           ],
         ),
       );
@@ -197,13 +218,19 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
       itemBuilder: (context, index) {
         final route = routes[index];
         // [PERBAIKAN] Tampilkan nama menu dari Route Model
-        final menuText = route.menuName != null ? "Menu: ${route.menuName}" : "Menu belum diset";
-        
+        final menuText = route.menuName != null
+            ? "Menu: ${route.menuName}"
+            : "Menu belum diset";
+
         return Card(
           elevation: 3,
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
-            leading: const Icon(Icons.local_shipping, color: Colors.blue, size: 32),
+            leading: const Icon(
+              Icons.local_shipping,
+              color: Colors.blue,
+              size: 32,
+            ),
             title: Text(
               "Armada: ${route.vehiclePlate ?? '-'}",
               style: const TextStyle(fontWeight: FontWeight.bold),
@@ -212,14 +239,19 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("Status: ${route.status.toUpperCase()}"),
-                Text(menuText, style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                Text(
+                  menuText,
+                  style: const TextStyle(fontSize: 12, color: Colors.grey),
+                ),
               ],
             ),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(builder: (_) => RouteDetailScreen(route: route)),
+                MaterialPageRoute(
+                  builder: (_) => RouteDetailScreen(route: route),
+                ),
               ).then((val) {
                 _fetchRoutes();
               });

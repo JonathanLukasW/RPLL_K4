@@ -1,6 +1,8 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import '../../admin_sppg/services/schedule_service.dart';
 
 // Model untuk Detail Request
 class RequestDetail {
@@ -75,6 +77,7 @@ class ChangeRequestModel {
 
 class RequestService {
   final _supabase = Supabase.instance.client;
+  final ScheduleService _scheduleService = ScheduleService();
 
   // 0. AMBIL MENU SPPG (Untuk Dropdown)
   Future<List<Map<String, dynamic>>> getSppgMenus() async {
@@ -126,7 +129,8 @@ class RequestService {
   // --- 1. KOORDINATOR: KIRIM REQUEST ---
   Future<void> submitStructuredRequest({
     required String type,
-    String? notes, // Catatan User
+    String?
+    notes, // Catatan User (sekarang berisi summary REQ_TYPE: VALUE | Note: ...)
     required List<RequestDetail> details, // Detail Perubahan
   }) async {
     try {
@@ -137,36 +141,19 @@ class RequestService {
           .eq('id', userId)
           .single();
 
-      // Kita simpan summary perubahan di kolom 'old_notes' agar Admin bisa baca langsung
-      // tanpa join ribet ke tabel detail (Hack cepat)
+      // Kita anggap 'notes' yang masuk ke sini adalah data yang sudah diolah di screen (REQ_JADWAL:...)
       String summaryData = notes ?? "";
-
-      // Persiapkan data detail untuk tabel relasi
-      // ... (Implementation optional dependent on your DB schema rigour)
-
-      if (type == 'Perubahan Menu') {
-        summaryData =
-            "REQ_MENU: ${details.first.proposedMenuNames} | Note: $notes";
-      } else if (type == 'Tambah/Kurang Porsi') {
-        summaryData = "REQ_PORSI: ${details.first.newQuantity} | Note: $notes";
-      } else if (type == 'Perubahan Jadwal') {
-        // Format: REQ_JADWAL: YYYY-MM-DD HH:mm:ss
-        String datePart = details.first.newDate!.toIso8601String().split(
-          'T',
-        )[0];
-        String timePart =
-            "${details.first.newTime!.hour}:${details.first.newTime!.minute}";
-        summaryData = "REQ_JADWAL: $datePart $timePart | Note: $notes";
-      }
 
       await _supabase.from('change_requests').insert({
         'requester_id': userId,
         'school_id': profile['school_id'],
         'sppg_id': profile['sppg_id'],
         'request_type': type,
-        'old_notes': summaryData, // Simpan data inti di sini string-serialized
+        'old_notes': summaryData, // <-- Data KOTOR/HACK disimpan di sini
         'status': 'pending',
       });
+
+      // NOTE: Logika INSERT ke change_request_details DITIADAKAN untuk mengikuti hack notes
     } catch (e) {
       throw Exception("Gagal kirim request: $e");
     }
@@ -202,13 +189,12 @@ class RequestService {
         .toList();
   }
 
-  // --- 3. ADMIN: RESPON & APPLY CHANGES ---
+  // --- 4. ADMIN: RESPON & APPLY CHANGES (FINAL FIX for Routine Schedule) ---
   Future<void> respondRequest({
     required String requestId,
     required String status,
     required String adminNote,
-    required ChangeRequestModel
-    requestData, // Butuh data ini untuk tau apa yang diupdate
+    required ChangeRequestModel requestData,
   }) async {
     try {
       // 1. Update Status Request
@@ -221,41 +207,93 @@ class RequestService {
           })
           .eq('id', requestId);
 
-      // 2. JIKA APPROVED -> UPDATE DATA SEKOLAH (MASTER DATA)
+      // 2. JIKA APPROVED -> APPLY CHANGES
       if (status == 'approved') {
+        final String schoolId = requestData.schoolId;
+        final String notes = requestData.oldNotes; // <-- Data Hack ada di sini
+
+        // --- A. PERUBAHAN MENU: Update schools.menu_default ---
         if (requestData.type == 'Perubahan Menu') {
-          // Parse "REQ_MENU: Nasi, Ayam, Tahu..."
-          if (requestData.oldNotes.contains("REQ_MENU:")) {
-            final raw = requestData.oldNotes
+          if (notes.contains("REQ_MENU:")) {
+            final rawMenuNames = notes
                 .split('|')[0]
                 .replaceAll("REQ_MENU:", "")
                 .trim();
             await _supabase
                 .from('schools')
-                .update({'menu_default': raw})
-                .eq('id', requestData.schoolId);
+                .update({'menu_default': rawMenuNames})
+                .eq('id', schoolId);
           }
-        } else if (requestData.type == 'Tambah/Kurang Porsi') {
-          // Parse "REQ_PORSI: 500"
-          if (requestData.oldNotes.contains("REQ_PORSI:")) {
-            final raw = requestData.oldNotes
+        }
+        // --- B. TAMBAH/KURANG PORSI: Update schools.student_count ---
+        else if (requestData.type == 'Tambah/Kurang Porsi') {
+          if (notes.contains("REQ_PORSI:")) {
+            final rawQty = notes
                 .split('|')[0]
                 .replaceAll("REQ_PORSI:", "")
                 .trim();
-            final int newQty = int.tryParse(raw) ?? 0;
+            final int newQty = int.tryParse(rawQty) ?? 0;
             if (newQty > 0) {
               await _supabase
                   .from('schools')
                   .update({'student_count': newQty})
-                  .eq('id', requestData.schoolId);
+                  .eq('id', schoolId);
             }
           }
         }
-        // Perubahan Jadwal biasanya bersifat One-Time (Jadwal Khusus) atau update Deadline.
-        // Di sini kita asumsikan update Deadline jika formatnya pas, atau biarkan hanya sebagai notifikasi approved.
+        // --- C. PERUBAHAN JADWAL: Update Permanent Routine Schedule & Tolerance ---
+        else if (requestData.type == 'Perubahan Jadwal') {
+          if (notes.contains("REQ_JADWAL:")) {
+            // 1. Ambil JSON Schedule String (sampai ketemu '|')
+            final rawSchedulePart = notes
+                .split('|')[0]
+                .replaceAll("REQ_JADWAL:", "")
+                .trim();
+
+            // 2. Ambil Tolerance
+            final rawTolerancePart = notes
+                .split('|')[1]
+                .replaceAll("REQ_TOLERANCE:", "")
+                .trim();
+            final int newTolerance = int.tryParse(rawTolerancePart) ?? 45;
+
+            // 3. Update DB
+            await _supabase
+                .from('schools')
+                .update({
+                  'deadline_time':
+                      rawSchedulePart, // <-- Storing the FULL JSON Schedule here
+                  'tolerance_minutes': newTolerance,
+                })
+                .eq('id', schoolId);
+          }
+        }
       }
     } catch (e) {
-      throw Exception("Gagal respon request: $e");
+      throw Exception("Gagal respon request dan menerapkan perubahan: $e");
+    }
+  }
+
+  // --- 5. KOORDINATOR: BATALKAN PENGAJUAN ---
+  Future<void> cancelRequest(String requestId) async {
+    try {
+      final userId = _supabase.auth.currentUser!.id;
+      final response = await _supabase
+          .from('change_requests')
+          .update({
+            'status': 'cancelled',
+            'admin_response': 'Cancelled by Coordinator/User',
+          })
+          .eq('id', requestId)
+          .eq('requester_id', userId)
+          .eq('status', 'pending')
+          .select();
+
+      if ((response as List).isEmpty) {
+        throw Exception("Pengajuan tidak ditemukan, atau sudah diproses.");
+      }
+    } catch (e) {
+      throw Exception('Gagal membatalkan pengajuan: $e');
     }
   }
 }

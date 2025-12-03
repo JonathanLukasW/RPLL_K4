@@ -1,11 +1,14 @@
+// === FILE: lib/features/admin_sppg/screens/edit_route_screen.dart ===
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:collection/collection.dart'; // Untuk firstWhereOrNull
+import 'package:intl/intl.dart';
 import '../../../models/route_model.dart';
 import '../../../models/school_model.dart';
 import '../services/route_service.dart';
-import '../services/school_service.dart';
+import '../services/school_service.dart'; // Import School Service
+import 'dart:convert';
 
 class EditRouteScreen extends StatefulWidget {
   final DeliveryRoute route;
@@ -18,476 +21,512 @@ class EditRouteScreen extends StatefulWidget {
 class _EditRouteScreenState extends State<EditRouteScreen> {
   final RouteService _routeService = RouteService();
   final MapController _mapController = MapController();
-  
-  // List untuk menampung data Sekolah + ETA
-  List<Map<String, dynamic>> _uiStops = [];
-  List<School> _allSchools = [];
-  // Data Peta
-  LatLng? _sppgLocation;
+
+  List<Map<String, dynamic>> _stops = []; // Detail stop + school info
   List<LatLng> _polylinePoints = [];
-  
-  // Kita asumsikan durasi masak ini diambil dari model rute saat ini
-  // atau dihitung ulang di Service, default 120 menit.
-  int _cookingDuration = 120; 
+  LatLng? _sppgLocation;
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
-    // [PERBAIKAN] Gunakan menu ID dari route model untuk mencari durasi
-    if(widget.route.menuId != null) {
-      // Karena kita tidak punya service untuk ambil durasi di sini,
-      // kita biarkan 120 (hardcode asli Anda) dan biarkan RouteService menghitung ulang.
-      // Jika di masa depan dibutuhkan, kita harus inject MenuService atau membuat helper public.
-    }
-    _fetchData();
+    _fetchRouteDetails();
   }
 
-  Future<void> _fetchData() async {
-    try {
-      // 1. Ambil Lokasi Dapur (Start Point)
-      _sppgLocation = await _routeService.getSppgLocation();
-      
-      // 2. Ambil Data Stops (Sekolah + ETA) dari Database
-      final stops = await _routeService.getRouteStops(widget.route.id);
-      _uiStops = [];
-      List<LatLng> validRoutingPoints = [];
-      
-      // Masukkan Dapur ke titik peta jika ada
-      if (_sppgLocation != null) {
-        validRoutingPoints.add(_sppgLocation!); 
-      }
-      
-      for (var s in stops) {
-        final sc = s['schools'];
-        // Parsing Koordinat Sekolah
-        double? lat, long;
-        if (sc['gps_lat'] != null && sc['gps_long'] != null) {
-          try {
-            lat = double.parse(sc['gps_lat'].toString());
-            long = double.parse(sc['gps_long'].toString());
-            // Validate to ensure coordinates are valid non-zero
-            if (lat != 0 && long != 0 && lat.isFinite && long.isFinite) {
-              validRoutingPoints.add(LatLng(lat, long)); // Add valid point
-            } else {
-              print("Skipping invalid coordinate for school: ${sc['name']}");
-            }
-          } catch (_) {}
-        }
-        
-        // Masukkan ke List UI untuk ditampilkan di bawah peta
-        _uiStops.add({
-          'school': School(
-            id: sc['id'],
-            sppgId: "",
-            name: sc['name'],
-            address: sc['address'],
-            latitude: lat,
-            longitude: long,
-            studentCount: sc['student_count'] ?? 0,
-            deadlineTime: sc['deadline_time'],
-          ),
-          'eta': s['estimated_arrival_time'] ?? '--:--', // Ambil Jam Estimasi
-        });
-      }
-      
-      // 3. Ambil Garis Rute (Polyline) dari OSRM
-      if (validRoutingPoints.length >= 2) {
-        _polylinePoints = await _routeService.getRoutePolyline(validRoutingPoints,);
-      } else {
-        _polylinePoints = [];
-      }
-      
-      // 4. Ambil Semua Sekolah (Untuk opsi tambah sekolah nanti)
-      _allSchools = await SchoolService().getMySchools();
-      
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-      
-      // 5. Fit Camera (Zoom Peta Otomatis)
-      if (validRoutingPoints.isNotEmpty) {
-        try {
-          // [PERBAIKAN KRITIS MAP] Hanya panggil CameraFit.bounds jika ada lebih dari 1 titik valid (start + 1 stop)
-          if (validRoutingPoints.length > 1) {
-            Future.delayed(const Duration(milliseconds: 500), () {
-              if (!mounted) return;
-              _mapController.fitCamera(
-                CameraFit.bounds(
-                  bounds: LatLngBounds.fromPoints(validRoutingPoints),
-                  padding: const EdgeInsets.all(60),
-                ),
-              );
-            });
-          } else if (validRoutingPoints.length == 1 && _sppgLocation != null) {
-            // Jika hanya ada titik Dapur, fokuskan di Dapur
-            _mapController.move(_sppgLocation!, 15.0);
-          }
-        } catch (e) {
-          print("Map Fit Error: $e");
-        }
-      }
-    } catch (e) {
-      print("Error Fetch: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
-  }
-
-  // --- DIALOG TAMBAH SEKOLAH ---
-  void _addSchoolDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Tambah Sekolah"),
-        content: SizedBox(
-          width: double.maxFinite,
-          height: 300,
-          child: ListView.builder(
-            itemCount: _allSchools.length,
-            itemBuilder: (c, i) {
-              final s = _allSchools[i];
-              // Cek duplikasi: Jangan tampilkan sekolah yang sudah ada di rute
-              if (_uiStops.any((item) => (item['school'] as School).id == s.id))
-                return const SizedBox.shrink();
-              return ListTile(
-                title: Text(s.name),
-                subtitle: Text(
-                  "${s.studentCount} Pax | Deadline: ${s.deadlineTime ?? '-'}",
-                ),
-                trailing: const Icon(Icons.add_circle, color: Colors.green),
-                onTap: () {
-                  setState(() {
-                    _uiStops.add({
-                      'school': s,
-                      'eta': 'Hitung...', // Placeholder sebelum save & recalculate
-                    });
-                  });
-                  Navigator.pop(ctx);
-                  _recalculateAndSave(); // Simpan & Hitung Ulang
-                },
-              );
-            },
-          ),
-        ),
-      ),
-    );
-  }
-
-  // --- HAPUS SEKOLAH ---
-  void _removeSchool(int index) {
-    setState(() => _uiStops.removeAt(index));
-    _recalculateAndSave(); // Simpan & Hitung Ulang
-  }
-
-  // --- LOGIKA SIMPAN & HITUNG ULANG RUTE ---
-  Future<void> _recalculateAndSave() async {
-    if (_uiStops.isEmpty) {
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Rute kosong, tidak ada yang disimpan."),
-          ),
-        );
-      return;
-    }
+  Future<void> _fetchRouteDetails() async {
     setState(() => _isLoading = true);
     try {
-      List<School> schoolsOnly =
-          _uiStops.map((e) => e['school'] as School).toList();
-      
-      // Menggunakan _cookingDuration yang diset default di state
-      await _routeService.updateRouteSchools(
-        widget.route.id,
-        schoolsOnly,
-        _cookingDuration, 
-      );
-      await _fetchData(); // Refresh agar Peta & ETA baru muncul
-      if (mounted)
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Rute & Jadwal Diperbarui!")),
-        );
+      final origin = await _routeService.getSppgLocation();
+      _sppgLocation = origin;
+      final stopsData = await _routeService.getRouteStops(widget.route.id);
+
+      // Susun koordinat untuk polyline
+      List<LatLng> routingPoints = [];
+      if (origin != null) routingPoints.add(origin);
+      for (var stop in stopsData) {
+        final school = stop['schools'];
+        if (school['gps_lat'] != null && school['gps_long'] != null) {
+          double? lat = double.tryParse(school['gps_lat'].toString());
+          double? long = double.tryParse(school['gps_long'].toString());
+          if (lat != null && long != null) {
+            routingPoints.add(LatLng(lat, long));
+          }
+        }
+      }
+
+      List<LatLng> polyline = [];
+      if (routingPoints.length >= 2) {
+        // Ambil polyline dari OSRM
+        polyline = await _routeService.getRoutePolyline(routingPoints);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _stops = stopsData;
+        _polylinePoints = polyline;
+        _isLoading = false;
+      });
+
+      // Zoom map biar pas
+      if (routingPoints.isNotEmpty) {
+        Future.delayed(const Duration(seconds: 1), () {
+          if (!mounted) return;
+          try {
+            _mapController.fitCamera(
+              CameraFit.bounds(
+                bounds: LatLngBounds.fromPoints(routingPoints),
+                padding: const EdgeInsets.all(60),
+              ),
+            );
+          } catch (_) {
+            _mapController.move(routingPoints.first, 13.0);
+          }
+        });
+      }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Bukan Urusan Gue: $e")));
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  // Helper untuk mendapatkan warna status
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      case 'received':
+        return Colors.green;
+      case 'issue_reported':
+        return Colors.red;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  // Format waktu dari HH:mm:ss ke HH:mm
+  String _formatTime(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return "--:--";
+    try {
+      return timeStr.substring(0, 5);
+    } catch (_) {
+      return timeStr ?? "--:--";
+    }
+  }
+
+  // Tombol aksi (misal: Hapus Rute)
+  Future<void> _deleteRoute() async {
+    final confirm = await showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Hapus Rute?"),
+        content: const Text(
+          "Menghapus rute ini akan menghapus semua perhentian dan jadwal produksi terkait. Yakin, anjing?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Batal"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text("Hapus", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await _routeService.deleteRoute(widget.route.id);
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text("Rute Dihapus!")));
+        Navigator.pop(context, true); // Kembali ke dashboard
+      } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Gagal update: $e"),
+            content: Text("Error Hapus: $e"),
             backgroundColor: Colors.red,
           ),
         );
-      setState(() => _isLoading = false);
+      }
     }
-  }
-
-  // Format Jam (Hapus detik HH:mm:ss -> HH:mm)
-  String _formatTime(String? time) {
-    if (time == null || time.isEmpty) return "--:--";
-    if (time.length > 5) return time.substring(0, 5);
-    return time;
   }
 
   @override
   Widget build(BuildContext context) {
-    final isEdit = widget.route != null;
+    String dateStr = widget.route.date;
+    try {
+      dateStr = DateFormat(
+        'EEEE, d MMMM yyyy',
+        'id_ID',
+      ).format(DateTime.parse(widget.route.date));
+    } catch (_) {}
+
+    // Titik tengah default
+    final LatLng defaultCenter =
+        _sppgLocation ?? const LatLng(-6.9175, 107.6191);
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Edit Rute & Peta"),
+        title: Text("Detail Rute: ${widget.route.vehiclePlate ?? '-'}"),
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
+        actions: [
+          if (widget.route.status == 'pending')
+            IconButton(
+              icon: const Icon(Icons.delete),
+              tooltip: "Hapus Rute",
+              onPressed: _deleteRoute,
+            ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: "Refresh Data",
+            onPressed: _fetchRouteDetails,
+          ),
+        ],
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                // --- PETA VISUALISASI ---
-                SizedBox(
-                  height: 250,
-                  child: FlutterMap(
-                    mapController: _mapController,
-                    options: const MapOptions(
-                      initialCenter:
-                          LatLng(-6.9175, 107.6191), // Default Bandung
-                      initialZoom: 13.0,
-                      // Pastikan gesture aktif (Zoom/Pan)
-                      interactionOptions: InteractionOptions(
-                        flags: InteractiveFlag.all,
-                      ),
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        userAgentPackageName: 'com.example.mbg',
-                      ),
-                      // Garis Rute (Biru)
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: _polylinePoints,
-                            strokeWidth: 4.0,
-                            color: Colors.blue,
+          : SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // --- INFO UTAMA ---
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          dateStr,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black87,
                           ),
-                        ],
-                      ),
-                      // Marker (Pin)
-                      MarkerLayer(
-                        markers: [
-                          // Marker Dapur
-                          if (_sppgLocation != null)
-                            Marker(
-                              point: _sppgLocation!,
-                              width: 50,
-                              height: 50,
-                              child: const Column(
-                                children: [
-                                  Icon(
-                                    Icons.store,
-                                    color: Colors.purple,
-                                    size: 35,
-                                  ),
-                                  Text(
-                                    "DAPUR",
-                                    style: TextStyle(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.bold,
-                                      backgroundColor: Colors.white,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          // Marker Sekolah...
-                          ..._uiStops.asMap().entries.map((entry) {
-                            final s = entry.value['school'] as School;
-                            if (s.latitude == null)
-                              return const Marker(
-                                point: LatLng(0, 0),
-                                child: SizedBox(),
-                              );
-                            return Marker(
-                              point: LatLng(s.latitude!, s.longitude!),
-                              width: 40,
-                              height: 40,
-                              child: Column(
-                                children: [
-                                  const Icon(
-                                    Icons.location_on,
-                                    color: Colors.red,
-                                    size: 30,
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 3,
-                                    ),
-                                    decoration: BoxDecoration(
-                                      color: Colors.white,
-                                      border: Border.all(color: Colors.grey),
-                                    ),
-                                    child: Text(
-                                      "${entry.key + 1}",
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                // --- INFO HEADER LIST ---
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  color: Colors.blue[50],
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        "Urutan & Estimasi:",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        "${_uiStops.length} Sekolah",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
+                        ),
+                        const SizedBox(height: 8),
+                        _buildInfoRow(
+                          Icons.local_shipping,
+                          "Armada",
+                          widget.route.vehiclePlate ?? "Mobil HILANG",
+                        ),
+                        _buildInfoRow(
+                          Icons.person,
+                          "Kurir",
+                          widget.route.courierName ?? "Kurir HILANG",
+                        ),
+                        _buildInfoRow(
+                          Icons.restaurant_menu,
+                          "Menu Utama",
+                          widget.route.menuName ?? "Menu HILANG",
                           color: Colors.blue,
                         ),
-                      ),
-                    ],
+                        _buildInfoRow(
+                          Icons.departure_board,
+                          "Jam Berangkat (Target)",
+                          _formatTime(widget.route.departureTime),
+                          color: Colors.red,
+                        ),
+                        _buildInfoRow(
+                          Icons.check_circle_outline,
+                          "Status Rute",
+                          widget.route.status.toUpperCase(),
+                          color: _getStatusColor(widget.route.status),
+                        ),
+                        const Divider(height: 30),
+                      ],
+                    ),
                   ),
-                ),
-                // --- LIST SEKOLAH (BISA DIGESER URUTANNYA) ---
-                Expanded(
-                  child: ReorderableListView(
-                    onReorder: (oldIndex, newIndex) {
-                      if (newIndex > oldIndex) newIndex -= 1;
-                      final item = _uiStops.removeAt(oldIndex);
-                      _uiStops.insert(newIndex, item);
-                      setState(() {});
-                      _recalculateAndSave();
-                    },
-                    children: [
-                      for (int index = 0; index < _uiStops.length; index++)
-                        Card(
-                          key: ValueKey(
-                            (_uiStops[index]['school'] as School).id,
-                          ),
-                          margin: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.orange[100],
-                              child: Text("${index + 1}"),
-                            ),
-                            title: Text(
-                              (_uiStops[index]['school'] as School).name,
-                            ),
-                            // P1: Display ETA, Deadline, High Risk
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  "Deadline: ${_formatTime((_uiStops[index]['school'] as School).deadlineTime)}",
-                                ),
-                                Text(
-                                  "Status: ${(_uiStops[index]['school'] as School).isHighRisk ? 'High Risk' : 'Normal'}",
-                                  style: TextStyle(
-                                    color:
-                                        (_uiStops[index]['school'] as School)
-                                                .isHighRisk
-                                            ? Colors.red
-                                            : Colors.green,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            isThreeLine:
-                                true, // Needed for multiple subtitle lines
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                // P1: Tampilan Estimasi Waktu (ETA)
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 8,
-                                    vertical: 4,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.blue[50],
-                                    borderRadius: BorderRadius.circular(5),
-                                    border: Border.all(
-                                      color: Colors.blue.shade200,
+
+                  // --- PETA RUTE ---
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Text(
+                      "Peta Rute & Titik Henti",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 300,
+                    width: double.infinity,
+                    child: FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: defaultCenter,
+                        initialZoom: 13.0,
+                        initialCameraFit: CameraFit.bounds(
+                          bounds: LatLngBounds.fromPoints([
+                            if (_sppgLocation != null) _sppgLocation!,
+                            ..._stops
+                                .where((s) => s['schools']['gps_lat'] != null)
+                                .map(
+                                  (s) => LatLng(
+                                    double.parse(
+                                      s['schools']['gps_lat'].toString(),
+                                    ),
+                                    double.parse(
+                                      s['schools']['gps_long'].toString(),
                                     ),
                                   ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const Text(
-                                        "Est. Tiba",
-                                        style: TextStyle(fontSize: 8),
+                                ),
+                          ]),
+                          padding: const EdgeInsets.all(50),
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'com.example.mbg_monitoring',
+                        ),
+
+                        // Polyline Rute
+                        PolylineLayer(
+                          polylines: [
+                            Polyline(
+                              points: _polylinePoints,
+                              strokeWidth: 5.0,
+                              color: Colors.blueAccent,
+                            ),
+                          ],
+                        ),
+
+                        // Markers (Dapur + Sekolah)
+                        MarkerLayer(
+                          markers: [
+                            // Marker Dapur (Start Point)
+                            if (_sppgLocation != null)
+                              Marker(
+                                point: _sppgLocation!,
+                                width: 80,
+                                height: 80,
+                                child: const Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.store_mall_directory,
+                                      color: Colors.purple,
+                                      size: 40,
+                                    ),
+                                    Text(
+                                      "DAPUR",
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.purple,
                                       ),
-                                      Text(
-                                        _formatTime(
-                                          _uiStops[index]['eta'].toString(),
-                                        ), // Using the fixed formatter
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            // Markers Sekolah
+                            ..._stops.map((stop) {
+                              final school = stop['schools'];
+                              final isHighRisk = school['is_high_risk'] == true;
+                              final isCompleted =
+                                  stop['status'] == 'completed' ||
+                                  stop['status'] == 'received' ||
+                                  stop['status'] == 'issue_reported';
+
+                              if (school['gps_lat'] == null)
+                                return const Marker(
+                                  point: LatLng(0, 0),
+                                  child: SizedBox(),
+                                );
+
+                              double lat = double.parse(
+                                school['gps_lat'].toString(),
+                              );
+                              double long = double.parse(
+                                school['gps_long'].toString(),
+                              );
+
+                              return Marker(
+                                point: LatLng(lat, long),
+                                width: 60,
+                                height: 60,
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.location_on,
+                                      color: isCompleted
+                                          ? Colors.green
+                                          : (isHighRisk
+                                                ? Colors.red
+                                                : Colors.orange),
+                                      size: 35,
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 4,
+                                        vertical: 2,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(4),
+                                        border: Border.all(color: Colors.grey),
+                                      ),
+                                      child: Text(
+                                        "${stop['sequence_order']}",
                                         style: const TextStyle(
-                                          fontSize: 14,
+                                          fontSize: 10,
                                           fontWeight: FontWeight.bold,
-                                          color: Colors.blue,
                                         ),
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 10),
-                                // Tombol Hapus Sekolah dari Rute
-                                IconButton(
-                                  icon: const Icon(
-                                    Icons.remove_circle,
-                                    color: Colors.red,
-                                  ),
-                                  onPressed: () => _removeSchool(index),
+                              );
+                            }).toList(),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const Divider(thickness: 2, height: 30),
+
+                  // --- DETAIL URUTAN SEKOLAH (STOP LIST) ---
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Text(
+                      "Urutan Perhentian (Optimasi Jarak & Waktu)",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+
+                  ..._stops.map((stop) {
+                    final school = stop['schools'];
+                    final isHighRisk = school['is_high_risk'] == true;
+                    final eta = _formatTime(stop['estimated_arrival_time']);
+                    final deadline = _formatTime(
+                      (school['deadline_time'] as String?)?.contains(
+                                _mapDayToLocal(
+                                  DateTime.parse(widget.route.date).weekday,
                                 ),
-                                // Handle Drag
-                                const Icon(
-                                  Icons.drag_handle,
-                                  color: Colors.grey,
-                                ),
-                              ],
+                              ) ==
+                              true
+                          ? (jsonDecode(school['deadline_time'])[_mapDayToLocal(
+                              DateTime.parse(widget.route.date).weekday,
+                            )])
+                          : null,
+                    );
+
+                    return Card(
+                      color: isHighRisk ? Colors.red[50] : Colors.white,
+                      margin: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 4,
+                      ),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: _getStatusColor(stop['status']),
+                          child: Text(
+                            "${stop['sequence_order']}",
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
                             ),
                           ),
                         ),
-                    ],
-                  ),
-                ),
-              ],
+                        title: Text(
+                          school['name'],
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: isHighRisk ? Colors.red[800] : Colors.black,
+                          ),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              "Est. Tiba: $eta",
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue,
+                              ),
+                            ),
+                            Text("Deadline Konsumsi: $deadline"),
+                            Text("Status: ${stop['status'].toUpperCase()}"),
+                            if (isHighRisk)
+                              const Text(
+                                "⚠️ Lokasi Berisiko Tinggi",
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 12,
+                                ),
+                              ),
+                          ],
+                        ),
+                        isThreeLine: true,
+                        trailing: stop['courier_proof_photo_url'] != null
+                            ? const Icon(
+                                Icons.photo_camera,
+                                color: Colors.green,
+                              )
+                            : const Icon(
+                                Icons.pending_actions,
+                                color: Colors.grey,
+                              ),
+                      ),
+                    );
+                  }).toList(),
+
+                  const SizedBox(height: 40),
+                ],
+              ),
             ),
-      // TOMBOL TAMBAH SEKOLAH
-      floatingActionButton: Column(
-        mainAxisSize: MainAxisSize.min,
+    );
+  }
+
+  // Function to map weekday number to local day name
+  String _mapDayToLocal(int day) {
+    const List<String> days = [
+      'Senin',
+      'Selasa',
+      'Rabu',
+      'Kamis',
+      'Jumat',
+      'Sabtu',
+      'Minggu',
+    ];
+    return days[day - 1];
+  }
+
+  Widget _buildInfoRow(
+    IconData icon,
+    String title,
+    String value, {
+    Color color = Colors.black87,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4.0),
+      child: Row(
         children: [
-          if (!_isLoading)
-            FloatingActionButton.extended(
-              heroTag: "recalculate",
-              onPressed: _recalculateAndSave, // <--- P3
-              label: const Text("HITUNG ULANG RUTE"),
-              icon: const Icon(Icons.cached),
-              backgroundColor: Colors.redAccent, // Make it urgent
-              foregroundColor: Colors.white,
-            ),
-          const SizedBox(height: 10),
-          FloatingActionButton.extended(
-            heroTag: "addschool",
-            onPressed: _addSchoolDialog,
-            label: const Text("Tambah Sekolah"),
-            icon: const Icon(Icons.add_location),
-            backgroundColor: Colors.orange[800],
-            foregroundColor: Colors.white,
+          Icon(icon, size: 18, color: Colors.grey),
+          const SizedBox(width: 8),
+          Text("$title: ", style: const TextStyle(fontWeight: FontWeight.w500)),
+          Expanded(
+            child: Text(value, style: TextStyle(color: color)),
           ),
         ],
       ),

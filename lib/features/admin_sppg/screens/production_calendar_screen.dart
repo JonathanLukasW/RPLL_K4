@@ -45,7 +45,9 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
   Future<void> _fetchSchedules() async {
     setState(() => _isLoading = true);
     try {
+      // THIS NOW CALLS THE CORRECTLY DEFINED METHOD
       final data = await _scheduleService.getSchedulesByMonth(_focusedDay);
+
       Map<DateTime, List<ProductionSchedule>> newMap = {};
       for (var item in data) {
         final dateKey = DateTime(
