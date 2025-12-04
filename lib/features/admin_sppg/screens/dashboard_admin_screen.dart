@@ -402,7 +402,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
 
               const PopupMenuItem<String>(
                 value: 'stats',
-                child: Text("Laporan Kinerja"),
+                child: Text("Laporan"),
               ),
               const PopupMenuDivider(),
               const PopupMenuItem<String>(

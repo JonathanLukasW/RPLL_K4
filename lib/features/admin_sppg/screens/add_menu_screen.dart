@@ -14,15 +14,30 @@ class AddMenuScreen extends StatefulWidget {
 class _AddMenuScreenState extends State<AddMenuScreen> {
   final _formKey = GlobalKey<FormState>();
   final MenuService _menuService = MenuService();
-  
+
   // Controllers
   final TextEditingController _nameController = TextEditingController();
-  final TextEditingController _durationController = TextEditingController();
+  final TextEditingController _durationController = TextEditingController(
+    text: '0',
+  ); // Default 0
+  final TextEditingController _consumeMinutesController = TextEditingController(
+    text: '120',
+  );
 
   // Daftar Kategori Tetap (Untuk Dropdown)
-  final List<String> _categories = ['Nasi/Karbo', 'Lauk Protein', 'Sayur/Serat', 'Pelengkap'];
+  // [FIX KRITIS] Harus mencakup semua nilai kategori yang mungkin ada di database
+  final List<String> _categories = [
+    'Karbo', // Asumsi Nasi Putih / Spaghetti adalah Karbo
+    'Lauk Protein',
+    'Lauk Nabati', // Dari data dump lo ada ini
+    'Saus/Lauk', // Dari data dump lo ada ini
+    'Sayur', // Dari data dump lo ada ini
+    'Buah', // Dari data dump lo ada ini
+    'Pelengkap', // Dari data dump lo ada ini
+  ];
+
   String? _selectedCategory;
-  
+
   bool _isSubmitting = false;
 
   @override
@@ -31,7 +46,11 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
     if (widget.menuToEdit != null) {
       // Mode Edit: Isi form dengan data yang sudah ada
       _nameController.text = widget.menuToEdit!.name;
-      _durationController.text = widget.menuToEdit!.cookingDurationMinutes.toString();
+      _durationController.text = widget.menuToEdit!.cookingDurationMinutes
+          .toString();
+      // [BARU] Isi field Batas Konsumsi
+      _consumeMinutesController.text = widget.menuToEdit!.maxConsumeMinutes
+          .toString();
       _selectedCategory = widget.menuToEdit!.category;
     }
   }
@@ -40,6 +59,7 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
   void dispose() {
     _nameController.dispose();
     _durationController.dispose();
+    _consumeMinutesController.dispose(); // [BARU] Dispose controller
     super.dispose();
   }
 
@@ -47,10 +67,16 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
     if (_formKey.currentState!.validate() && _selectedCategory != null) {
       setState(() => _isSubmitting = true);
 
+      // Ambil nilai baru
+      final int duration = int.tryParse(_durationController.text) ?? 0;
+      final int maxConsume =
+          int.tryParse(_consumeMinutesController.text) ?? 120; // [BARU]
+
       final Map<String, dynamic> menuData = {
         'name': _nameController.text,
         'category': _selectedCategory,
-        'cooking_duration_minutes': int.tryParse(_durationController.text) ?? 0,
+        'cooking_duration_minutes': duration,
+        'max_consume_minutes': maxConsume, // [BARU] Masukkan ke data
       };
 
       try {
@@ -61,24 +87,28 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
           // Mode Edit (UC12)
           await _menuService.updateMenu(widget.menuToEdit!.id, menuData);
         }
-
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Menu berhasil ${widget.menuToEdit == null ? 'ditambahkan' : 'diperbarui'}!"),
+            content: Text(
+              "Menu berhasil ${widget.menuToEdit == null ? 'ditambahkan' : 'diperbarui'}!",
+            ),
             backgroundColor: Colors.green,
           ),
         );
         Navigator.pop(context, true); // Balik dan kirim sinyal sukses
-
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
+        );
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }
     } else {
       if (_selectedCategory == null) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Kategori wajib dipilih!")));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Kategori wajib dipilih!")),
+        );
       }
     }
   }
@@ -87,7 +117,9 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text(widget.menuToEdit == null ? "Tambah Menu Baru" : "Edit Menu"),
+        title: Text(
+          widget.menuToEdit == null ? "Tambah Menu Baru" : "Edit Menu",
+        ),
         backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
       ),
@@ -101,14 +133,20 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
               // Nama Makanan
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: "Nama Makanan", prefixIcon: Icon(Icons.food_bank)),
+                decoration: const InputDecoration(
+                  labelText: "Nama Makanan",
+                  prefixIcon: Icon(Icons.food_bank),
+                ),
                 validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
               ),
               const SizedBox(height: 15),
 
               // Dropdown Kategori
               DropdownButtonFormField<String>(
-                decoration: const InputDecoration(labelText: "Kategori Menu", prefixIcon: Icon(Icons.category)),
+                decoration: const InputDecoration(
+                  labelText: "Kategori Menu",
+                  prefixIcon: Icon(Icons.category),
+                ),
                 value: _selectedCategory,
                 items: _categories.map((String value) {
                   return DropdownMenuItem<String>(
@@ -116,23 +154,41 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
                     child: Text(value),
                   );
                 }).toList(),
-                onChanged: (String? newValue) => setState(() => _selectedCategory = newValue),
+                onChanged: (String? newValue) =>
+                    setState(() => _selectedCategory = newValue),
                 validator: (v) => v == null ? "Pilih kategori" : null,
               ),
               const SizedBox(height: 15),
 
-              // Estimasi Durasi Masak
               TextFormField(
                 controller: _durationController,
                 keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
-                  labelText: "Estimasi Durasi Masak (Menit)", 
+                  labelText: "Estimasi Durasi Masak (Menit)",
                   hintText: "Contoh: 60",
                   prefixIcon: Icon(Icons.timer),
                 ),
-                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                validator: (v) => v!.isEmpty || int.tryParse(v) == null
+                    ? "Wajib diisi angka"
+                    : null,
               ),
-              
+
+              const SizedBox(height: 15),
+
+              // [BARU] Batas Waktu Konsumsi
+              TextFormField(
+                controller: _consumeMinutesController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Batas Waktu Konsumsi (Menit)",
+                  hintText: "Contoh: 120",
+                  prefixIcon: Icon(Icons.hourglass_bottom),
+                ),
+                validator: (v) => v!.isEmpty || (int.tryParse(v) ?? 0) < 30
+                    ? "Minimal 30 menit"
+                    : null,
+              ),
+
               const SizedBox(height: 30),
 
               // Tombol Simpan
@@ -141,15 +197,20 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
                 child: ElevatedButton(
                   onPressed: _isSubmitting ? null : _submitForm,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green[700], 
-                    padding: const EdgeInsets.symmetric(vertical: 15)
+                    backgroundColor: Colors.green[700],
+                    padding: const EdgeInsets.symmetric(vertical: 15),
                   ),
-                  child: _isSubmitting 
-                    ? const CircularProgressIndicator(color: Colors.white) 
-                    : Text(
-                        widget.menuToEdit == null ? "SIMPAN MENU" : "SIMPAN PERUBAHAN", 
-                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)
-                      ),
+                  child: _isSubmitting
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : Text(
+                          widget.menuToEdit == null
+                              ? "SIMPAN MENU"
+                              : "SIMPAN PERUBAHAN",
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
               ),
             ],

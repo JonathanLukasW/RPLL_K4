@@ -118,7 +118,7 @@ class _ProductionCalendarScreenState extends State<ProductionCalendarScreen> {
 
           return AlertDialog(
             title: Text(
-              scheduleToEdit == null ? "Jadwal Khusus" : "Edit Jadwal",
+              scheduleToEdit == null ? "Jadwal Produksi" : "Edit Jadwal",
             ),
             content: SingleChildScrollView(
               child: Column(

@@ -15,6 +15,8 @@ import '../../../core/screens/profile_screen.dart';
 import 'coordinator_request_screen.dart';
 // FIX KRITIS: Ganti import model yang salah. DeliveryRoute ada di route_model.dart
 import '../../../models/route_model.dart';
+import '../../shared/screens/notification_screen.dart';
+import '../../shared/services/notification_service.dart';
 
 class DashboardKoordinatorScreen extends StatefulWidget {
   const DashboardKoordinatorScreen({super.key});
@@ -341,6 +343,7 @@ class _DashboardKoordinatorScreenState
         backgroundColor: Colors.teal[800],
         foregroundColor: Colors.white,
         actions: [
+          // TOMBOL PENGAJUAN (REQUEST)
           IconButton(
             icon: const Icon(Icons.mail_outline),
             tooltip: "Pengajuan Perubahan",
@@ -350,6 +353,31 @@ class _DashboardKoordinatorScreenState
                 MaterialPageRoute(
                   builder: (_) => const CoordinatorRequestScreen(),
                 ),
+              );
+            },
+          ),
+          // [BARU] TOMBOL NOTIFIKASI
+          FutureBuilder<int>(
+            future: NotificationService().getUnreadCount(),
+            builder: (context, snapshot) {
+              final unreadCount = snapshot.data ?? 0;
+              return IconButton(
+                icon: Badge(
+                  isLabelVisible: unreadCount > 0,
+                  label: Text('$unreadCount'),
+                  child: const Icon(Icons.notifications),
+                ),
+                tooltip: "Notifikasi",
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const NotificationScreen(),
+                    ),
+                  ).then(
+                    (value) => setState(() {}),
+                  ); // Refresh dashboard setelah kembali
+                },
               );
             },
           ),

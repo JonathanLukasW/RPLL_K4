@@ -5,6 +5,27 @@ import 'package:intl/intl.dart';
 class NotificationScreen extends StatelessWidget {
   const NotificationScreen({super.key});
 
+  // [BARU] Fungsi Mark All Read
+  Future<void> _markAllAsRead(BuildContext context) async {
+    try {
+      await NotificationService().markAllAsRead();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Semua notifikasi ditandai sudah dibaca"),
+          ),
+        );
+      }
+      // Tidak perlu setState karena StreamBuilder akan rebuild otomatis
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Gagal mark all read: $e")));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -13,6 +34,13 @@ class NotificationScreen extends StatelessWidget {
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 1,
+        // [BARU] Tombol Mark All Read
+        actions: [
+          TextButton(
+            onPressed: () => _markAllAsRead(context),
+            child: const Text("Tandai Semua Sudah Dibaca"),
+          ),
+        ],
       ),
       body: StreamBuilder<List<NotificationModel>>(
         stream: NotificationService().getMyNotificationsStream(),
@@ -20,7 +48,7 @@ class NotificationScreen extends StatelessWidget {
           if (snapshot.connectionState == ConnectionState.waiting) {
             return const Center(child: CircularProgressIndicator());
           }
-          
+
           final data = snapshot.data ?? [];
           if (data.isEmpty) {
             return const Center(child: Text("Belum ada notifikasi."));
@@ -31,17 +59,32 @@ class NotificationScreen extends StatelessWidget {
             itemBuilder: (context, index) {
               final item = data[index];
               return Card(
-                color: item.isRead ? Colors.white : Colors.blue[50], // Warna beda kalau belum baca
+                color: item.isRead
+                    ? Colors.white
+                    : Colors.blue[50], // Warna beda kalau belum baca
                 margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 child: ListTile(
                   leading: _getIcon(item.type),
-                  title: Text(item.title, style: TextStyle(fontWeight: item.isRead ? FontWeight.normal : FontWeight.bold)),
+                  title: Text(
+                    item.title,
+                    style: TextStyle(
+                      fontWeight: item.isRead
+                          ? FontWeight.normal
+                          : FontWeight.bold,
+                    ),
+                  ),
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(item.body),
                       const SizedBox(height: 5),
-                      Text(DateFormat('dd MMM HH:mm').format(item.createdAt), style: const TextStyle(fontSize: 10, color: Colors.grey)),
+                      Text(
+                        DateFormat('dd MMM HH:mm').format(item.createdAt),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          color: Colors.grey,
+                        ),
+                      ),
                     ],
                   ),
                   onTap: () {
@@ -59,8 +102,10 @@ class NotificationScreen extends StatelessWidget {
 
   Icon _getIcon(String type) {
     if (type == 'error') return const Icon(Icons.error, color: Colors.red);
-    if (type == 'warning') return const Icon(Icons.warning, color: Colors.orange);
-    if (type == 'success') return const Icon(Icons.check_circle, color: Colors.green);
+    if (type == 'warning')
+      return const Icon(Icons.warning, color: Colors.orange);
+    if (type == 'success')
+      return const Icon(Icons.check_circle, color: Colors.green);
     return const Icon(Icons.notifications, color: Colors.blue);
   }
 }

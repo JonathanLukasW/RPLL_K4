@@ -126,7 +126,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text("Hapus Rute?"),
         content: const Text(
-          "Menghapus rute ini akan menghapus semua perhentian dan jadwal produksi terkait. Yakin, anjing?",
+          "Menghapus rute ini akan menghapus semua perhentian dan jadwal produksi terkait!",
         ),
         actions: [
           TextButton(

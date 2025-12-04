@@ -639,7 +639,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
           ),
         ],
       ),
-
+      // --- BOTTOM NAVIGATION BAR / ACTION BUTTONS ---
       bottomNavigationBar: isRouteCompleted
           ? null
           : Padding(
@@ -662,7 +662,6 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                         ),
                       ),
                     ),
-
                   // 2. SELESAIKAN RUTE (HANYA MUNCUL JIKA ACTIVE DAN SEMUA STOP COMPLETED)
                   if (isRouteActive && allStopsCompleted) ...[
                     const SizedBox(height: 10),
@@ -671,7 +670,7 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       child: ElevatedButton.icon(
                         onPressed: _isLoading
                             ? null
-                            : _tryCompleteRoute, // New function call
+                            : _tryCompleteRoute, // Call the method to complete route
                         icon: const Icon(Icons.check_circle),
                         label: _isLoading
                             ? const CircularProgressIndicator(

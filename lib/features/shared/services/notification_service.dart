@@ -75,17 +75,25 @@ class NotificationService {
         .eq('id', notificationId);
   }
 
+  // [BARU] 3B. TANDAI SEMUA SUDAH DIBACA
+  Future<void> markAllAsRead() async {
+    final myId = _supabase.auth.currentUser!.id;
+    await _supabase
+        .from('notifications')
+        .update({'is_read': true})
+        .eq('user_id', myId)
+        .eq('is_read', false);
+  }
+
   // 4. HITUNG BELUM DIBACA (Untuk Badge Lonceng)
   Future<int> getUnreadCount() async {
     final myId = _supabase.auth.currentUser!.id;
-
     // Di Supabase terbaru, ini langsung mengembalikan angka (int)
     final count = await _supabase
         .from('notifications')
         .count(CountOption.exact)
         .eq('user_id', myId)
         .eq('is_read', false);
-
-    return count; // <-- JANGAN PAKAI .count LAGI
+    return count; // <--- FIX KRITIS: Hapus .count. Hasilnya sudah INT.
   }
 }

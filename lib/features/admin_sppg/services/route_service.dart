@@ -34,7 +34,7 @@ class RouteService {
 
     final menus = await _supabase
         .from('menus')
-        .select('id, name, cooking_duration_minutes');
+        .select('id, name, cooking_duration_minutes, max_consume_minutes');
 
     int maxDuration = 0;
     List<String> requiredMenuIds = [];

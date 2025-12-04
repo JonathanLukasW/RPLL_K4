@@ -4,10 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../services/stats_service.dart';
 // BARU: Import service report yang baru kita buat
+import '../services/stats_service.dart';
 import '../services/report_service.dart';
-import '../services/complaint_service.dart';
-import '../services/coordinator_service.dart'; // For Koordinator/Teacher Models
-import '../services/teacher_service.dart'; // For Koordinator/Teacher Models
+import '../services/complaint_service.dart'; // <--- PASTIKAN INI ADA
+import '../services/coordinator_service.dart';
+import '../services/teacher_service.dart';
 
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key});
@@ -18,12 +19,15 @@ class StatisticsScreen extends StatefulWidget {
 class _StatisticsScreenState extends State<StatisticsScreen>
     with SingleTickerProviderStateMixin {
   // Tambahkan SingleTickerProviderStateMixin
-
   late TabController _tabController;
   final StatsService _statsService = StatsService();
-  final AdminReportService _reportService = AdminReportService(); // BARU
+  final AdminReportService _reportService = AdminReportService();
   final ComplaintService _complaintService =
       ComplaintService(); // UNTUK KOMPLAIN
+
+  // [FIX] Definisikan Key dan Service yang hilang/digunakan di _buildComplaintsTab
+  Key _complaintKey = UniqueKey(); // <--- FIX 2: DEFINISI KEY INI!
+
   Map<String, int>? _stats;
   bool _isLoading = true;
 
@@ -80,9 +84,7 @@ class _StatisticsScreenState extends State<StatisticsScreen>
               Colors.white70, // <--- SET INACTIVE LABEL TO WHITE70
           isScrollable: true,
           tabs: const [
-            Tab(
-              text: "1. Laporan Distribusi dan Produksi",
-            ), // Global Stats (Old Pie Chart)
+            Tab(text: "1. Pengiriman"), // Global Stats (Old Pie Chart)
             Tab(text: "2. Rute & Detail"), // All Routes (Ongoing & History)
             Tab(text: "3. Anggota"), // All Users (Kurir, Koord, Wali)
             Tab(text: "4. Keluhan"), // Complaints
@@ -248,7 +250,8 @@ class _StatisticsScreenState extends State<StatisticsScreen>
             final route = routes[i];
             final routeStops = route['delivery_stops'] as List<dynamic>? ?? [];
             final courierName =
-                route['profiles!courier_id']?['full_name'] ?? 'Kurir N/A';
+                route['profiles!courier_id']?['full_name'] ??
+                'Kurir N/A'; //also make sure the courier name is properly displayed
             final status = route['status'];
             final isOngoing = status == 'active' || status == 'pending';
             final formattedDate = DateFormat(
@@ -373,100 +376,251 @@ class _StatisticsScreenState extends State<StatisticsScreen>
     );
   }
 
-  // TAB 4: KELUHAN MASUK (Koordinator & Wali Kelas)
+  // TAB 4: KELUHAN MASUK (Remake total, menampilkan Global Pie Chart + List Keluhan)
   Widget _buildComplaintsTab() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future:
-          Future.wait([
-            _complaintService.getCoordinatorComplaints(),
-            _complaintService.getTeacherComplaints(),
-          ]).then((results) {
-            final coordinatorComplaints = results[0]
-                .map((c) => {...c, 'source': 'Koordinator'})
-                .toList();
-            final teacherComplaints = results[1]
-                .map((t) => {...t, 'source': 'Wali Kelas'})
-                .toList();
-            return [...coordinatorComplaints, ...teacherComplaints];
-          }),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty)
-          return const Center(child: Text("Aman! Tidak ada keluhan masuk."));
+    if (_isLoading) return const Center(child: CircularProgressIndicator());
+    if (_stats == null)
+      return const Center(child: Text("Gagal memuat data statistik global."));
 
-        // Sort by creation time
-        data.sort(
-          (a, b) => DateTime.parse(
-            b['created_at'],
-          ).compareTo(DateTime.parse(a['created_at'])),
-        );
+    // 1. Ambil data Pie Chart Global (dari _stats - Tab 1)
+    final pieChartDataGlobal = PieChartData(
+      sectionsSpace: 2,
+      centerSpaceRadius: 50,
+      sections: [
+        // Bagian Hijau (Sukses Diterima)
+        PieChartSectionData(
+          color: Colors.green,
+          value: _stats!['received']!.toDouble(),
+          title: '${_stats!['received']}',
+          radius: 60,
+          titleStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        // Bagian Merah (Masalah)
+        PieChartSectionData(
+          color: Colors.red,
+          value: _stats!['issues']!.toDouble(),
+          title: '${_stats!['issues']}',
+          radius: 60,
+          titleStyle: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+        // Bagian Abu (Dalam Proses / Pending/Completed Courier)
+        PieChartSectionData(
+          color: Colors.grey,
+          value: _stats!['pending']!.toDouble(),
+          title: '${_stats!['pending']}',
+          radius: 50,
+          titleStyle: const TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+            color: Colors.white,
+          ),
+        ),
+      ],
+    );
 
-        return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final complaint = data[i];
-            final isResolved = complaint['admin_response'] != null;
-            final source = complaint['source'];
+    return Column(
+      children: [
+        // --- SECTION A: GLOBAL PIE CHART ---
+        const Padding(
+          padding: EdgeInsets.all(16.0),
+          child: Text(
+            "Daftar Keluhan",
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+        ),
+        SizedBox(height: 220, child: PieChart(pieChartDataGlobal)),
 
-            // Logic to display relevant notes/issues
-            String complaintBody;
-            String schoolName;
+        const Padding(
+          padding: EdgeInsets.only(top: 10, bottom: 10),
+          child: Text(
+            "Daftar Keluhan Masuk Koordinator & Wali Kelas",
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: Colors.red,
+            ),
+          ),
+        ),
+        const Divider(),
 
-            if (source == 'Koordinator') {
-              complaintBody =
-                  "Masalah Kuantitas/Kemasan: ${complaint['reception_notes']}";
-              schoolName = complaint['schools']['name'] ?? 'N/A';
-            } else {
-              // Wali Kelas
-              // Note: The teacher complaint query joins class_receptions -> delivery_stops -> schools
-              complaintBody =
-                  "Masalah Kualitas (${complaint['issue_type']}): ${complaint['notes']}";
-              schoolName =
-                  complaint['delivery_stops']['schools']['name'] ?? 'N/A';
-            }
+        // --- SECTION B: LIST KELUHAN (DARI COMPLAINT SERVICE) ---
+        Expanded(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            key: _complaintKey, // Memaksa refresh list keluhan
+            future: _complaintService.getSppgComplaints(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(
+                  child: Text("Error List Keluhan: ${snapshot.error}"),
+                );
+              }
 
-            return Card(
-              color: isResolved ? Colors.green[50] : Colors.red[50],
-              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: ListTile(
-                leading: Icon(
-                  Icons.warning,
-                  color: isResolved ? Colors.green : Colors.red,
-                ),
-                title: Text("$schoolName ($source)"),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(complaintBody),
-                    const SizedBox(height: 4),
-                    Text(
-                      isResolved ? "DITANGANI" : "PENDING",
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
+              final data = snapshot.data ?? [];
+              if (data.isEmpty) {
+                return const Center(child: Text("Tidak ada keluhan masuk."));
+              }
+
+              return ListView.builder(
+                itemCount: data.length,
+                itemBuilder: (ctx, i) {
+                  final item = data[i];
+                  final isResolved = item['admin_response'] != null;
+                  final reporterRole = item['reporter_role'] ?? 'N/A';
+
+                  // Logic untuk Tindak Lanjut
+                  final targetTable = reporterRole == 'walikelas'
+                      ? 'class_receptions'
+                      : 'delivery_stops';
+                  final targetId = item['id'];
+
+                  return Card(
+                    color: isResolved ? Colors.green[50] : Colors.red[100],
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      leading: Icon(
+                        isResolved ? Icons.check_circle : Icons.warning,
                         color: isResolved ? Colors.green : Colors.red,
                       ),
-                    ),
-                  ],
-                ),
-                trailing: const Icon(Icons.chevron_right),
-                // Tapping should open a detailed resolution dialog (Omitted for brevity)
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(
-                        "Detail Keluhan: ${complaintBody.split(':')[0]}",
+                      title: Text(
+                        item['school_name'] ?? 'Sekolah N/A',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Dari: ${item['reporter_name']} (${reporterRole.toUpperCase()})",
+                          ),
+                          Text("Keluhan: ${item['notes']}"),
+                          Text(
+                            isResolved
+                                ? "Respon: ${item['admin_response']}"
+                                : "Status: BELUM DITINDAK LANJUT",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isResolved
+                                  ? Colors.green[800]
+                                  : Colors.red[800],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      trailing: isResolved
+                          ? const Icon(Icons.reply, color: Colors.grey)
+                          : ElevatedButton(
+                              // Panggil dialog respons
+                              onPressed: () => _showRespondDialog(
+                                item,
+                                targetTable,
+                                targetId,
+                              ),
+                              child: const Text("Tindak Lanjut"),
+                            ),
                     ),
                   );
                 },
-              ),
-            );
-          },
-        );
-      },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  // Tambahkan _showRespondDialog (dari CenterInfoScreen, tapi diganti nama)
+
+  void _showRespondDialog(
+    Map<String, dynamic> complaint,
+    String targetTable,
+    String targetTableId,
+  ) {
+    final responseController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Tindak Lanjut Keluhan"),
+        content: TextField(
+          controller: responseController,
+          decoration: InputDecoration(
+            labelText:
+                "Instruksi / Tindak Lanjut Admin SPPG (Untuk ${complaint['reporter_role'].toUpperCase()})",
+            border: const OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("BATAL"),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (responseController.text.isEmpty) {
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("Wajib isi instruksi!")),
+                );
+                return;
+              }
+              Navigator.pop(ctx);
+
+              // Cek ID Penerima Notifikasi (ID user profiles/auth)
+              String finalReporterUserId;
+              try {
+                finalReporterUserId = await _complaintService
+                    .getReporterIdForNotification(
+                      targetTableId,
+                      complaint['reporter_role'],
+                    );
+              } catch (e) {
+                if (mounted)
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text("Gagal tentukan penerima notifikasi: $e"),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                return;
+              }
+
+              await _complaintService.respondToComplaint(
+                id: complaint['id'], // ID unik complaint
+                response: responseController.text,
+                reporterId:
+                    finalReporterUserId, // ID user yang akan dapat notif
+                reporterRole: complaint['reporter_role'],
+                targetTableId: targetTableId,
+                targetTableName: targetTable,
+              );
+              _refreshAllTabs();
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text("Tindak Lanjut & Notifikasi Terkirim!"),
+                    backgroundColor: Colors.green,
+                  ),
+                );
+              }
+            },
+            child: const Text("KIRIM INSTRUKSI"),
+          ),
+        ],
+      ),
     );
   }
 }

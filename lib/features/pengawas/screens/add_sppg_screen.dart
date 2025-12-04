@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
-import 'package:supabase_flutter/supabase_flutter.dart'; 
+import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'location_picker_screen.dart'; 
-import '../services/sppg_service.dart'; 
-import '../../../models/sppg_model.dart'; 
+import 'location_picker_screen.dart';
+import '../services/sppg_service.dart';
+import '../../../models/sppg_model.dart';
 
 class AddSppgScreen extends StatefulWidget {
   final Sppg? sppgToEdit; // Data untuk diedit (Null = Mode Tambah)
@@ -22,15 +22,15 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
   final _sppgNameController = TextEditingController();
   final _sppgAddressController = TextEditingController();
   final _sppgPhoneController = TextEditingController();
-  final _sppgEmailController = TextEditingController(); 
-  
-  // Lokasi 
+  final _sppgEmailController = TextEditingController();
+
+  // Lokasi
   final _latController = TextEditingController();
   final _longController = TextEditingController();
 
   // --- DATA ADMIN (Hanya untuk Mode Tambah) ---
   final _adminNameController = TextEditingController();
-  final _adminEmailController = TextEditingController(); 
+  final _adminEmailController = TextEditingController();
   final _adminPasswordController = TextEditingController();
 
   bool _isSubmitting = false;
@@ -45,14 +45,14 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
       _sppgAddressController.text = s.address ?? '';
       _sppgPhoneController.text = s.phone ?? '';
       _sppgEmailController.text = s.email ?? '';
-      
+
       if (s.latitude != null) _latController.text = s.latitude.toString();
       if (s.longitude != null) _longController.text = s.longitude.toString();
     }
   }
 
   Future<void> _openMapPicker() async {
-    double initialLat = double.tryParse(_latController.text) ?? -6.9175; 
+    double initialLat = double.tryParse(_latController.text) ?? -6.9175;
     double initialLong = double.tryParse(_longController.text) ?? 107.6191;
 
     final LatLng? result = await Navigator.push(
@@ -78,7 +78,7 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
 
   Future<void> _submitForm() async {
     if (_formKey.currentState!.validate()) {
-      setState(() => _isSubmitting = true); 
+      setState(() => _isSubmitting = true);
 
       try {
         // 1. Siapkan Data SPPG (Tanpa Tanggal Berdiri)
@@ -93,23 +93,27 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
 
         if (widget.sppgToEdit == null) {
           // --- MODE TAMBAH ---
-          if (_adminEmailController.text.isEmpty || _adminPasswordController.text.isEmpty) {
-             throw Exception("Email & Password Admin wajib diisi.");
+          if (_adminEmailController.text.isEmpty ||
+              _adminPasswordController.text.isEmpty) {
+            throw Exception("Email & Password Admin wajib diisi.");
           }
 
-          final supabase = Supabase.instance.client; 
-          final sppgRes = await supabase.from('sppgs').insert(sppgData).select().single();
+          final supabase = Supabase.instance.client;
+          final sppgRes = await supabase
+              .from('sppgs')
+              .insert(sppgData)
+              .select()
+              .single();
           final String newSppgId = sppgRes['id'];
 
           // Create Admin
           await SppgService().createSppgUser(
-             email: _adminEmailController.text.trim(),
-             password: _adminPasswordController.text,
-             sppgId: newSppgId,
-             sppgName: _sppgNameController.text,
-             fullName: _adminNameController.text.trim(),
+            email: _adminEmailController.text.trim(),
+            password: _adminPasswordController.text,
+            sppgId: newSppgId,
+            sppgName: _sppgNameController.text,
+            fullName: _adminNameController.text.trim(),
           );
-
         } else {
           // --- MODE EDIT ---
           await SppgService().updateSppg(widget.sppgToEdit!.id, sppgData);
@@ -118,15 +122,20 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(widget.sppgToEdit == null ? "SPPG Baru Berhasil!" : "Data SPPG Diperbarui!"), 
-            backgroundColor: Colors.green
+            content: Text(
+              widget.sppgToEdit == null
+                  ? "SPPG Baru Berhasil!"
+                  : "Data SPPG Diperbarui!",
+            ),
+            backgroundColor: Colors.green,
           ),
         );
-        Navigator.pop(context, true); 
-
+        Navigator.pop(context, true);
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Gagal: $e"), backgroundColor: Colors.red),
+        );
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }
@@ -135,14 +144,14 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
 
   @override
   void dispose() {
-    _sppgNameController.dispose(); 
-    _sppgAddressController.dispose(); 
+    _sppgNameController.dispose();
+    _sppgAddressController.dispose();
     _sppgPhoneController.dispose();
     _sppgEmailController.dispose();
-    _latController.dispose(); 
+    _latController.dispose();
     _longController.dispose();
-    _adminNameController.dispose(); 
-    _adminEmailController.dispose(); 
+    _adminNameController.dispose();
+    _adminEmailController.dispose();
     _adminPasswordController.dispose();
     super.dispose();
   }
@@ -164,44 +173,73 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text("1. Detail SPPG (Dapur)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
-              const SizedBox(height: 15),
-              
-              TextFormField(
-                controller: _sppgNameController, 
-                decoration: const InputDecoration(labelText: "Nama SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.store)), 
-                validator: (v) => v!.isEmpty ? "Wajib" : null
+              const Text(
+                "1. Detail SPPG (Dapur)",
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue,
+                ),
               ),
-              const SizedBox(height: 10),
-              
+              const SizedBox(height: 15),
+
               TextFormField(
-                controller: _sppgAddressController, 
-                maxLines: 2, 
-                decoration: const InputDecoration(labelText: "Alamat SPPG", border: OutlineInputBorder(), prefixIcon: Icon(Icons.map)), 
-                validator: (v) => v!.isEmpty ? "Wajib" : null
+                controller: _sppgNameController,
+                decoration: const InputDecoration(
+                  labelText: "Nama SPPG",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.store),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib" : null,
               ),
               const SizedBox(height: 10),
 
               TextFormField(
-                controller: _sppgPhoneController, 
-                keyboardType: TextInputType.phone, 
-                decoration: const InputDecoration(labelText: "Telepon Kantor", border: OutlineInputBorder(), prefixIcon: Icon(Icons.phone)), 
-                validator: (v) => v!.isEmpty ? "Wajib" : null
+                controller: _sppgAddressController,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: "Alamat SPPG",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.map),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib" : null,
               ),
               const SizedBox(height: 10),
-              
+
               TextFormField(
-                controller: _sppgEmailController, 
-                keyboardType: TextInputType.emailAddress, 
-                decoration: const InputDecoration(labelText: "Email Kantor (Opsional)", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email))
+                controller: _sppgPhoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: "Telepon Kantor",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.phone),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib" : null,
               ),
-              
+              const SizedBox(height: 10),
+
+              TextFormField(
+                controller: _sppgEmailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: "Email Kantor (Opsional)",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
+                ),
+              ),
+
               const SizedBox(height: 20),
-              
+
               // --- Input Lat/Long Manual + Tombol Peta ---
-              const Text("Titik Koordinat (GPS)", style: TextStyle(fontWeight: FontWeight.bold)),
+              const Text(
+                "Titik Koordinat (GPS)",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
               const SizedBox(height: 5),
-              const Text("Isi manual atau gunakan tombol 'Buka Peta'", style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const Text(
+                "Isi manual atau gunakan tombol 'Buka Peta'",
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
               const SizedBox(height: 10),
 
               Row(
@@ -209,11 +247,14 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _latController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                        signed: true,
+                      ),
                       decoration: const InputDecoration(
-                        labelText: "Latitude", 
+                        labelText: "Latitude",
                         hintText: "-6.xxxx",
-                        border: OutlineInputBorder()
+                        border: OutlineInputBorder(),
                       ),
                     ),
                   ),
@@ -221,11 +262,14 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
                   Expanded(
                     child: TextFormField(
                       controller: _longController,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                        signed: true,
+                      ),
                       decoration: const InputDecoration(
-                        labelText: "Longitude", 
+                        labelText: "Longitude",
                         hintText: "107.xxxx",
-                        border: OutlineInputBorder()
+                        border: OutlineInputBorder(),
                       ),
                     ),
                   ),
@@ -235,29 +279,62 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: _openMapPicker, 
-                  icon: const Icon(Icons.map), 
+                  onPressed: _openMapPicker,
+                  icon: const Icon(Icons.map),
                   label: const Text("Ambil dari Peta (Otomatis)"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: Colors.blue[100],
-                    foregroundColor: Colors.blue[900]
+                    foregroundColor: Colors.blue[900],
                   ),
                 ),
               ),
-              // --------------------------------------------------
 
+              // --------------------------------------------------
               const SizedBox(height: 30),
               const Divider(thickness: 2),
-              
+
               // BAGIAN ADMIN HANYA MUNCUL SAAT TAMBAH BARU
               if (!isEdit) ...[
-                const Text("2. Akun Admin SPPG", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
+                const Text(
+                  "2. Akun Admin SPPG",
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue,
+                  ),
+                ),
                 const SizedBox(height: 15),
-                TextFormField(controller: _adminNameController, decoration: const InputDecoration(labelText: "Nama Lengkap Admin", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+                TextFormField(
+                  controller: _adminNameController,
+                  decoration: const InputDecoration(
+                    labelText: "Nama Lengkap Admin",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.person),
+                  ),
+                  validator: (v) => v!.isEmpty ? "Wajib" : null,
+                ),
                 const SizedBox(height: 15),
-                TextFormField(controller: _adminEmailController, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)), validator: (v) => v!.isEmpty ? "Wajib" : null),
+                TextFormField(
+                  controller: _adminEmailController,
+                  keyboardType: TextInputType.emailAddress,
+                  decoration: const InputDecoration(
+                    labelText: "Email Login",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.email),
+                  ),
+                  validator: (v) => v!.isEmpty ? "Wajib" : null,
+                ),
                 const SizedBox(height: 10),
-                TextFormField(controller: _adminPasswordController, obscureText: true, decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)), validator: (v) => v!.length < 6 ? "Min 6 karakter" : null),
+                TextFormField(
+                  controller: _adminPasswordController,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: "Password",
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.lock),
+                  ),
+                  validator: (v) => v!.length < 6 ? "Min 6 karakter" : null,
+                ),
                 const SizedBox(height: 40),
               ],
 
@@ -265,10 +342,20 @@ class _AddSppgScreenState extends State<AddSppgScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _isSubmitting ? null : _submitForm,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], padding: const EdgeInsets.symmetric(vertical: 16)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue[800],
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
                   child: _isSubmitting
                       ? const CircularProgressIndicator(color: Colors.white)
-                      : Text(isEdit ? "SIMPAN PERUBAHAN" : "SIMPAN", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                      : Text(
+                          isEdit ? "SIMPAN PERUBAHAN" : "SIMPAN",
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
+                        ),
                 ),
               ),
               const SizedBox(height: 30),

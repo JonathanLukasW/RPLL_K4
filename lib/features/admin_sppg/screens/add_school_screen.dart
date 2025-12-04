@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:collection/collection.dart';
 import 'dart:convert'; // Need this for JSON encoding/decoding
-
-import '../../pengawas/screens/location_picker_screen.dart';
-import '../services/school_service.dart';
 import '../services/menu_service.dart';
 import '../../../models/school_model.dart';
 import '../../../models/menu_model.dart';
+import '../../pengawas/screens/location_picker_screen.dart';
+import '../services/school_service.dart';
+import '../services/menu_service.dart';
 
 // Mapping for days (Mon-Sat)
 const List<String> _days = [
@@ -49,6 +49,9 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   // --- State Variables ---
   List<Menu> _availableMenus = [];
   List<String?> _selectedMenuIds = [null, null, null];
+
+  // [BARU] State untuk Menu Set Pilihan
+  String? _selectedMenuSetName;
   bool _isMenuLoading = true;
   bool _isHighRisk = false;
   bool _isSubmitting = false;
@@ -212,20 +215,63 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     }
   }
 
-  // --- 3. Submit ke Database ---
+  // Logic untuk mengkonversi Menu Set Nama menjadi Menu IDs
+  void _selectPredefinedMenuSet(String? setName) {
+    if (setName == null || setName == 'Custom Menu') {
+      setState(() {
+        _selectedMenuSetName = setName;
+        // Jangan reset _selectedMenuIds saat Custom agar user bisa lanjut edit
+      });
+      return;
+    }
+
+    final selectedNames = MenuSetDefinitions.predefinedSets[setName];
+    if (selectedNames == null) return;
+
+    List<String?> newSelection = [];
+
+    // Mapping Names to IDs
+    for (var name in selectedNames) {
+      final menu = _availableMenus.firstWhereOrNull((m) => m.name == name);
+      if (menu != null) {
+        newSelection.add(menu.id);
+      }
+    }
+
+    // Fill up to 5 slots if needed
+    while (newSelection.length < 5) {
+      newSelection.add(null);
+    }
+
+    // Reset to min 3 slots if fewer are needed (optional, for clean UI)
+    while (newSelection.length > 5) {
+      newSelection.removeLast();
+    }
+
+    setState(() {
+      _selectedMenuSetName = setName;
+      _selectedMenuIds = newSelection;
+    });
+  }
+
+  // --- 3. Submit ke Database (Perlu Diperbaiki Logic Validasi Menu) ---
   Future<void> _submitForm() async {
     // Check if at least one day is scheduled
     if (_weeklySchedule.values.every((time) => time == null)) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Wajib mengatur jadwal minimal 1 hari!")),
       );
       return;
     }
 
-    final List<String> validMenuIds = _selectedMenuIds
+    // Cek Menu: Jika Custom, validasi harus minimal 3. Jika Predefined, anggap valid.
+    final List<String> finalMenuIds = _selectedMenuIds
         .whereType<String>()
         .toList();
-    if (validMenuIds.length < 3) {
+
+    if (finalMenuIds.length < 3) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Wajib pilih minimal 3 item menu set!")),
       );
@@ -234,13 +280,12 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
 
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
-
       try {
         // --- NEW: SCHEDULE SERIALIZATION ---
         final String scheduleJson = _serializeWeeklySchedule();
 
-        // --- REBUILD MENU_DEFAULT STRING ---
-        final menuNames = validMenuIds
+        // --- REBUILD MENU_DEFAULT STRING (menggunakan finalMenuIds) ---
+        final menuNames = finalMenuIds
             .map(
               (id) =>
                   _availableMenus.firstWhereOrNull((m) => m.id == id)?.name ??
@@ -281,6 +326,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
         );
         Navigator.pop(context, true);
       } catch (e) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text("Gagal Simpan: ${e.toString()}"),
@@ -308,6 +354,9 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   @override
   Widget build(BuildContext context) {
     final isEdit = widget.schoolToEdit != null;
+    final isCustomMenu =
+        _selectedMenuSetName == 'Custom Menu' ||
+        _selectedMenuSetName == null; // Default ke custom jika null
 
     return Scaffold(
       appBar: AppBar(
@@ -496,87 +545,137 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                       ),
                       validator: (v) => v!.isEmpty ? "Wajib" : null,
                     ),
-                    const SizedBox(height: 15),
-
-                    // --- MENU SET (UNCHANGED LOGIC) ---
+                    const SizedBox(
+                      height: 15,
+                    ), // --- MENU SET SELECTION (UPDATED) ---
                     const Text(
-                      "Menu Default Set (Min 3, Max 5)",
+                      "Set Menu Pilihan",
                       style: TextStyle(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 10),
 
-                    if (_availableMenus.isEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        color: Colors.yellow[100],
-                        child: const Text(
-                          "TIDAK ADA MENU!.",
-                          style: TextStyle(color: Colors.orange),
+                    // Dropdown Pilihan Menu Set
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: "Pilih Menu Set",
+                        prefixIcon: Icon(Icons.restaurant),
+                      ),
+                      value: _selectedMenuSetName ?? 'Custom Menu',
+                      items: [
+                        const DropdownMenuItem(
+                          value: 'Custom Menu',
+                          child: Text("Custom Menu (Pilih Manual)"),
+                        ),
+                        ...MenuSetDefinitions.predefinedSets.keys.map((name) {
+                          return DropdownMenuItem(
+                            value: name,
+                            child: Text(name),
+                          );
+                        }).toList(),
+                      ],
+                      onChanged: _selectPredefinedMenuSet,
+                    ),
+                    const SizedBox(height: 15),
+
+                    // --- TAMPILAN CUSTOM MENU (Conditional) ---
+                    if (isCustomMenu) ...[
+                      const Text(
+                        "Pilih Menu Default Set (Min 3, Max 5):",
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 10),
+
+                      if (_availableMenus.isEmpty)
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          color: Colors.yellow[100],
+                          child: const Text(
+                            "TIDAK ADA MENU!.",
+                            style: TextStyle(color: Colors.orange),
+                          ),
+                        ),
+
+                      // Dropdowns untuk Custom Menu
+                      ...List.generate(_selectedMenuIds.length, (index) {
+                        final availableItems = _availableMenus.map((menu) {
+                          return DropdownMenuItem<String>(
+                            value: menu.id,
+                            enabled: !_selectedMenuIds.any(
+                              (id) =>
+                                  id == menu.id &&
+                                  id != _selectedMenuIds[index],
+                            ),
+                            child: Text("${menu.name} (${menu.category})"),
+                          );
+                        }).toList();
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 10),
+                          child: DropdownButtonFormField<String>(
+                            decoration: InputDecoration(
+                              labelText: "Menu #${index + 1}",
+                              prefixIcon: const Icon(Icons.restaurant_menu),
+                            ),
+                            value: _selectedMenuIds[index],
+                            items: [
+                              const DropdownMenuItem<String>(
+                                value: null,
+                                child: Text("--- Pilih Menu ---"),
+                              ),
+                              ...availableItems,
+                            ],
+                            onChanged: (String? newValue) => setState(
+                              () => _selectedMenuIds[index] = newValue,
+                            ),
+                            validator: (v) => (index < 3 && v == null)
+                                ? "Menu #${index + 1} wajib diisi."
+                                : null,
+                          ),
+                        );
+                      }),
+
+                      // Tombol Add/Remove Slot
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (_selectedMenuIds.length < 5)
+                            TextButton.icon(
+                              icon: const Icon(
+                                Icons.add_circle,
+                                color: Colors.blue,
+                              ),
+                              label: const Text("Tambah Menu Set"),
+                              onPressed: () =>
+                                  setState(() => _selectedMenuIds.add(null)),
+                            ),
+                          if (_selectedMenuIds.length > 3)
+                            TextButton.icon(
+                              icon: const Icon(
+                                Icons.remove_circle,
+                                color: Colors.red,
+                              ),
+                              label: const Text("Hapus Menu Set"),
+                              onPressed: () =>
+                                  setState(() => _selectedMenuIds.removeLast()),
+                            ),
+                        ],
+                      ),
+                    ] else ...[
+                      // Tampilan Ringkasan Menu Set Pilihan
+                      Card(
+                        color: Colors.lightGreen[50],
+                        child: Padding(
+                          padding: const EdgeInsets.all(12.0),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: MenuSetDefinitions
+                                .predefinedSets[_selectedMenuSetName]!
+                                .map((name) => Text("• $name"))
+                                .toList(),
+                          ),
                         ),
                       ),
-
-                    ...List.generate(_selectedMenuIds.length, (index) {
-                      final availableItems = _availableMenus.map((menu) {
-                        return DropdownMenuItem<String>(
-                          value: menu.id,
-                          enabled: !_selectedMenuIds.any(
-                            (id) =>
-                                id == menu.id && id != _selectedMenuIds[index],
-                          ),
-                          child: Text("${menu.name} (${menu.category})"),
-                        );
-                      }).toList();
-
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 10),
-                        child: DropdownButtonFormField<String>(
-                          decoration: InputDecoration(
-                            labelText: "Menu #${index + 1}",
-                            prefixIcon: const Icon(Icons.restaurant_menu),
-                          ),
-                          value: _selectedMenuIds[index],
-                          items: [
-                            const DropdownMenuItem<String>(
-                              value: null,
-                              child: Text("--- Pilih Menu ---"),
-                            ),
-                            ...availableItems,
-                          ],
-                          onChanged: (String? newValue) => setState(
-                            () => _selectedMenuIds[index] = newValue,
-                          ),
-                          validator: (v) => (index < 3 && v == null)
-                              ? "Menu #${index + 1} wajib diisi."
-                              : null,
-                        ),
-                      );
-                    }),
-
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        if (_selectedMenuIds.length < 5)
-                          TextButton.icon(
-                            icon: const Icon(
-                              Icons.add_circle,
-                              color: Colors.blue,
-                            ),
-                            label: const Text("Tambah Menu Set"),
-                            onPressed: () =>
-                                setState(() => _selectedMenuIds.add(null)),
-                          ),
-                        if (_selectedMenuIds.length > 3)
-                          TextButton.icon(
-                            icon: const Icon(
-                              Icons.remove_circle,
-                              color: Colors.red,
-                            ),
-                            label: const Text("Hapus Menu Set"),
-                            onPressed: () =>
-                                setState(() => _selectedMenuIds.removeLast()),
-                          ),
-                      ],
-                    ),
+                      const SizedBox(height: 15),
+                    ],
 
                     const Divider(thickness: 2),
                     const SizedBox(height: 10),
