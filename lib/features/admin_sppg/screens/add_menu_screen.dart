@@ -16,13 +16,27 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
   final MenuService _menuService = MenuService();
 
   // Controllers
-  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _durationController = TextEditingController(
     text: '0',
-  ); // Default 0
+  );
   final TextEditingController _consumeMinutesController = TextEditingController(
     text: '120',
   );
+
+  // [BARU KONTROLER GIZI]
+  final TextEditingController _energyController = TextEditingController(
+    text: '0',
+  );
+  final TextEditingController _proteinController = TextEditingController(
+    text: '0.0',
+  );
+  final TextEditingController _fatController = TextEditingController(
+    text: '0.0',
+  );
+  final TextEditingController _carbsController = TextEditingController(
+    text: '0.0',
+  );
+  final TextEditingController _nameController = TextEditingController();
 
   // Daftar Kategori Tetap (Untuk Dropdown)
   // [FIX KRITIS] Harus mencakup semua nilai kategori yang mungkin ada di database
@@ -44,6 +58,7 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
   void initState() {
     super.initState();
     if (widget.menuToEdit != null) {
+      final s = widget.menuToEdit!;
       // Mode Edit: Isi form dengan data yang sudah ada
       _nameController.text = widget.menuToEdit!.name;
       _durationController.text = widget.menuToEdit!.cookingDurationMinutes
@@ -52,6 +67,11 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
       _consumeMinutesController.text = widget.menuToEdit!.maxConsumeMinutes
           .toString();
       _selectedCategory = widget.menuToEdit!.category;
+      // [BARU GIZI]
+      _energyController.text = s.energy.toString();
+      _proteinController.text = s.protein.toString();
+      _fatController.text = s.fat.toString();
+      _carbsController.text = s.carbs.toString();
     }
   }
 
@@ -59,7 +79,12 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
   void dispose() {
     _nameController.dispose();
     _durationController.dispose();
-    _consumeMinutesController.dispose(); // [BARU] Dispose controller
+    _consumeMinutesController.dispose();
+    // [BARU GIZI]
+    _energyController.dispose();
+    _proteinController.dispose();
+    _fatController.dispose();
+    _carbsController.dispose();
     super.dispose();
   }
 
@@ -70,13 +95,23 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
       // Ambil nilai baru
       final int duration = int.tryParse(_durationController.text) ?? 0;
       final int maxConsume =
-          int.tryParse(_consumeMinutesController.text) ?? 120; // [BARU]
+          int.tryParse(_consumeMinutesController.text) ?? 120;
 
+      // [BARU PARSING GIZI]
+      final int energy = int.tryParse(_energyController.text) ?? 0;
+      final double protein = double.tryParse(_proteinController.text) ?? 0.0;
+      final double fat = double.tryParse(_fatController.text) ?? 0.0;
+      final double carbs = double.tryParse(_carbsController.text) ?? 0.0;
       final Map<String, dynamic> menuData = {
         'name': _nameController.text,
-        'category': _selectedCategory,
-        'cooking_duration_minutes': duration,
-        'max_consume_minutes': maxConsume, // [BARU] Masukkan ke data
+        'category': _selectedCategory, 'cooking_duration_minutes': duration,
+        'max_consume_minutes': maxConsume,
+
+        // [BARU GIZI] Masukkan ke data
+        'energy': energy,
+        'protein': protein,
+        'fat': fat,
+        'carbs': carbs,
       };
 
       try {
@@ -188,7 +223,67 @@ class _AddMenuScreenState extends State<AddMenuScreen> {
                     ? "Minimal 30 menit"
                     : null,
               ),
+              const Divider(height: 30),
+              const Text(
+                "Kandungan Gizi per Porsi",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 15),
 
+              // Input Energi
+              TextFormField(
+                controller: _energyController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: "Energi (Kkal)",
+                  prefixIcon: Icon(Icons.flash_on),
+                ),
+                validator: (v) => v!.isEmpty || int.tryParse(v) == null
+                    ? "Wajib diisi angka"
+                    : null,
+              ),
+              const SizedBox(height: 15),
+
+              // Input Protein
+              TextFormField(
+                controller: _proteinController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: "Protein (gram)",
+                  prefixIcon: Icon(Icons.fitness_center),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // Input Lemak
+              TextFormField(
+                controller: _fatController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: "Lemak (gram)",
+                  prefixIcon: Icon(Icons.local_pizza),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
+
+              // Input Karbohidrat
+              TextFormField(
+                controller: _carbsController,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  labelText: "Karbohidrat (gram)",
+                  prefixIcon: Icon(Icons.bakery_dining),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
               const SizedBox(height: 30),
 
               // Tombol Simpan

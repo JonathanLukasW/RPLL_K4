@@ -8,6 +8,7 @@ class CoordinatorModel {
   final String email;
   final String schoolName; // Biar kita tau dia jaga di sekolah mana
   final String? schoolId;
+  final String? phoneNumber; // [BARU]
 
   CoordinatorModel({
     required this.id,
@@ -15,20 +16,20 @@ class CoordinatorModel {
     required this.email,
     required this.schoolName,
     required this.schoolId,
+    required this.phoneNumber,
   });
 
   factory CoordinatorModel.fromJson(Map<String, dynamic> json) {
-    // Ambil nama sekolah dari relasi (join)
     final school = json['schools'] != null
         ? json['schools']['name']
         : 'Belum ditentukan';
-
     return CoordinatorModel(
       id: json['id'].toString(),
       name: json['full_name'] ?? 'Tanpa Nama',
       email: json['email'] ?? '-',
       schoolName: school,
       schoolId: json['school_id']?.toString(),
+      phoneNumber: json['phone_number'] ?? json['phone'], // [BARU]
     );
   }
 }
@@ -40,8 +41,6 @@ class CoordinatorService {
   Future<List<CoordinatorModel>> getMyCoordinators() async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-
-      // Cek SPPG ID Admin
       final profile = await _supabase
           .from('profiles')
           .select('sppg_id')
@@ -49,10 +48,12 @@ class CoordinatorService {
           .single();
       final String mySppgId = profile['sppg_id'];
 
-      // Ambil profil role 'koordinator', join dengan tabel schools untuk dapat nama sekolahnya
+      // [UPDATE SELECT] Tambahkan phone_number
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, school_id, schools(name)')
+          .select(
+            'id, full_name, email, school_id, schools(name), phone_number', // <--- PASTIKAN 'school_id' ADA DI SINI
+          )
           .eq('sppg_id', mySppgId)
           .eq('role', 'koordinator');
 
@@ -69,6 +70,7 @@ class CoordinatorService {
     required String password,
     required String fullName,
     required String schoolId, // Wajib ada
+    required String phoneNumber,
   }) async {
     // Kredensial Supabase (Sama kayak courier service)
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
@@ -99,17 +101,17 @@ class CoordinatorService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
         String? newUserId = responseData['id'] ?? responseData['user']['id'];
-
         if (newUserId == null) throw Exception("Gagal dapat ID User.");
 
-        // B. Simpan ke Profiles (Role: koordinator, School ID: terisi)
+        // B. Simpan ke Profiles
         await _supabase.from('profiles').insert({
           'id': newUserId,
           'full_name': fullName,
           'email': email.trim(),
           'role': 'koordinator',
           'sppg_id': mySppgId,
-          'school_id': schoolId, // <-- PENTING
+          'school_id': schoolId,
+          'phone_number': phoneNumber, // [BARU] Simpan nomor telepon
         });
       } else {
         final errorData = jsonDecode(response.body);
@@ -123,7 +125,7 @@ class CoordinatorService {
     }
   }
 
-  // [BARU] 3. UPDATE AKUN KOORDINATOR
+  /// [BARU] 3. UPDATE AKUN KOORDINATOR
   Future<void> updateCoordinatorAccount(
     String userId,
     Map<String, dynamic> data,

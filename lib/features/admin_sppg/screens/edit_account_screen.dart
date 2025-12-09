@@ -5,6 +5,7 @@ import '../services/teacher_service.dart';
 import '../services/courier_service.dart';
 import '../services/school_service.dart';
 import '../../../models/school_model.dart';
+import 'package:collection/collection.dart';
 
 class EditAccountScreen extends StatefulWidget {
   final String userId;
@@ -27,6 +28,9 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   late final TextEditingController _nameController;
   late final TextEditingController _emailController;
   late final TextEditingController _classController;
+  late final TextEditingController _phoneController;
+  // [BARU] Controller untuk menampilkan nama sekolah saat ini (uneditable)
+  late final TextEditingController _currentSchoolNameController;
 
   List<School> _schools = [];
   String? _selectedSchoolId;
@@ -38,10 +42,25 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     super.initState();
     _nameController = TextEditingController(text: widget.initialData['name']);
     _emailController = TextEditingController(text: widget.initialData['email']);
+    _phoneController = TextEditingController(
+      text: widget.initialData['phoneNumber'],
+    );
     _classController = TextEditingController(
       text: widget.initialData['className'],
     );
     _selectedSchoolId = widget.initialData['schoolId'];
+
+    // [FIX 1: Ambil nama sekolah dari initialData untuk preview]
+    // Ambil nama sekolah dari data yang dilempar dari dashboard (sudah fix di atas)
+    final String currentSchoolName =
+        widget.initialData['schoolName'] ?? 'Belum Ditugaskan';
+    _currentSchoolNameController = TextEditingController(
+      text: currentSchoolName,
+    ); // <--- INI SUDAH BENAR
+
+    // Masalah: _selectedSchoolId akan ter-set ke null jika tidak ada (meski ada nama)
+    // Biarkan _selectedSchoolId default dari initialData['schoolId'].
+
     _fetchSchools();
   }
 
@@ -49,6 +68,12 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     try {
       final data = await SchoolService().getMySchools();
       if (!mounted) return;
+
+      // [FIX 2: Hapus logika pencarian nama sekolah di sini]
+      // Karena nama sekolah sudah dibawa dari dashboard, kita tidak perlu
+      // mencarinya lagi di sini yang rentan error. Kita hanya perlu meng-update
+      // _currentSchoolNameController JIKA _selectedSchoolId berubah (saat submit).
+
       setState(() {
         _schools = data;
         _isLoading = false;
@@ -69,6 +94,8 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
         final Map<String, dynamic> data = {
           'full_name': _nameController.text.trim(),
           'email': _emailController.text.trim(),
+          'phone_number': _phoneController.text
+              .trim(), // [BARU] Tambahkan phone number
         };
 
         if (widget.initialRole == 'koordinator' ||
@@ -114,11 +141,16 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     _nameController.dispose();
     _emailController.dispose();
     _classController.dispose();
+    _phoneController.dispose(); // [BARU] Dispose phone controller
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Cari nama sekolah yang saat ini dipilih (untuk display di dropdown)
+    final selectedSchool = _schools.firstWhereOrNull(
+      (s) => s.id == _selectedSchoolId,
+    );
     return Scaffold(
       appBar: AppBar(
         title: Text("Edit Akun ${widget.initialRole.toUpperCase()}"),
@@ -143,6 +175,16 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
                     ),
                     const SizedBox(height: 15),
                     TextFormField(
+                      controller: _phoneController, // [BARU] Phone Field
+                      keyboardType: TextInputType.phone,
+                      decoration: const InputDecoration(
+                        labelText: "Nomor Telepon",
+                        prefixIcon: Icon(Icons.phone),
+                      ),
+                      validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                    ),
+                    const SizedBox(height: 15),
+                    TextFormField(
                       controller: _emailController,
                       decoration: const InputDecoration(
                         labelText: "Email Login",
@@ -155,28 +197,72 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
 
                     // Field Khusus Koordinator & Wali Kelas
                     if (widget.initialRole == 'koordinator' ||
-                        widget.initialRole == 'walikelas')
-                      DropdownButtonFormField<String>(
+                        widget.initialRole == 'walikelas') ...[
+                      // [FIX PREVIEW] Tampilkan Sekolah yang Ditugaskan Saat Ini (Uneditable)
+                      TextFormField(
+                        controller: _currentSchoolNameController,
                         decoration: const InputDecoration(
-                          labelText: "Tugaskan di Sekolah",
+                          labelText: "Sekolah Ditugaskan Saat Ini",
                           prefixIcon: Icon(Icons.school),
                         ),
-                        value: _selectedSchoolId,
-                        items: _schools.map((school) {
-                          return DropdownMenuItem(
-                            value: school.id,
-                            child: Text(
-                              school.name,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          );
-                        }).toList(),
-                        onChanged: (val) =>
-                            setState(() => _selectedSchoolId = val),
-                        validator: (val) =>
-                            val == null ? "Wajib pilih sekolah" : null,
+                        readOnly: true,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.indigo,
+                        ),
                       ),
-                    const SizedBox(height: 15),
+                      const SizedBox(height: 15),
+
+                      // DROPDOWN UNTUK MENGGANTI SEKOLAH
+                      DropdownButtonFormField<String>(
+                        decoration: const InputDecoration(
+                          labelText: "Ganti Sekolah Tujuan (Opsional)",
+                          prefixIcon: Icon(Icons.swap_horiz),
+                        ),
+                        // [FIX 3: Gunakan _selectedSchoolId sebagai value awal]
+                        // Ini memastikan nilai awal di dropdown sesuai dengan yang ditugaskan saat ini.
+                        value: _selectedSchoolId,
+                        items: [
+                          // Tambahkan opsi untuk 'Tidak Ditugaskan' (NULL)
+                          const DropdownMenuItem(
+                            value: null,
+                            child: Text('--- Tidak Ditugaskan ---'),
+                          ),
+                          // List Sekolah yang tersedia
+                          ..._schools.map((school) {
+                            return DropdownMenuItem(
+                              value: school.id,
+                              // Tampilkan nama sekolah, pastikan tidak crash
+                              child: Text(
+                                school.name,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            );
+                          }).toList(),
+                        ],
+                        onChanged: (val) {
+                          setState(() {
+                            _selectedSchoolId = val;
+                            // [FIX KRITIS 4: Update TextController ketika pilihan diubah]
+                            if (val != null) {
+                              final newSchool = _schools.firstWhereOrNull(
+                                (s) => s.id == val,
+                              );
+                              // Tampilkan nama sekolah baru yang dipilih
+                              _currentSchoolNameController.text =
+                                  newSchool?.name ?? 'Sekolah tidak ditemukan';
+                            } else {
+                              // Jika memilih 'Tidak Ditugaskan' (null)
+                              _currentSchoolNameController.text =
+                                  'Belum Ditugaskan';
+                            }
+                          });
+                        },
+                        validator: (val) =>
+                            null, // Biarkan validasi di _submit() saja jika field ini diisi
+                      ),
+                      const SizedBox(height: 15),
+                    ],
 
                     // Field Khusus Wali Kelas
                     if (widget.initialRole == 'walikelas')

@@ -16,18 +16,22 @@ class AddTransportScreen extends StatefulWidget {
 
 class _AddTransportScreenState extends State<AddTransportScreen> {
   final _formKey = GlobalKey<FormState>();
+  // ... (inside _AddTransportScreenState)
+
   final TextEditingController _plateController = TextEditingController();
   final TextEditingController _driverController = TextEditingController();
   final TextEditingController _capacityController = TextEditingController();
 
   List<CourierModel> _couriers = [];
-  String? _selectedCourierId;
+  String? _selectedCourierId; // Main Driver
+  String? _selectedAssistantId; // [BARU] Assistant Driver
 
   // [BARU] List ID Kurir yang Sudah Ditugaskan ke Mobil Lain
   List<String> _assignedCourierIds = [];
-
   bool _isLoadingData = true;
-  bool _isSubmitting = false;
+  // ...
+  // [FIX KRITIS]: Deklarasi Variabel isSubmitting
+  bool _isSubmitting = false; // <--- TAMBAHKAN INI!
 
   @override
   void initState() {
@@ -38,40 +42,47 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
   Future<void> _loadInitialData() async {
     try {
       final courierService = CourierService();
-
-      // Ambil semua kurir dan semua kendaraan untuk cek assignment
       final results = await Future.wait([
         courierService.getMyCouriers(),
-        VehicleService().getMyVehicles(), // Panggil service vehicles
+        VehicleService().getMyVehicles(),
       ]);
-
       final fetchedCouriers = results[0] as List<CourierModel>;
       final allVehicles = results[1] as List<Vehicle>;
 
-      // Tentukan ID Kurir yang sudah ditugaskan (kecuali ID mobil yang sedang diedit)
+      // Tentukan ID Kurir yang sudah ditugaskan (Main atau Assistant)
       final currentVehicleId = widget.vehicleToEdit?.id;
-      final assignedIds = allVehicles
-          .where((v) => v.courierProfileId != null && v.id != currentVehicleId)
-          .map((v) => v.courierProfileId!)
-          .toList();
+      final Set<String> assignedIds = {};
+      for (var v in allVehicles) {
+        // Masukkan Main Driver
+        if (v.courierProfileId != null && v.id != currentVehicleId) {
+          assignedIds.add(v.courierProfileId!);
+        }
+        // Masukkan Assistant Driver
+        if (v.assistantCourierId != null && v.id != currentVehicleId) {
+          assignedIds.add(v.assistantCourierId!);
+        }
+      }
 
       setState(() {
         _couriers = fetchedCouriers;
-        _assignedCourierIds = assignedIds;
+        _assignedCourierIds = assignedIds.toList();
         _isLoadingData = false;
 
         if (widget.vehicleToEdit != null) {
           final s = widget.vehicleToEdit!;
           _plateController.text = s.plateNumber;
-          // [FIX] Menggunakan Nama Kurir sebagai default Nama Supir jika ada
-          final assigned = fetchedCouriers.firstWhereOrNull(
+          _capacityController.text = s.capacityLimit.toString();
+
+          // Inisialisasi Main Driver
+          _selectedCourierId = s.courierProfileId;
+          final assignedMain = fetchedCouriers.firstWhereOrNull(
             (c) => c.id == s.courierProfileId,
           );
-          _driverController.text = assigned?.name ?? s.driverName ?? '';
-          _capacityController.text = s.capacityLimit.toString();
-          _selectedCourierId = s.courierProfileId;
+          _driverController.text = assignedMain?.name ?? s.driverName ?? '';
+
+          // [BARU] Inisialisasi Assistant Driver
+          _selectedAssistantId = s.assistantCourierId;
         } else {
-          // Defaultkan nama supir kosong saat tambah baru
           _driverController.text = '';
         }
       });
@@ -87,6 +98,19 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
 
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
+      // Validasi: Driver Utama dan Asisten tidak boleh sama
+      if (_selectedCourierId != null &&
+          _selectedCourierId == _selectedAssistantId) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Kurir Utama dan Asisten tidak boleh sama!"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       setState(() => _isSubmitting = true);
 
       // [PERBAIKAN KRITIS] Gunakan Nama Kurir yang dipilih sebagai Nama Supir
@@ -101,6 +125,7 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
         'capacity_limit': int.parse(_capacityController.text),
         'is_active': true,
         'courier_profile_id': _selectedCourierId,
+        'assistant_courier_id': _selectedAssistantId, // [BARU]
       };
 
       try {
@@ -109,7 +134,6 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
         } else {
           await VehicleService().updateVehicle(widget.vehicleToEdit!.id, data);
         }
-
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -132,8 +156,40 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
     }
   }
 
+  // Helper untuk filter kurir: Kurir yang belum ditugaskan (di mobil lain)
+  List<CourierModel> _filterAvailableCouriers(String? currentSelectedId) {
+    return _couriers.where((c) {
+      // 1. Kurir itu sendiri (selalu available)
+      if (c.id == currentSelectedId) return true;
+
+      // 2. Kurir yang sedang diedit (slot lain)
+      if (widget.vehicleToEdit != null) {
+        if (c.id == widget.vehicleToEdit!.courierProfileId) return true;
+        if (c.id == widget.vehicleToEdit!.assistantCourierId) return true;
+      }
+
+      // 3. Kurir yang sudah ditugaskan ke mobil lain (slot manapun)
+      if (_assignedCourierIds.contains(c.id)) return false;
+
+      // 4. Cek Kurir yang sudah dipilih di slot lain di form ini (real-time check)
+      if (_selectedCourierId != null && _selectedCourierId == c.id)
+        return false;
+      if (_selectedAssistantId != null && _selectedAssistantId == c.id)
+        return false;
+
+      return true;
+    }).toList();
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Filter kurir yang tersedia untuk Main Driver: kurir yang belum ditugaskan ke mobil lain
+    final availableMainCouriers = _filterAvailableCouriers(_selectedCourierId);
+
+    // Filter kurir yang tersedia untuk Assistant: kurir yang belum ditugaskan ke mobil lain ATAU Main Driver
+    final availableAssistantCouriers = _filterAvailableCouriers(
+      _selectedAssistantId,
+    );
     final isEdit = widget.vehicleToEdit != null;
 
     // Filter Kurir yang Available
@@ -171,14 +227,11 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                     // [FIX] HIDE DRIVER NAME INPUT, IT SHOULD BE POPULATED BY COURIER SELECTION
                     // Kita akan set `_driverController.text` berdasarkan kurir yang dipilih di `onChanged`
 
-                    // [BARU] DROPDOWN PILIH KURIR YANG DITUGASKAN
+                    // --- DROPDOWN 1: COURIER UTAMA ---
+                    // Menggunakan availableMainCouriers
                     DropdownButtonFormField<String>(
-                      decoration: const InputDecoration(
-                        labelText: "Tugaskan Kurir Utama",
-                        border: OutlineInputBorder(),
-                      ),
+                      // ... (existing decoration) ...
                       value: _selectedCourierId,
-                      // Tambahkan opsi 'Tidak Ditugaskan'
                       items: [
                         const DropdownMenuItem(
                           value: null,
@@ -187,7 +240,8 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                             style: TextStyle(color: Colors.grey),
                           ),
                         ),
-                        ...availableCouriers.map((courier) {
+                        ...availableMainCouriers.map((courier) {
+                          // Menggunakan list yang sudah di-filter
                           return DropdownMenuItem(
                             value: courier.id,
                             child: Text(
@@ -200,28 +254,18 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                       onChanged: (val) {
                         setState(() {
                           _selectedCourierId = val;
-
-                          // Auto-fill driver name with courier name if selected
                           if (val != null) {
                             final selected = _couriers.firstWhereOrNull(
                               (c) => c.id == val,
                             );
                             _driverController.text = selected?.name ?? '';
                           } else {
-                            // Clear driver name if no courier is selected
                             _driverController.text = '';
                           }
                         });
                       },
-                      validator: (val) {
-                        if (val == null) {
-                          // Asumsi boleh tidak ditugaskan (courier_profile_id null)
-                          return null;
-                        }
-                        return null;
-                      },
+                      validator: (val) => null, // Boleh null
                     ),
-
                     const SizedBox(height: 15),
 
                     // [TAMPILKAN SAJA] Driver Name (Non-Editable)
@@ -234,9 +278,42 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                       readOnly: true,
                       style: const TextStyle(color: Colors.blueGrey),
                     ),
-
                     const SizedBox(height: 15),
 
+                    // --- DROPDOWN 2: ASSISTANT COURIER [BARU] ---
+                    DropdownButtonFormField<String>(
+                      decoration: const InputDecoration(
+                        labelText: "Tugaskan Asisten Kurir (Opsional)",
+                        border: OutlineInputBorder(),
+                      ),
+                      value: _selectedAssistantId,
+                      items: [
+                        const DropdownMenuItem(
+                          value: null,
+                          child: Text(
+                            '--- Tidak Ditugaskan ---',
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                        ...availableAssistantCouriers.map((courier) {
+                          // Menggunakan list yang sudah di-filter
+                          return DropdownMenuItem(
+                            value: courier.id,
+                            child: Text(
+                              courier.name,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                      ],
+                      onChanged: (val) {
+                        setState(() {
+                          _selectedAssistantId = val;
+                        });
+                      },
+                      validator: (val) => null,
+                    ),
+                    const SizedBox(height: 15),
                     TextFormField(
                       controller: _capacityController,
                       keyboardType: TextInputType.number,
@@ -251,7 +328,10 @@ class _AddTransportScreenState extends State<AddTransportScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
+                        // Sekarang _isSubmitting sudah dideklarasikan dan bisa digunakan
+                        onPressed: _isSubmitting || _isLoadingData
+                            ? null
+                            : _submit,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange[800],
                           padding: const EdgeInsets.symmetric(vertical: 15),

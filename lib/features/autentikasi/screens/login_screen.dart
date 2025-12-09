@@ -92,21 +92,15 @@ const List<Map<String, String>> _debugAccounts = [
     'role': 'walikelas',
   },
   {
-    'name': 'Wali Kelas 8B SMPN6 (Kevin)',
-    'email': 'smpn6_8b@gmail.com',
-    'password': 'smpn6_8b',
-    'role': 'walikelas',
-  },
-  {
     'name': 'Wali Kelas 7A SMPN6 (Siti)',
     'email': 'smpn6_7a@gmail.com',
     'password': 'smpn6_7a',
     'role': 'walikelas',
   },
   {
-    'name': 'Wali Kelas 7B SMPN6 (Eiza)',
-    'email': 'smpn6_7b@gmail.com',
-    'password': 'smpn6_7b',
+    'name': 'Wali Kelas 12A Islam Al (Yogi)',
+    'email': 'islamal_12a@gmail.com',
+    'password': 'islamal_12a',
     'role': 'walikelas',
   },
   {

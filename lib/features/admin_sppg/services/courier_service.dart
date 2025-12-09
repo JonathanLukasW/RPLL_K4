@@ -19,10 +19,12 @@ class CourierService {
   Future<List<CourierModel>> getMyCouriers() async {
     try {
       final mySppgId = await _getMySppgId();
-
+      // [UPDATE SELECT] Tambahkan phone_number
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, sppg_id')
+          .select(
+            'id, full_name, email, sppg_id, phone_number',
+          ) // <-- Tambah phone_number
           .eq('sppg_id', mySppgId)
           .eq('role', 'kurir');
 
@@ -37,6 +39,7 @@ class CourierService {
     required String email,
     required String password,
     required String fullName,
+    required String phoneNumber,
   }) async {
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
     const String anonKey =
@@ -50,6 +53,10 @@ class CourierService {
           .eq('id', myUserId)
           .single();
       final String mySppgId = profile['sppg_id'];
+
+      // A. Request Signup (Signup Supabase Auth)
+      // NOTE: Kita tidak bisa langsung pass phone_number via sign up method API anon key
+      // Kita akan update profiles setelah user dibuat.
 
       final url = Uri.parse('$projectUrl/auth/v1/signup');
       final response = await http.post(
@@ -65,9 +72,9 @@ class CourierService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
         String? newUserId = responseData['id'] ?? responseData['user']['id'];
-
         if (newUserId == null) throw Exception("Gagal dapat ID User Kurir.");
 
+        // B. Simpan ke Profiles (Role: kurir, sppg_id, phone_number)
         await _supabase.from('profiles').insert({
           'id': newUserId,
           'full_name': fullName,
@@ -75,6 +82,7 @@ class CourierService {
           'role': 'kurir',
           'sppg_id': mySppgId,
           'school_id': null,
+          'phone_number': phoneNumber, // [BARU] Simpan nomor telepon
         });
       } else {
         final errorData = jsonDecode(response.body);
@@ -107,12 +115,14 @@ class CourierService {
     Map<String, dynamic> data,
   ) async {
     try {
-      // Update data di tabel profiles
-      await _supabase.from('profiles').update(data).eq('id', userId);
+      // Tambahkan update email di auth.users jika email berubah (meskipun kita utamakan profiles)
+      final profileUpdateData = data..remove('email');
 
-      // Coba update email di auth.users (ini bisa gagal kalau Supabase Auth API tidak mengizinkan langsung)
-      // Kita bypass Auth update user secara langsung, fokus ke profiles aja dulu.
-      // Jika perlu ganti password, itu di halaman Profile Screen (Core)
+      // Update data di tabel profiles
+      await _supabase
+          .from('profiles')
+          .update(profileUpdateData)
+          .eq('id', userId);
     } catch (e) {
       throw Exception('Gagal update akun kurir: $e');
     }

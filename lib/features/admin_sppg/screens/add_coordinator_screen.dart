@@ -15,10 +15,10 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  
+  final _phoneController = TextEditingController(); // [BARU]
+
   // Service
   final SchoolService _schoolService = SchoolService();
-  
   List<School> _schools = [];
   String? _selectedSchoolId;
   bool _isSubmitting = false;
@@ -49,16 +49,21 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
           password: _passwordController.text,
           fullName: _nameController.text.trim(),
           schoolId: _selectedSchoolId!,
+          phoneNumber: _phoneController.text.trim(),
         );
 
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Akun Koordinator Berhasil Dibuat!"), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text("Akun Koordinator Berhasil Dibuat!"),
+            backgroundColor: Colors.green,
+          ),
         );
         Navigator.pop(context, true);
-
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: $e"), backgroundColor: Colors.red),
+        );
       } finally {
         if (mounted) setState(() => _isSubmitting = false);
       }
@@ -81,14 +86,21 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(labelText: "Nama Koordinator", border: OutlineInputBorder(), prefixIcon: Icon(Icons.person)),
+                decoration: const InputDecoration(
+                  labelText: "Nama Koordinator",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.person),
+                ),
                 validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
               ),
               const SizedBox(height: 15),
-              
               // DROPDOWN PILIH SEKOLAH
               DropdownButtonFormField<String>(
-                decoration: const InputDecoration(labelText: "Tugaskan di Sekolah", border: OutlineInputBorder(), prefixIcon: Icon(Icons.school)),
+                decoration: const InputDecoration(
+                  labelText: "Tugaskan di Sekolah",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.school),
+                ),
                 value: _selectedSchoolId,
                 items: _schools.map((school) {
                   return DropdownMenuItem(
@@ -100,10 +112,25 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
                 validator: (val) => val == null ? "Wajib pilih sekolah" : null,
               ),
               const SizedBox(height: 15),
-
+              // [BARU] Field Nomor Telepon
+              TextFormField(
+                controller: _phoneController,
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(
+                  labelText: "Nomor Telepon",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.phone),
+                ),
+                validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+              ),
+              const SizedBox(height: 15),
               TextFormField(
                 controller: _emailController,
-                decoration: const InputDecoration(labelText: "Email Login", border: OutlineInputBorder(), prefixIcon: Icon(Icons.email)),
+                decoration: const InputDecoration(
+                  labelText: "Email Login",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
+                ),
                 keyboardType: TextInputType.emailAddress,
                 validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
               ),
@@ -111,7 +138,11 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
               TextFormField(
                 controller: _passwordController,
                 obscureText: true,
-                decoration: const InputDecoration(labelText: "Password", border: OutlineInputBorder(), prefixIcon: Icon(Icons.lock)),
+                decoration: const InputDecoration(
+                  labelText: "Password",
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                ),
                 validator: (v) => v!.length < 6 ? "Minimal 6 karakter" : null,
               ),
               const SizedBox(height: 30),
@@ -119,12 +150,21 @@ class _AddCoordinatorScreenState extends State<AddCoordinatorScreen> {
                 width: double.infinity,
                 child: ElevatedButton(
                   onPressed: _isSubmitting ? null : _submit,
-                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800], padding: const EdgeInsets.symmetric(vertical: 15)),
-                  child: _isSubmitting 
-                    ? const CircularProgressIndicator(color: Colors.white) 
-                    : const Text("BUAT AKUN KOORDINATOR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange[800],
+                    padding: const EdgeInsets.symmetric(vertical: 15),
+                  ),
+                  child: _isSubmitting
+                      ? const CircularProgressIndicator(color: Colors.white)
+                      : const Text(
+                          "BUAT AKUN KOORDINATOR",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                 ),
-              )
+              ),
             ],
           ),
         ),

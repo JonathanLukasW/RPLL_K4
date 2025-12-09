@@ -3,6 +3,14 @@ import 'package:intl/intl.dart';
 import 'package:flutter/material.dart';
 import 'dart:convert';
 import '../../admin_sppg/services/schedule_service.dart';
+// [BARU] Import service Menu untuk akses Menu Sets
+import '../../admin_sppg/services/menu_service.dart';
+
+// [FIX KRITIS 1]: Import Menu Model yang Hilang
+import '../../../models/menu_model.dart'; // <--- HARUS ADA
+import '../../admin_sppg/services/menu_service.dart'; // <-- Tipe AdminMenuSetModel ada di sini, tapi kita harus pastikan MenuModel juga ada
+
+import 'package:collection/collection.dart';
 
 // Model untuk Detail Request
 class RequestDetail {
@@ -76,6 +84,7 @@ class ChangeRequestModel {
 }
 
 class RequestService {
+  final MenuService _menuService = MenuService(); // <-- BARU
   final _supabase = Supabase.instance.client;
   final ScheduleService _scheduleService = ScheduleService();
 
@@ -100,6 +109,30 @@ class RequestService {
     } catch (e) {
       throw Exception("Gagal ambil menu: $e");
     }
+  }
+
+  // [BARU] 0B. Ambil List Menu Set (Dipanggil Koordinator)
+  Future<List<AdminMenuSetModel>> getMyMenuSets() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase
+        .from('profiles')
+        .select('sppg_id')
+        .eq('id', userId)
+        .single();
+    final String mySppgId = profile['sppg_id'];
+
+    // Query sama seperti di MenuService.getMyMenuSets
+    final response = await _supabase
+        .from('menu_sets')
+        .select(
+          '*, karbo_menus:karbo_id(name), protein_menus:protein_id(name), sayur_menus:sayur_id(name), buah_menus:buah_id(name), nabati_menus:nabati_id(name), pelengkap_menus:pelengkap_id(name), total_energy, total_protein, total_fat, total_carbs',
+        )
+        .eq('sppg_id', mySppgId)
+        .order('set_name', ascending: true);
+
+    return (response as List)
+        .map((json) => AdminMenuSetModel.fromJson(json))
+        .toList();
   }
 
   // [BARU] AMBIL DATA SEKOLAH SENDIRI (Untuk Default Values)
@@ -210,18 +243,81 @@ class RequestService {
       // 2. JIKA APPROVED -> APPLY CHANGES
       if (status == 'approved') {
         final String schoolId = requestData.schoolId;
-        final String notes = requestData.oldNotes; // <-- Data Hack ada di sini
-
-        // --- A. PERUBAHAN MENU: Update schools.menu_default ---
+        final String notes = requestData.oldNotes;
+        // --- C. PERUBAHAN MENU: Ganti Set Menu (Bisa Set Lama atau Set Baru) ---
         if (requestData.type == 'Perubahan Menu') {
-          if (notes.contains("REQ_MENU:")) {
-            final rawMenuNames = notes
+          // a) LOGIC UNTUK MENU SET BARU (CUSTOM)
+          if (notes.contains("REQ_MENU_SET_CUSTOM:")) {
+            // 1. Ekstrak data
+            final rawMenuIdsPart = notes
                 .split('|')[0]
-                .replaceAll("REQ_MENU:", "")
+                .replaceAll("REQ_MENU_SET_CUSTOM:", "")
                 .trim();
+            final newNamePart = notes
+                .split('|')[1]
+                .replaceAll("NEW_NAME:", "")
+                .trim();
+            final Map<String, dynamic> customIds = jsonDecode(rawMenuIdsPart);
+
+            // 2. Hitung Total Gizi dari Menu Item ID yang dipilih
+            final Map<String, double> totals = {
+              'total_energy': 0,
+              'total_protein': 0.0,
+              'total_fat': 0.0,
+              'total_carbs': 0.0,
+            };
+            final List<Menu> allMenus = await _menuService.getMyMenus();
+
+            for (var id in customIds.values) {
+              if (id != null) {
+                final menu = allMenus.firstWhereOrNull((m) => m.id == id);
+                if (menu != null) {
+                  totals['total_energy'] =
+                      totals['total_energy']! + menu.energy.toDouble();
+                  totals['total_protein'] =
+                      totals['total_protein']! + menu.protein;
+                  totals['total_fat'] = totals['total_fat']! + menu.fat;
+                  totals['total_carbs'] = totals['total_carbs']! + menu.carbs;
+                }
+              }
+            }
+
+            // 3. Buat Menu Set Baru di DB
+            final Map<String, dynamic> newSetData = {
+              'set_name': newNamePart,
+              'karbo_id': customIds['Karbo'],
+              'protein_id': customIds['Lauk Protein'],
+              'sayur_id': customIds['Sayur'],
+              'buah_id': customIds['Buah'],
+              'nabati_id': customIds['Lauk Nabati'],
+              'pelengkap_id': customIds['Pelengkap'],
+              'total_energy': totals['total_energy']!.toInt(),
+              'total_protein': totals['total_protein'],
+              'total_fat': totals['total_fat'],
+              'total_carbs': totals['total_carbs'],
+            };
+            await _menuService.createMenuSet(newSetData); // <-- Buat set baru
+
+            // 4. Update Sekolah menggunakan Nama Set Baru
             await _supabase
                 .from('schools')
-                .update({'menu_default': rawMenuNames})
+                .update({
+                  'menu_default': newNamePart, // <-- Gunakan nama set baru
+                })
+                .eq('id', schoolId);
+          }
+          // b) LOGIC UNTUK PILIH SET LAMA
+          else if (notes.contains("REQ_MENU_SET_ID:")) {
+            // Ambil nama set baru yang dipilih Koordinator
+            final newNamePart = notes
+                .split('|')[2]
+                .replaceAll("NEW_NAME:", "")
+                .trim();
+
+            // Update Sekolah menggunakan Nama Set yang sudah ada
+            await _supabase
+                .from('schools')
+                .update({'menu_default': newNamePart})
                 .eq('id', schoolId);
           }
         }

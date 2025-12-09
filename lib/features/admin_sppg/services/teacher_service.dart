@@ -9,6 +9,7 @@ class TeacherModel {
   final String schoolName;
   final String className;
   final String? schoolId; // <--- ADD THIS FUCKING FIELD
+  final String? phoneNumber; // [BARU]
 
   TeacherModel({
     required this.id,
@@ -17,6 +18,7 @@ class TeacherModel {
     required this.schoolName,
     required this.className,
     this.schoolId, // <--- ADD TO CONSTRUCTOR
+    this.phoneNumber, // <--- ADD TO CONSTRUCTOR
   });
 
   factory TeacherModel.fromJson(Map<String, dynamic> json) {
@@ -29,7 +31,8 @@ class TeacherModel {
       email: json['email'] ?? '-',
       schoolName: school,
       className: json['class_name'] ?? '-',
-      schoolId: json['school_id']?.toString(), // <--- PARSE IT HERE
+      schoolId: json['school_id']?.toString(), // <--- PASTI INI ADA
+      phoneNumber: json['phone_number'] ?? json['phone'],
     );
   }
 }
@@ -47,10 +50,11 @@ class TeacherService {
           .eq('id', userId)
           .single();
       final String mySppgId = profile['sppg_id'];
-
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, class_name, schools(name)')
+          .select(
+            'id, full_name, email, class_name, school_id, schools(name), phone_number', // <--- PASTIKAN 'school_id' ADA DI SINI
+          )
           .eq('sppg_id', mySppgId)
           .eq('role', 'walikelas');
 
@@ -68,6 +72,7 @@ class TeacherService {
     required String fullName,
     required String schoolId,
     required String className, // Input Baru
+    required String phoneNumber, // [BARU] Terima nomor telepon
   }) async {
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
     const String anonKey =
@@ -97,7 +102,6 @@ class TeacherService {
       if (response.statusCode == 200 || response.statusCode == 201) {
         final responseData = jsonDecode(response.body);
         String? newUserId = responseData['id'] ?? responseData['user']['id'];
-
         if (newUserId == null) throw Exception("Gagal dapat ID User.");
 
         // B. Simpan ke Profiles
@@ -109,6 +113,7 @@ class TeacherService {
           'sppg_id': mySppgId,
           'school_id': schoolId,
           'class_name': className,
+          'phone_number': phoneNumber, // [BARU] Simpan nomor telepon
         });
       } else {
         final errorData = jsonDecode(response.body);

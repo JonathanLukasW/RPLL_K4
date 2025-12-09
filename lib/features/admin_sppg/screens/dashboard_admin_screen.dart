@@ -1,5 +1,8 @@
+// FILE: lib/features/admin_sppg/screens/dashboard_admin_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert'; // Import untuk jsonDecode
 // Import Auth & Login
 import '../../../features/autentikasi/services/auth_service.dart';
 import '../../../features/autentikasi/screens/login_screen.dart';
@@ -47,8 +50,34 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   final CoordinatorService _coordinatorService = CoordinatorService();
   final TeacherService _teacherService = TeacherService();
   final RouteService _routeService = RouteService();
-  // [FIX] State untuk tombol Generate Otomatis
+
+  // [BARU] State untuk Filter Sekolah
+  String? _selectedSchoolFilterId;
+  List<School> _allSppgSchools = []; // Cache semua sekolah SPPG ini
+
+  // State untuk tombol Generate Otomatis
   bool _isGenerating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadInitialFilters(); // Load sekolah untuk filter
+  }
+
+  // [BARU] Fungsi Load Sekolah untuk Filter Dropdown
+  Future<void> _loadInitialFilters() async {
+    try {
+      final schools = await _schoolService.getMySchools();
+      if (mounted) {
+        setState(() {
+          _allSppgSchools = schools;
+          // Default filter ke 'Semua Sekolah' (null)
+        });
+      }
+    } catch (e) {
+      print("Gagal load daftar sekolah untuk filter: $e");
+    }
+  }
 
   Future<void> _logout() async {
     await AuthService().signOut();
@@ -87,7 +116,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       case 2:
         return "Kurir";
       case 3:
-        return "Koord";
+        return "Koordinator";
       case 4:
         return "Wali";
       case 5:
@@ -268,7 +297,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     });
   }
 
-  // --- HELPER METHODS YANG HILANG (DIPINDAH DARI BAWAH) ---
+  // --- HELPER METHODS ---
 
   Widget _buildEmptyState(String text, IconData icon) {
     return Center(
@@ -292,6 +321,62 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
       default:
         return Colors.orange;
     }
+  }
+
+  // [BARU] Helper untuk memformat deadline time JSON
+  String _formatScheduleDisplay(String? deadlineJson) {
+    if (deadlineJson == null || deadlineJson.isEmpty)
+      return "Jadwal Belum Diset";
+
+    try {
+      final Map<String, dynamic> data = jsonDecode(deadlineJson);
+      final List<String> scheduleEntries = [];
+
+      // Urutan hari yang diinginkan
+      const List<String> days = [
+        'Senin',
+        'Selasa',
+        'Rabu',
+        'Kamis',
+        'Jumat',
+        'Sabtu',
+      ];
+
+      for (var day in days) {
+        if (data.containsKey(day) && data[day] != null) {
+          final timeStr = (data[day] as String).substring(0, 5); // Ambil HH:mm
+          scheduleEntries.add("$day $timeStr");
+        }
+      }
+
+      if (scheduleEntries.isEmpty) return "Tidak ada jadwal aktif";
+
+      // Gabungkan entry (misal: Senin 09:40, Selasa 09:40)
+      return scheduleEntries.join(', ');
+    } catch (_) {
+      return "Format Jadwal Rusak";
+    }
+  }
+
+  // [BARU] Helper Sorting Kelas (Angka dulu, baru Huruf)
+  int _sortClasses(String? a, String? b) {
+    if (a == null || b == null) return 0;
+    final exp = RegExp(r'^(\d+)([a-zA-Z]*)');
+    final matchA = exp.firstMatch(a.toUpperCase());
+    final matchB = exp.firstMatch(b.toUpperCase());
+
+    if (matchA == null || matchB == null) return a.compareTo(b);
+
+    final numA = int.tryParse(matchA.group(1)!) ?? 0;
+    final numB = int.tryParse(matchB.group(1)!) ?? 0;
+    final charA = matchA.group(2) ?? '';
+    final charB = matchB.group(2) ?? '';
+
+    // 1. Sort by Number (Class Level: 7 < 8 < 9)
+    if (numA != numB) return numA.compareTo(numB);
+
+    // 2. Sort by Character (Class Sub-Division: A < B < C)
+    return charA.compareTo(charB);
   }
 
   // --- END HELPER METHODS ---
@@ -418,46 +503,30 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
+      // Konten Body: IndexedStack + Tombol Fixed
+      body: Column(
+        // Column membungkus IndexedStack dan tombol fixed
         children: [
-          _buildSchoolList(), // 0
-          _buildTransportList(), // 1
-          _buildCourierList(), // 2
-          _buildCoordinatorList(), // 3
-          _buildTeacherList(), // 4
-          _buildRouteList(), // 5
+          Expanded(
+            // IndexedStack harus dibungkus Expanded
+            child: IndexedStack(
+              index: _selectedIndex,
+              children: [
+                _buildSchoolList(), // 0
+                _buildTransportList(), // 1
+                _buildCourierList(), // 2
+                _buildCoordinatorList(), // 3
+                _buildTeacherList(), // 4
+                _buildRouteList(), // 5
+              ],
+            ),
+          ),
+
+          // Tombol Fixed (berada di bawah Expanded IndexStack)
+          _buildFixedAddButton(context),
         ],
       ),
-      // --- FAB MOVED TO LEFT START POSITION ---
-      floatingActionButtonLocation: FloatingActionButtonLocation.startFloat,
-      floatingActionButton: FloatingActionButton.extended(
-        backgroundColor: Colors.orange[800],
-        foregroundColor: Colors.white,
-        icon: const Icon(Icons.add),
-        label: Text(_getFabLabel()),
-        onPressed: () {
-          Widget nextPage;
-          if (_selectedIndex == 0)
-            nextPage = const AddSchoolScreen();
-          else if (_selectedIndex == 1)
-            nextPage = const AddTransportScreen();
-          else if (_selectedIndex == 2)
-            nextPage = const AddCourierScreen();
-          else if (_selectedIndex == 3)
-            nextPage = const AddCoordinatorScreen();
-          else if (_selectedIndex == 4)
-            nextPage = const AddTeacherScreen();
-          else
-            nextPage = const CreateRouteScreen();
-          Navigator.push(
-            context,
-            MaterialPageRoute(builder: (_) => nextPage),
-          ).then((val) {
-            if (val == true) setState(() {});
-          });
-        },
-      ),
+      // Navigasi Bawah tetap ada
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _selectedIndex,
         type: BottomNavigationBarType.fixed,
@@ -476,7 +545,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.supervisor_account),
-            label: "Koord",
+            label: "Koordinator",
           ),
           BottomNavigationBarItem(icon: Icon(Icons.class_), label: "Wali"),
           BottomNavigationBarItem(
@@ -488,10 +557,57 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
-  // Widget _buildEmptyState(String text, IconData icon) { ... }
-  // Widget _getStatusColor(String status) { ... }
-  // Dipindahkan ke dalam class body.
+  // Widget Tambahan: Tombol Fixed (Dipindahkan dari _buildFixedAddButton)
+  Widget _buildFixedAddButton(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 10.0),
+      decoration: BoxDecoration(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        border: Border(
+          top: BorderSide(color: Colors.grey.shade300, width: 1.0),
+        ),
+      ),
+      child: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange[800],
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+          ),
+          icon: const Icon(Icons.add),
+          label: Text(
+            "TAMBAH ${_getFabLabel().toUpperCase()}",
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          onPressed: () {
+            Widget nextPage;
+            if (_selectedIndex == 0)
+              nextPage = const AddSchoolScreen();
+            else if (_selectedIndex == 1)
+              nextPage = const AddTransportScreen();
+            else if (_selectedIndex == 2)
+              nextPage = const AddCourierScreen();
+            else if (_selectedIndex == 3)
+              nextPage = const AddCoordinatorScreen();
+            else if (_selectedIndex == 4)
+              nextPage = const AddTeacherScreen();
+            else
+              nextPage = const CreateRouteScreen();
 
+            Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => nextPage),
+            ).then((val) {
+              if (val == true) setState(() {});
+            });
+          },
+        ),
+      ),
+    );
+  }
+
+  // Widget List Sekolah (Diperbarui dengan format jadwal baru)
   Widget _buildSchoolList() {
     return FutureBuilder<List<School>>(
       future: _schoolService.getMySchools(),
@@ -502,10 +618,21 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
         if (schools.isEmpty)
           return _buildEmptyState("Belum ada sekolah.", Icons.school_outlined);
         return ListView.builder(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.fromLTRB(
+            10,
+            10,
+            10,
+            80,
+          ), // Tambahkan padding bawah agar tombol tidak tertutup
           itemCount: schools.length,
           itemBuilder: (ctx, i) {
             final school = schools[i];
+
+            // Format Jadwal Deadline
+            final formattedSchedule = _formatScheduleDisplay(
+              school.deadlineTime,
+            );
+
             return Card(
               child: ListTile(
                 leading: const CircleAvatar(
@@ -517,7 +644,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Text(
-                  "Siswa: ${school.studentCount} | Deadline: ${school.deadlineTime}",
+                  // [FIX DI SINI] Gunakan helper function yang baru
+                  "Siswa: ${school.studentCount} | Deadline: $formattedSchedule",
                 ),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -572,6 +700,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
           itemCount: vehicles.length,
           itemBuilder: (ctx, i) {
             final vehicle = vehicles[i];
+
+            // [BARU]: Info Asisten
+            String assistantText = vehicle.assistantCourierName != null
+                ? "Asisten: ${vehicle.assistantCourierName}"
+                : "Tidak ada Asisten";
+
             return Card(
               child: ListTile(
                 leading: Icon(
@@ -583,9 +717,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                   vehicle.plateNumber,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
+                // [UPDATE SUBTITLE]: Tampilkan Asisten
                 subtitle: Text(
-                  "Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}",
+                  "Supir: ${vehicle.driverName ?? '-'} | Kap.: ${vehicle.capacityLimit}\n$assistantText",
+                  style: const TextStyle(fontSize: 12),
                 ),
+                isThreeLine: true, // Ubah ke 3 baris
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -658,7 +795,12 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                   courier.name,
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: Text(courier.email),
+                // [UPDATE SUBTITLE] Tampilkan email dan nomor telepon
+                subtitle: Text(
+                  "${courier.email}\nTelp: ${courier.phoneNumber ?? '-'}",
+                  style: const TextStyle(fontSize: 12),
+                ),
+                isThreeLine: true, // Ubah ke 3 baris
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -671,6 +813,7 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                             'email': courier.email,
                             'schoolId': null,
                             'className': null,
+                            'phoneNumber': courier.phoneNumber,
                           }),
                     ),
                     // DELETE Button (UC32)
@@ -689,117 +832,247 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
   }
 
   Widget _buildCoordinatorList() {
-    return FutureBuilder<List<CoordinatorModel>>(
-      future: _coordinatorService.getMyCoordinators(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty)
-          return _buildEmptyState(
-            "Belum ada koordinator.",
-            Icons.supervised_user_circle,
-          );
-        return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final coord = data[i];
-            return Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.teal,
-                  child: Icon(Icons.person, color: Colors.white),
-                ),
-                title: Text(
-                  coord.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text("${coord.schoolName}\n${coord.email}"),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC31)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () =>
-                          _navigateToEditAccount(coord.id, 'koordinator', {
-                            'name': coord.name,
-                            'email': coord.email,
-                            'schoolId': coord.schoolId,
-                            'className': null,
-                          }),
+    // Siapkan list untuk Dropdown Filter
+    final List<DropdownMenuItem<String?>> schoolItems = [
+      const DropdownMenuItem(value: null, child: Text("Semua Sekolah")),
+      ..._allSppgSchools.map(
+        (school) =>
+            DropdownMenuItem(value: school.id, child: Text(school.name)),
+      ),
+    ];
+
+    return Column(
+      children: [
+        // Dropdown Filter Sekolah
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: DropdownButtonFormField<String?>(
+            decoration: const InputDecoration(
+              labelText: "Filter Berdasarkan Sekolah",
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.filter_list),
+            ),
+            value: _selectedSchoolFilterId,
+            items: schoolItems,
+            onChanged: (String? newValue) {
+              setState(() {
+                _selectedSchoolFilterId = newValue;
+              });
+            },
+          ),
+        ),
+        // List Koordinator
+        Expanded(
+          child: FutureBuilder<List<CoordinatorModel>>(
+            future: _coordinatorService.getMyCoordinators(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting)
+                return const Center(child: CircularProgressIndicator());
+              final data = snapshot.data ?? [];
+
+              // [FILTERING LOGIC]
+              final filteredData = data.where((coord) {
+                if (_selectedSchoolFilterId == null) return true;
+                return coord.schoolId == _selectedSchoolFilterId;
+              }).toList();
+
+              // [SORTING LOGIC BARU] Sort berdasarkan Nama Sekolah (Ascending)
+              filteredData.sort((a, b) {
+                return a.schoolName.toLowerCase().compareTo(
+                  b.schoolName.toLowerCase(),
+                );
+              });
+
+              if (filteredData.isEmpty)
+                return _buildEmptyState(
+                  "Belum ada koordinator di sekolah yang dipilih.",
+                  Icons.supervised_user_circle,
+                );
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(
+                  10,
+                  0,
+                  10,
+                  80,
+                ), // Padding bawah agar tombol tidak tertutup
+                itemCount: filteredData.length,
+                itemBuilder: (ctx, i) {
+                  final coord = filteredData[i];
+                  return Card(
+                    child: ListTile(
+                      leading: const CircleAvatar(
+                        backgroundColor: Colors.teal,
+                        child: Icon(Icons.person, color: Colors.white),
+                      ),
+                      title: Text(
+                        coord.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      // [UPDATE SUBTITLE] Tampilkan sekolah, email, dan nomor telepon
+                      subtitle: Text(
+                        "${coord.schoolName}\n${coord.email}\nTelp: ${coord.phoneNumber ?? '-'}",
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      isThreeLine: true,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // EDIT Button (UC31)
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _navigateToEditAccount(
+                              coord.id,
+                              'koordinator',
+                              {
+                                'name': coord.name,
+                                'email': coord.email,
+                                'schoolId': coord.schoolId,
+                                'className': null,
+                                'phoneNumber': coord.phoneNumber,
+                                'schoolName':
+                                    coord.schoolName, // <--- KRITIS: TAMBAH INI
+                              },
+                            ),
+                          ),
+                          // DELETE Button (UC32)
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () =>
+                                _deleteUser(coord.id, 'Koordinator'),
+                          ),
+                        ],
+                      ),
                     ),
-                    // DELETE Button (UC32)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteUser(coord.id, 'Koordinator'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
   Widget _buildTeacherList() {
-    return FutureBuilder<List<TeacherModel>>(
-      future: _teacherService.getMyTeachers(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
-        final data = snapshot.data ?? [];
-        if (data.isEmpty)
-          return _buildEmptyState("Belum ada wali kelas.", Icons.class_);
-        return ListView.builder(
-          padding: const EdgeInsets.all(10),
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final teacher = data[i];
-            return Card(
-              child: ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Colors.indigo,
-                  child: Icon(Icons.class_, color: Colors.white),
-                ),
-                title: Text(
-                  teacher.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  "${teacher.schoolName} - Kelas ${teacher.className}\n${teacher.email}",
-                ),
-                isThreeLine: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // EDIT Button (UC31)
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () =>
-                          _navigateToEditAccount(teacher.id, 'walikelas', {
-                            'name': teacher.name,
-                            'email': teacher.email,
-                            'schoolId': teacher.schoolId,
-                            'className': teacher.className,
-                          }),
+    // Siapkan list untuk Dropdown Filter (Sama dengan Koordinator)
+    final List<DropdownMenuItem<String?>> schoolItems = [
+      const DropdownMenuItem(value: null, child: Text("Semua Sekolah")),
+      ..._allSppgSchools.map(
+        (school) =>
+            DropdownMenuItem(value: school.id, child: Text(school.name)),
+      ),
+    ];
+
+    return Column(
+      children: [
+        // Dropdown Filter Sekolah (Wajib di dalam Column)
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: DropdownButtonFormField<String?>(
+            decoration: const InputDecoration(
+              labelText: "Filter Berdasarkan Sekolah",
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.filter_list),
+            ),
+            value: _selectedSchoolFilterId,
+            items: schoolItems,
+            onChanged: (String? newValue) {
+              setState(() {
+                _selectedSchoolFilterId = newValue;
+              });
+            },
+          ),
+        ),
+        // List Wali Kelas
+        Expanded(
+          // Harus dibungkus Expanded
+          child: FutureBuilder<List<TeacherModel>>(
+            future: _teacherService.getMyTeachers(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting)
+                return const Center(child: CircularProgressIndicator());
+              final data = snapshot.data ?? [];
+
+              // [FILTERING LOGIC]
+              final filteredData = data.where((teacher) {
+                if (_selectedSchoolFilterId == null) return true;
+                return teacher.schoolId == _selectedSchoolFilterId;
+              }).toList();
+
+              // [SORTING LOGIC]
+              filteredData.sort((a, b) {
+                // 1. Sort by School Name (Ascending)
+                final schoolCompare = a.schoolName.toLowerCase().compareTo(
+                  b.schoolName.toLowerCase(),
+                );
+                if (schoolCompare != 0) return schoolCompare;
+
+                // 2. Sort by Class Name (Custom Alphanumeric)
+                return _sortClasses(a.className, b.className);
+              });
+
+              if (filteredData.isEmpty)
+                return _buildEmptyState(
+                  "Belum ada wali kelas di sekolah yang dipilih.",
+                  Icons.class_,
+                );
+
+              return ListView.builder(
+                padding: const EdgeInsets.fromLTRB(10, 0, 10, 80),
+                itemCount: filteredData.length,
+                itemBuilder: (ctx, i) {
+                  final teacher = filteredData[i];
+                  return Card(
+                    child: ListTile(
+                      leading: const CircleAvatar(
+                        backgroundColor: Colors.indigo,
+                        child: Icon(Icons.class_, color: Colors.white),
+                      ),
+                      title: Text(
+                        teacher.name,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      // [UPDATE SUBTITLE] Tampilkan sekolah, kelas, email, dan nomor telepon
+                      subtitle: Text(
+                        "${teacher.schoolName} - Kelas ${teacher.className}\n${teacher.email}\nTelp: ${teacher.phoneNumber ?? '-'}",
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      isThreeLine: true,
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // EDIT Button (UC31)
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _navigateToEditAccount(
+                              teacher.id,
+                              'walikelas',
+                              {
+                                'name': teacher.name,
+                                'email': teacher.email,
+                                'schoolId': teacher.schoolId,
+                                'className': teacher.className,
+                                'phoneNumber': teacher.phoneNumber,
+                                'schoolName': teacher
+                                    .schoolName, // <--- KRITIS: TAMBAH INI
+                              },
+                            ),
+                          ), // DELETE Button (UC32)
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () =>
+                                _deleteUser(teacher.id, 'Wali Kelas'),
+                          ),
+                        ],
+                      ),
                     ),
-                    // DELETE Button (UC32)
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _deleteUser(teacher.id, 'Wali Kelas'),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

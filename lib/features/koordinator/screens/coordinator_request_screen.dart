@@ -4,6 +4,8 @@ import 'package:collection/collection.dart';
 import '../../shared/services/request_service.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart'; // Ensure TimeOfDay is imported
+import '../../admin_sppg/services/menu_service.dart'; // [BARU] Import MenuService dan
+import '../../admin_sppg/services/menu_service.dart'; // Import AdminMenuSetModelModelnya
 
 class CoordinatorRequestScreen extends StatefulWidget {
   const CoordinatorRequestScreen({super.key});
@@ -33,8 +35,9 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
   bool _isInitLoading = true;
   bool _isSubmitting = false;
 
-  // --- DATA ---
+  // --- DATA ---// --- DATA ---
   List<Map<String, dynamic>> _availableMenus = [];
+  List<AdminMenuSetModel> _availableMenuSets = []; // <-- BARU
   Map<String, dynamic>? _schoolData;
 
   // --- FORM STATE ---
@@ -48,6 +51,29 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
     text: '45',
   );
 
+  // Menu Set Customization
+  String? _selectedMenuSetId; // ID Set yang dipilih/dimulai
+  bool _isCustomizingMenu = false; // Mode edit set
+  final TextEditingController _newSetNameController =
+      TextEditingController(); // BARU
+
+  // Mapping Menu IDs for Customization (Kategori -> Menu ID)
+  Map<String, String?> _customMenuIds = {
+    'Karbo': null,
+    'Lauk Protein': null,
+    'Sayur': null,
+    'Buah': null,
+    'Lauk Nabati': null,
+    'Pelengkap': null,
+  };
+  final List<String> _requiredCategories = [
+    'Karbo',
+    'Lauk Protein',
+    'Sayur',
+    'Buah',
+    'Lauk Nabati',
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -60,9 +86,12 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
       final results = await Future.wait([
         _service.getSppgMenus(),
         _service.getMySchoolDetails(),
+        _service.getMyMenuSets(),
       ]);
 
       _availableMenus = results[0] as List<Map<String, dynamic>>;
+      // [BARU]
+      _availableMenuSets = results[2] as List<AdminMenuSetModel>;
 
       // Safely cast result, ensuring _schoolData is only updated if fetch succeeded
       Map<String, dynamic>? fetchedSchoolData =
@@ -99,29 +128,18 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
           _weeklySchedule = initialSchedule;
         }
 
-        // 3. Menu Default Parsing
+        // 3. Menu Default Parsing (Sekarang menyimpan NAMA SET)
         String defaultMenuStr = _schoolData!['menu_default'] ?? "";
-        if (defaultMenuStr.isNotEmpty) {
-          final names = defaultMenuStr.split(',').map((e) => e.trim()).toList();
-          List<String?> ids = [];
-          for (var name in names) {
-            final match = _availableMenus.firstWhereOrNull(
-              (m) => m['name'] == name,
-            );
-            if (match != null) ids.add(match['id']);
+        if (defaultMenuStr.isNotEmpty && _availableMenuSets.isNotEmpty) {
+          final existingSet = _availableMenuSets.firstWhereOrNull(
+            (set) => set.setName == defaultMenuStr,
+          );
+          if (existingSet != null) {
+            _selectedMenuSetId = existingSet.id;
           }
-          while (ids.length < 3) ids.add(null);
-          if (ids.length > 5) ids = ids.sublist(0, 5);
-          _selectedMenuIds = ids;
         }
-      } else {
-        // If initial school data failed to fetch, set a default non-null state for controllers
-        _portionController.text = '0';
-        _toleranceController.text = '45';
-        // _schoolData remains null, forcing subsequent use of _schoolData! to throw.
+        setState(() => _isInitLoading = false);
       }
-
-      setState(() => _isInitLoading = false);
     } catch (e) {
       setState(() => _isInitLoading = false);
       if (mounted)
@@ -271,31 +289,54 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
         }
         // --- 2. LOGIC PERUBAHAN MENU SET ---
         else if (_selectedType == 'Perubahan Menu') {
-          final validMenuIds = _selectedMenuIds.whereType<String>().toList();
-          if (validMenuIds.length < 3)
-            throw Exception("Wajib pilih minimal 3 item Menu Set.");
+          // --- MODE KUSTOM BARU ---
+          if (_isCustomizingMenu) {
+            final validMenuIds = _customMenuIds.values
+                .whereType<String>()
+                .toList();
+            if (_newSetNameController.text.isEmpty) {
+              throw Exception("Nama Menu Set baru wajib diisi.");
+            }
+            if (validMenuIds.length < _requiredCategories.length) {
+              throw Exception("Semua kategori wajib harus diisi.");
+            }
 
-          // Buat string nama menu untuk admin
-          final menuNames = validMenuIds
-              .map(
-                (id) =>
-                    _availableMenus.firstWhereOrNull(
-                      (m) => m['id'] == id,
-                    )?['name'] ??
-                    "Menu Hilang",
-              )
-              .join(', ');
+            // Gabungkan semua ID Menu (Karbo_ID, Protein_ID, Sayur_ID, ...)
+            final menuIdsJson = jsonEncode(_customMenuIds);
+            final newSetName = _newSetNameController.text.trim();
 
-          // Masukkan data ke summary
-          summaryData = "REQ_MENU: $menuNames | Note: $summaryData";
+            // Format Summary: REQ_MENU_SET_CUSTOM: {JSON_MENU_IDS} | NEW_NAME: Nama Set Baru
+            summaryData =
+                "REQ_MENU_SET_CUSTOM: $menuIdsJson | NEW_NAME: $newSetName | Note: $summaryData";
 
-          // Buat RequestDetail dummy
-          details.add(
-            RequestDetail(
-              menuId: validMenuIds.join(','), // Simpan ID menu di sini
-              menuName: menuNames,
-            ),
-          );
+            // Kirim detail Set Menu di RequestDetail (MenuId tidak relevan di sini)
+            details.add(
+              RequestDetail(
+                menuId: menuIdsJson, // Simpan payload JSON di menuId/oldNotes
+                menuName: newSetName,
+              ),
+            );
+          }
+          // --- MODE PILIH SET LAMA ---
+          else {
+            if (_selectedMenuSetId == null) {
+              throw Exception("Pilih Menu Set yang akan digunakan.");
+            }
+            // Cari nama set lama (menu_default)
+            final oldSetName =
+                _schoolData!['menu_default'] ?? "Set Lama Tidak Dikenal";
+            final newSetName = _availableMenuSets
+                .firstWhere((set) => set.id == _selectedMenuSetId!)
+                .setName;
+
+            // Format Summary: REQ_MENU_SET_ID: ID_SET | OLD_NAME: Nama Lama | NEW_NAME: Nama Baru
+            summaryData =
+                "REQ_MENU_SET_ID: $_selectedMenuSetId | OLD_NAME: $oldSetName | NEW_NAME: $newSetName | Note: $summaryData";
+
+            details.add(
+              RequestDetail(menuId: _selectedMenuSetId!, menuName: newSetName),
+            );
+          }
         }
         // --- 3. LOGIC TAMBAH/KURANG PORSI ---
         else if (_selectedType == 'Tambah/Kurang Porsi') {
@@ -346,11 +387,29 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
     }
   }
 
+  // [BARU] Memuat Menu Set yang dipilih ke state kustomisasi
+  void _loadSetForCustomization(AdminMenuSetModel set) {
+    _newSetNameController.text =
+        "${_schoolData!['name']} - Custom ${set.setName}";
+    setState(() {
+      _customMenuIds = {
+        'Karbo': set.karboId,
+        'Lauk Protein': set.proteinId,
+        'Sayur': set.sayurId,
+        'Buah': set.buahId,
+        'Lauk Nabati': set.nabatiId,
+        'Pelengkap': set.pelengkapId,
+      };
+      _isCustomizingMenu = true;
+    });
+  }
+
   @override
   void dispose() {
     _notesController.dispose();
     _portionController.dispose();
     _toleranceController.dispose();
+    _newSetNameController.dispose(); // <-- BARU
     super.dispose();
   }
 
@@ -567,72 +626,129 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
         ],
       );
     }
-    // 2. PERUBAHAN MENU (Set Menu: 3-5 Menu - Same as before, now permanent change)
+    // 2. PERUBAHAN MENU (Menggunakan Menu Set)
     else if (_selectedType == 'Perubahan Menu') {
+      // Mode Customisasi aktif
+      if (_isCustomizingMenu) {
+        // Widget untuk memilih Menu Item per Kategori
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Ajukan Menu Set Baru (Kustom):",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 10),
+
+            // Input Nama Set Baru
+            TextFormField(
+              controller: _newSetNameController,
+              decoration: const InputDecoration(
+                labelText: "Nama Set Menu Kustom",
+                hintText: "Cth: SMPN 6 - Set Senin Baru",
+              ),
+              validator: (v) => v!.isEmpty ? "Nama set wajib diisi" : null,
+            ),
+            const SizedBox(height: 15),
+
+            // Dropdown per Kategori (menggunakan data menu dari _availableMenus)
+            ..._customMenuIds.keys.map((category) {
+              final isRequired = _requiredCategories.contains(category);
+              final filteredMenus = _availableMenus
+                  .where((m) => m['category'] == category)
+                  .toList();
+
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: DropdownButtonFormField<String>(
+                  decoration: InputDecoration(
+                    labelText:
+                        "$category ${isRequired ? '(Wajib)' : '(Opsional)'}",
+                    prefixIcon: Icon(Icons.restaurant_menu),
+                  ),
+                  value: _customMenuIds[category],
+                  items: [
+                    DropdownMenuItem<String>(
+                      value: null,
+                      child: Text(
+                        isRequired ? "--- Pilih Menu ---" : "--- Tidak Ada ---",
+                      ),
+                    ),
+                    ...filteredMenus.map(
+                      (menu) => DropdownMenuItem(
+                        value: menu['id'],
+                        child: Text(menu['name']),
+                      ),
+                    ),
+                  ],
+                  onChanged: (String? newValue) =>
+                      setState(() => _customMenuIds[category] = newValue),
+                  validator: (v) => isRequired && v == null
+                      ? "$category harus dipilih."
+                      : null,
+                ),
+              );
+            }).toList(),
+
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                onPressed: () => setState(() => _isCustomizingMenu = false),
+                child: const Text("PILIH SET LAIN (Batal Kustom)"),
+              ),
+            ),
+          ],
+        );
+      }
+
+      // Mode Pilih Set yang Ada (Default)
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           const Text(
-            "Ajukan Set Menu Pengganti Rutin (Min 3, Max 5):",
+            "Pilih Set Menu Rutin Baru:",
             style: TextStyle(fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 10),
 
-          // ... (Menu Dropdowns and Add/Remove buttons remain the same)
-          ...List.generate(_selectedMenuIds.length, (index) {
-            final availableItems = _availableMenus.map((menu) {
-              final menuId = menu['id'] as String;
-              return DropdownMenuItem<String>(
-                value: menuId,
-                enabled: !_selectedMenuIds.whereType<String>().any(
-                  (id) => id == menuId && id != _selectedMenuIds[index],
-                ),
-                child: Text(menu['name']),
-              );
-            }).toList();
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: 10),
-              child: DropdownButtonFormField<String>(
-                decoration: InputDecoration(
-                  labelText: "Menu #${index + 1}",
-                  prefixIcon: const Icon(Icons.restaurant_menu),
-                  border: const OutlineInputBorder(),
-                ),
-                value: _selectedMenuIds[index],
-                items: [
-                  const DropdownMenuItem<String>(
-                    value: null,
-                    child: Text("--- Pilih Menu ---"),
-                  ),
-                  ...availableItems,
-                ],
-                onChanged: (String? newValue) =>
-                    setState(() => _selectedMenuIds[index] = newValue),
-                validator: (v) => (index < 3 && v == null)
-                    ? "Menu #${index + 1} wajib diisi."
-                    : null,
-              ),
-            );
-          }),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              if (_selectedMenuIds.length < 5)
-                TextButton.icon(
-                  icon: const Icon(Icons.add_circle, color: Colors.blue),
-                  label: const Text("Tambah Slot"),
-                  onPressed: () => setState(() => _selectedMenuIds.add(null)),
-                ),
-              if (_selectedMenuIds.length > 3)
-                TextButton.icon(
-                  icon: const Icon(Icons.remove_circle, color: Colors.red),
-                  label: const Text("Hapus Slot"),
-                  onPressed: () =>
-                      setState(() => _selectedMenuIds.removeLast()),
-                ),
-            ],
+          DropdownButtonFormField<String>(
+            decoration: const InputDecoration(
+              labelText: "Pilih Menu Set",
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.menu_book),
+            ),
+            value: _selectedMenuSetId,
+            items: _availableMenuSets
+                .map(
+                  (set) =>
+                      DropdownMenuItem(value: set.id, child: Text(set.setName)),
+                )
+                .toList(),
+            onChanged: (val) => setState(() => _selectedMenuSetId = val),
+            validator: (v) => v == null ? "Wajib pilih Menu Set" : null,
           ),
+
+          const SizedBox(height: 15),
+
+          // Tampilkan tombol Kustomisasi jika ada set yang dipilih
+          if (_selectedMenuSetId != null)
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  final selectedSet = _availableMenuSets.firstWhereOrNull(
+                    (set) => set.id == _selectedMenuSetId,
+                  );
+                  if (selectedSet != null) {
+                    _loadSetForCustomization(selectedSet);
+                  }
+                },
+                icon: const Icon(Icons.edit, color: Colors.white),
+                label: const Text("UBAH SET INI (CUSTOM)"),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+              ),
+            ),
         ],
       );
     }

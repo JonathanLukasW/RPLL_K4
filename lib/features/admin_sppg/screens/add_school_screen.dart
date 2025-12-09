@@ -7,7 +7,6 @@ import '../../../models/school_model.dart';
 import '../../../models/menu_model.dart';
 import '../../pengawas/screens/location_picker_screen.dart';
 import '../services/school_service.dart';
-import '../services/menu_service.dart';
 
 // Mapping for days (Mon-Sat)
 const List<String> _days = [
@@ -31,6 +30,8 @@ class AddSchoolScreen extends StatefulWidget {
 class _AddSchoolScreenState extends State<AddSchoolScreen> {
   final _formKey = GlobalKey<FormState>();
   final MenuService _menuService = MenuService();
+  final SchoolService _schoolService =
+      SchoolService(); // Tambahkan jika belum ada
 
   // --- Controllers ---
   final TextEditingController _nameController = TextEditingController();
@@ -48,16 +49,19 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
 
   // --- State Variables ---
   List<Menu> _availableMenus = [];
-  List<String?> _selectedMenuIds = [null, null, null];
 
   // [BARU] State untuk Menu Set Pilihan
-  String? _selectedMenuSetName;
+  String? _selectedMenuSetId; // ID Menu Set yang dipilih
+  AdminMenuSetModel? _selectedMenuSetData; // Data set yang dipilih
+  List<AdminMenuSetModel> _allMenuSets = []; // List semua Menu Set
+
+  bool _isHighRisk = false; // <-- Variabel ini hilang di kode Anda
   bool _isMenuLoading = true;
-  bool _isHighRisk = false;
-  bool _isSubmitting = false;
+
+  // [FIX KRITIS 1]: Deklarasi _isSubmitting
+  bool _isSubmitting = false; // <--- DIBUTUHKAN
 
   // --- NEW STATE: Weekly Schedule (Mon-Sat TimePicker) ---
-  // Store time as TimeOfDay (HH:mm) or null if day is off
   Map<String, TimeOfDay?> _weeklySchedule = {for (var day in _days) day: null};
 
   // Single time control for 'Apply to All'
@@ -66,7 +70,23 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   @override
   void initState() {
     super.initState();
+    // Inisialisasi isHighRisk dari data edit jika ada
+    if (widget.schoolToEdit != null) {
+      _isHighRisk = widget.schoolToEdit!.isHighRisk;
+    }
     _fetchMenusAndInitialize();
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _addressController.dispose();
+    _studentCountController.dispose();
+    _serviceTimeController.dispose();
+    _toleranceController.dispose();
+    _latController.dispose();
+    _longController.dispose();
+    super.dispose();
   }
 
   // Parses old string data into the new weekly map structure
@@ -77,7 +97,6 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     try {
       final Map<String, dynamic> data = jsonDecode(jsonString);
       data.forEach((key, value) {
-        // We check if it's one of our days and a valid time string
         if (_days.contains(key) && value is String && value.length >= 5) {
           final parts = value.split(':');
           if (parts.length >= 2) {
@@ -94,13 +113,20 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     return schedule;
   }
 
-  // NEW: Fetch Menus and Initialize State
+  // Perbarui Fetcher: Load Menu biasa (untuk mode Custom) dan Menu Set
   Future<void> _fetchMenusAndInitialize() async {
     try {
-      final menus = await _menuService.getMyMenus();
-      _availableMenus = menus;
+      final results = await Future.wait([
+        _menuService.getMyMenus(),
+        _menuService.getMyMenuSets(), // Load Menu Set Baru
+      ]);
 
-      List<String?> initialSelections = [];
+      final menus = results[0] as List<Menu>;
+      final menuSets =
+          results[1] as List<AdminMenuSetModel>; // Tangkap Menu Set
+
+      _availableMenus = menus;
+      _allMenuSets = menuSets;
 
       if (widget.schoolToEdit != null) {
         final s = widget.schoolToEdit!;
@@ -109,41 +135,36 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
         _studentCountController.text = s.studentCount.toString();
         _serviceTimeController.text = s.serviceTimeMinutes.toString();
         _toleranceController.text = s.toleranceMinutes.toString();
-        _isHighRisk = s.isHighRisk;
+        _isHighRisk = s.isHighRisk; // Inisialisasi isHighRisk
 
         if (s.latitude != null) _latController.text = s.latitude.toString();
         if (s.longitude != null) _longController.text = s.longitude.toString();
 
-        // --- NEW SCHEDULE INIT LOGIC (CRITICAL FOR EDIT) ---
-        // We reuse the deadlineTime field, assuming it's been updated to JSONB/TEXT
         _weeklySchedule = _parseSchedule(s.deadlineTime);
 
-        // PARSING MENU SET (Same as before)
+        // PARSING MENU SET
         if (s.menuDefault != null && s.menuDefault!.isNotEmpty) {
-          final storedNames = s.menuDefault!
-              .split(', ')
-              .map((e) => e.trim())
-              .toList();
-          final List<String?> idsFromNames = storedNames.map((name) {
-            return menus.firstWhereOrNull((m) => m.name == name)?.id;
-          }).toList();
-          initialSelections = idsFromNames
-              .whereType<String>()
-              .cast<String?>()
-              .toList();
-          if (initialSelections.length > 5) {
-            initialSelections = initialSelections.sublist(0, 5);
+          final existingSet = menuSets.firstWhereOrNull(
+            (set) => set.setName == s.menuDefault,
+          );
+
+          if (existingSet != null) {
+            _selectedMenuSetId = existingSet.id;
+            _selectedMenuSetData = existingSet;
+          } else {
+            _selectedMenuSetId = null;
           }
         }
       }
 
-      while (initialSelections.length < 3) {
-        initialSelections.add(null);
+      // Defaultkan ke set pertama jika belum terpilih
+      if (_selectedMenuSetId == null && _allMenuSets.isNotEmpty) {
+        _selectedMenuSetId = _allMenuSets.first.id;
+        _selectedMenuSetData = _allMenuSets.first;
       }
 
       if (mounted) {
         setState(() {
-          _selectedMenuIds = initialSelections;
           _isMenuLoading = false;
         });
       }
@@ -215,46 +236,8 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
     }
   }
 
-  // Logic untuk mengkonversi Menu Set Nama menjadi Menu IDs
-  void _selectPredefinedMenuSet(String? setName) {
-    if (setName == null || setName == 'Custom Menu') {
-      setState(() {
-        _selectedMenuSetName = setName;
-        // Jangan reset _selectedMenuIds saat Custom agar user bisa lanjut edit
-      });
-      return;
-    }
-
-    final selectedNames = MenuSetDefinitions.predefinedSets[setName];
-    if (selectedNames == null) return;
-
-    List<String?> newSelection = [];
-
-    // Mapping Names to IDs
-    for (var name in selectedNames) {
-      final menu = _availableMenus.firstWhereOrNull((m) => m.name == name);
-      if (menu != null) {
-        newSelection.add(menu.id);
-      }
-    }
-
-    // Fill up to 5 slots if needed
-    while (newSelection.length < 5) {
-      newSelection.add(null);
-    }
-
-    // Reset to min 3 slots if fewer are needed (optional, for clean UI)
-    while (newSelection.length > 5) {
-      newSelection.removeLast();
-    }
-
-    setState(() {
-      _selectedMenuSetName = setName;
-      _selectedMenuIds = newSelection;
-    });
-  }
-
-  // --- 3. Submit ke Database (Perlu Diperbaiki Logic Validasi Menu) ---
+  // [FIX KRITIS 3]: Hapus duplikasi fungsi _submitForm
+  // --- 3. Submit ke Database (DIPERBAIKI) ---
   Future<void> _submitForm() async {
     // Check if at least one day is scheduled
     if (_weeklySchedule.values.every((time) => time == null)) {
@@ -265,54 +248,46 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
       return;
     }
 
-    // Cek Menu: Jika Custom, validasi harus minimal 3. Jika Predefined, anggap valid.
-    final List<String> finalMenuIds = _selectedMenuIds
-        .whereType<String>()
-        .toList();
-
-    if (finalMenuIds.length < 3) {
+    // [VALIDASI KRITIS MENU SET]
+    if (_selectedMenuSetId == null) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Wajib pilih minimal 3 item menu set!")),
+        const SnackBar(
+          content: Text("Wajib pilih salah satu Menu Set!"),
+          backgroundColor: Colors.red,
+        ),
       );
       return;
     }
 
+    // --- START SUBMIT LOGIC ---
     if (_formKey.currentState!.validate()) {
       setState(() => _isSubmitting = true);
       try {
-        // --- NEW: SCHEDULE SERIALIZATION ---
         final String scheduleJson = _serializeWeeklySchedule();
 
-        // --- REBUILD MENU_DEFAULT STRING (menggunakan finalMenuIds) ---
-        final menuNames = finalMenuIds
-            .map(
-              (id) =>
-                  _availableMenus.firstWhereOrNull((m) => m.id == id)?.name ??
-                  "Menu Hilang",
-            )
-            .where((name) => name != "Menu Hilang")
-            .toList()
-            .join(', ');
+        // [UPDATE KRITIS MENU_DEFAULT]: Ambil NAMA Menu Set yang dipilih
+        final selectedSetName = _allMenuSets
+            .firstWhere((set) => set.id == _selectedMenuSetId)
+            .setName; // Mengambil nama set untuk disimpan di DB
 
         final Map<String, dynamic> data = {
           'name': _nameController.text,
           'address': _addressController.text,
           'student_count': int.parse(_studentCountController.text),
           'service_time_minutes': int.parse(_serviceTimeController.text),
-          'is_high_risk': _isHighRisk,
+          'is_high_risk': _isHighRisk, // <-- Tambahkan kembali
           'gps_lat': double.tryParse(_latController.text),
           'gps_long': double.tryParse(_longController.text),
           'tolerance_minutes': int.parse(_toleranceController.text),
-          'menu_default': menuNames,
-          // CRITICAL HACK: Store the JSON in the single column meant for Deadline.
+          'menu_default': selectedSetName, // Menyimpan NAMA SET
           'deadline_time': scheduleJson,
         };
 
         if (widget.schoolToEdit == null) {
-          await SchoolService().createSchool(data);
+          await _schoolService.createSchool(data);
         } else {
-          await SchoolService().updateSchool(widget.schoolToEdit!.id, data);
+          await _schoolService.updateSchool(widget.schoolToEdit!.id, data);
         }
 
         if (!mounted) return;
@@ -340,23 +315,11 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
   }
 
   @override
-  void dispose() {
-    _nameController.dispose();
-    _addressController.dispose();
-    _studentCountController.dispose();
-    _serviceTimeController.dispose();
-    _toleranceController.dispose();
-    _latController.dispose();
-    _longController.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     final isEdit = widget.schoolToEdit != null;
-    final isCustomMenu =
-        _selectedMenuSetName == 'Custom Menu' ||
-        _selectedMenuSetName == null; // Default ke custom jika null
+
+    // [FIX KRITIS 2]: Hapus referensi ke variabel lama yang tidak ada
+    // final isCustomMenu = _selectedMenuSetName == 'Custom Menu' || _selectedMenuSetName == null;
 
     return Scaffold(
       appBar: AppBar(
@@ -373,7 +336,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // --- DATA UMUM (UNCHANGED) ---
+                    // --- DATA UMUM ---
                     const Text(
                       "Data Umum",
                       style: TextStyle(
@@ -427,10 +390,31 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 25),
+                    const SizedBox(height: 15),
+
+                    // [BARU]: TOGGLE IS HIGH RISK
+                    Row(
+                      children: [
+                        const Text(
+                          "Lokasi Berisiko Tinggi?",
+                          style: TextStyle(fontSize: 16),
+                        ),
+                        const Spacer(),
+                        Switch(
+                          value: _isHighRisk,
+                          onChanged: (bool value) {
+                            setState(() {
+                              _isHighRisk = value;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
                     const Divider(thickness: 2),
 
-                    // --- BAGIAN JADWAL MINGGUAN (REWRITE) ---
+                    // --- BAGIAN JADWAL MINGGUAN ---
                     const Text(
                       "Jadwal Pengiriman Rutin (Deadline Konsumsi)",
                       style: TextStyle(
@@ -545,140 +529,134 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                       ),
                       validator: (v) => v!.isEmpty ? "Wajib" : null,
                     ),
-                    const SizedBox(
-                      height: 15,
-                    ), // --- MENU SET SELECTION (UPDATED) ---
-                    const Text(
-                      "Set Menu Pilihan",
-                      style: TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 15),
 
-                    // Dropdown Pilihan Menu Set
+                    // [BARU] Dropdown Menu Set
+                    const Text(
+                      "Set Menu Pilihan Rutin",
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 15),
+
                     DropdownButtonFormField<String>(
                       decoration: const InputDecoration(
                         labelText: "Pilih Menu Set",
                         prefixIcon: Icon(Icons.restaurant),
                       ),
-                      value: _selectedMenuSetName ?? 'Custom Menu',
-                      items: [
-                        const DropdownMenuItem(
-                          value: 'Custom Menu',
-                          child: Text("Custom Menu (Pilih Manual)"),
-                        ),
-                        ...MenuSetDefinitions.predefinedSets.keys.map((name) {
-                          return DropdownMenuItem(
-                            value: name,
-                            child: Text(name),
+                      value: _selectedMenuSetId,
+                      items: _allMenuSets.map((set) {
+                        return DropdownMenuItem(
+                          value: set.id,
+                          child: Text(set.setName),
+                        );
+                      }).toList(),
+                      onChanged: (String? newId) {
+                        setState(() {
+                          _selectedMenuSetId = newId;
+                          _selectedMenuSetData = _allMenuSets.firstWhereOrNull(
+                            (set) => set.id == newId,
                           );
-                        }).toList(),
-                      ],
-                      onChanged: _selectPredefinedMenuSet,
+                        });
+                      },
+                      validator: (v) =>
+                          v == null ? "Wajib memilih Menu Set" : null,
                     ),
                     const SizedBox(height: 15),
 
-                    // --- TAMPILAN CUSTOM MENU (Conditional) ---
-                    if (isCustomMenu) ...[
-                      const Text(
-                        "Pilih Menu Default Set (Min 3, Max 5):",
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 10),
-
-                      if (_availableMenus.isEmpty)
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          color: Colors.yellow[100],
-                          child: const Text(
-                            "TIDAK ADA MENU!.",
-                            style: TextStyle(color: Colors.orange),
-                          ),
-                        ),
-
-                      // Dropdowns untuk Custom Menu
-                      ...List.generate(_selectedMenuIds.length, (index) {
-                        final availableItems = _availableMenus.map((menu) {
-                          return DropdownMenuItem<String>(
-                            value: menu.id,
-                            enabled: !_selectedMenuIds.any(
-                              (id) =>
-                                  id == menu.id &&
-                                  id != _selectedMenuIds[index],
-                            ),
-                            child: Text("${menu.name} (${menu.category})"),
-                          );
-                        }).toList();
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: DropdownButtonFormField<String>(
-                            decoration: InputDecoration(
-                              labelText: "Menu #${index + 1}",
-                              prefixIcon: const Icon(Icons.restaurant_menu),
-                            ),
-                            value: _selectedMenuIds[index],
-                            items: [
-                              const DropdownMenuItem<String>(
-                                value: null,
-                                child: Text("--- Pilih Menu ---"),
-                              ),
-                              ...availableItems,
-                            ],
-                            onChanged: (String? newValue) => setState(
-                              () => _selectedMenuIds[index] = newValue,
-                            ),
-                            validator: (v) => (index < 3 && v == null)
-                                ? "Menu #${index + 1} wajib diisi."
-                                : null,
-                          ),
-                        );
-                      }),
-
-                      // Tombol Add/Remove Slot
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                    // --- TAMPILAN RINGKASAN MENU SET ---
+                    if (_selectedMenuSetData != null)
+                      Column(
+                        // Bungkus dalam Column agar bisa menampung Card Komponen dan Card Gizi
                         children: [
-                          if (_selectedMenuIds.length < 5)
-                            TextButton.icon(
-                              icon: const Icon(
-                                Icons.add_circle,
-                                color: Colors.blue,
+                          Card(
+                            color: Colors.lightGreen[50],
+                            child: Padding(
+                              padding: const EdgeInsets.all(12.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "Komponen Set:",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.green,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 5),
+                                  ..._selectedMenuSetData!.menuNames.entries.map(
+                                    (entry) {
+                                      final category = entry.key;
+                                      final name = entry.value;
+                                      return Padding(
+                                        padding: const EdgeInsets.only(
+                                          bottom: 2.0,
+                                        ),
+                                        child: Text(
+                                          "• $category: ${name ?? 'Tidak Ada'}",
+                                          style: TextStyle(
+                                            color: (name == null)
+                                                ? Colors.grey
+                                                : Colors.black87,
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ).toList(),
+                                ],
                               ),
-                              label: const Text("Tambah Menu Set"),
-                              onPressed: () =>
-                                  setState(() => _selectedMenuIds.add(null)),
                             ),
-                          if (_selectedMenuIds.length > 3)
-                            TextButton.icon(
-                              icon: const Icon(
-                                Icons.remove_circle,
-                                color: Colors.red,
-                              ),
-                              label: const Text("Hapus Menu Set"),
-                              onPressed: () =>
-                                  setState(() => _selectedMenuIds.removeLast()),
-                            ),
-                        ],
-                      ),
-                    ] else ...[
-                      // Tampilan Ringkasan Menu Set Pilihan
-                      Card(
-                        color: Colors.lightGreen[50],
-                        child: Padding(
-                          padding: const EdgeInsets.all(12.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: MenuSetDefinitions
-                                .predefinedSets[_selectedMenuSetName]!
-                                .map((name) => Text("• $name"))
-                                .toList(),
                           ),
+
+                          // [BARU] CARD RINGKASAN GIZI
+                          const SizedBox(height: 10),
+                          Card(
+                            elevation: 2,
+                            color: Colors.blue[50],
+                            child: Padding(
+                              padding: const EdgeInsets.all(12.0),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    "Total Kandungan Gizi Set:",
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.blue,
+                                    ),
+                                  ),
+                                  const Divider(height: 10, thickness: 1),
+                                  Text(
+                                    "⚡ Energi: ${_selectedMenuSetData!.totalEnergy} Kkal",
+                                  ),
+                                  Text(
+                                    "🍖 Protein: ${_selectedMenuSetData!.totalProtein.toStringAsFixed(1)} gram",
+                                  ),
+                                  Text(
+                                    "🧀 Lemak: ${_selectedMenuSetData!.totalFat.toStringAsFixed(1)} gram",
+                                  ),
+                                  Text(
+                                    "🥖 Karbo: ${_selectedMenuSetData!.totalCarbs.toStringAsFixed(1)} gram",
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      )
+                    else
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: Text(
+                          "Silakan pilih Menu Set di atas.",
+                          style: TextStyle(color: Colors.red),
                         ),
                       ),
-                      const SizedBox(height: 15),
-                    ],
 
+                    const SizedBox(height: 15),
                     const Divider(thickness: 2),
-                    const SizedBox(height: 10),
 
                     // --- BAGIAN LOKASI MAP (UNCHANGED) ---
                     Row(
@@ -733,6 +711,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
+                        // Menggunakan _isSubmitting yang sudah dideklarasikan
                         onPressed: _isSubmitting ? null : _submitForm,
                         style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.orange[800],
@@ -740,6 +719,7 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                         ),
                         child: _isSubmitting
                             ? const CircularProgressIndicator(
+                                // Tampilkan loading
                                 color: Colors.white,
                               )
                             : Text(
