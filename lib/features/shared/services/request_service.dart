@@ -205,18 +205,47 @@ class RequestService {
         .toList();
   }
 
-  Future<List<ChangeRequestModel>> getIncomingRequests() async {
+  Future<List<ChangeRequestModel>> getIncomingRequests({
+    DateTime? date, // BARU
+    String? schoolId, // BARU
+  }) async {
     final userId = _supabase.auth.currentUser!.id;
     final profile = await _supabase
         .from('profiles')
         .select('sppg_id')
         .eq('id', userId)
         .single();
-    final response = await _supabase
+    final String mySppgId = profile['sppg_id'];
+
+    // [FIX KRITIS SUPABASE SYNTAX]: Mulai dengan select('*') tanpa parameter options
+    // agar PostgrestFilterBuilder di bawah tidak error.
+    var query = _supabase
         .from('change_requests')
+        .select('*') // <-- FIX: select('*') saja
+        .eq('sppg_id', mySppgId);
+
+    // B. Terapkan Filter Tanggal
+    if (date != null) {
+      final dateStr = DateFormat('yyyy-MM-dd').format(date);
+
+      query = query
+          .gte('created_at', dateStr)
+          .lt(
+            'created_at',
+            DateFormat('yyyy-MM-dd').format(date.add(const Duration(days: 1))),
+          );
+    }
+
+    // C. Terapkan Filter Sekolah
+    if (schoolId != null) {
+      query = query.eq('school_id', schoolId);
+    }
+
+    // D. Lakukan SELECT dengan JOIN (Ini menimpa select('*') di atas)
+    final response = await query
         .select('*, schools(name)')
-        .eq('sppg_id', profile['sppg_id'])
         .order('created_at', ascending: false);
+
     return (response as List)
         .map((json) => ChangeRequestModel.fromJson(json))
         .toList();

@@ -32,6 +32,13 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   // [BARU] Controller untuk menampilkan nama sekolah saat ini (uneditable)
   late final TextEditingController _currentSchoolNameController;
 
+  // [BARU] Controller Siswa Kelas
+  late final TextEditingController _classStudentCountController;
+
+  // [BARU] State Kuota
+  int _totalSchoolCapacity = 0;
+  int _allocatedCapacity = 0;
+
   List<School> _schools = [];
   String? _selectedSchoolId;
   bool _isLoading = true;
@@ -58,6 +65,11 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       text: currentSchoolName,
     ); // <--- INI SUDAH BENAR
 
+    // [BARU] Initialize class student count
+    _classStudentCountController = TextEditingController(
+      text: widget.initialData['studentCountClass']?.toString() ?? '0',
+    );
+
     // Masalah: _selectedSchoolId akan ter-set ke null jika tidak ada (meski ada nama)
     // Biarkan _selectedSchoolId default dari initialData['schoolId'].
 
@@ -67,6 +79,16 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   Future<void> _fetchSchools() async {
     try {
       final data = await SchoolService().getMySchools();
+
+      if (widget.initialRole == 'walikelas' &&
+          widget.initialData['schoolId'] != null) {
+        // Load kuota saat ini (kecuali user yang sedang diedit)
+        await _loadQuotaDetails(
+          widget.initialData['schoolId']!,
+          excludeUserId: widget.userId,
+        );
+      }
+
       if (!mounted) return;
 
       // [FIX 2: Hapus logika pencarian nama sekolah di sini]
@@ -87,8 +109,46 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     }
   }
 
+  // [BARU] Load Detail Kuota Sekolah (Sama seperti di AddTeacherScreen)
+  Future<void> _loadQuotaDetails(
+    String schoolId, {
+    String? excludeUserId,
+  }) async {
+    try {
+      final quota = await TeacherService().getSchoolQuotaDetails(
+        schoolId,
+        excludeUserId: excludeUserId,
+      );
+      if (mounted) {
+        setState(() {
+          _totalSchoolCapacity = quota['totalSchool'] ?? 0;
+          _allocatedCapacity = quota['allocated'] ?? 0;
+        });
+      }
+    } catch (e) {
+      // ... (error handling)
+    }
+  }
+
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
+      final int classCount =
+          int.tryParse(_classStudentCountController.text) ?? 0;
+      final availableQuota = _totalSchoolCapacity - _allocatedCapacity;
+
+      // Validasi Kuota Total (Termasuk kuota yang sedang diedit)
+      if (classCount >
+          availableQuota + (widget.initialData['studentCountClass'] ?? 0)) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Jumlah siswa melebihi kuota sekolah yang tersedia!"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       setState(() => _isSubmitting = true);
       try {
         final Map<String, dynamic> data = {
@@ -96,6 +156,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
           'email': _emailController.text.trim(),
           'phone_number': _phoneController.text
               .trim(), // [BARU] Tambahkan phone number
+          'school_id': _selectedSchoolId,
         };
 
         if (widget.initialRole == 'koordinator' ||
@@ -104,6 +165,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
         }
         if (widget.initialRole == 'walikelas') {
           data['class_name'] = _classController.text.trim();
+          data['student_count_class'] = classCount; // BARU
         }
 
         // Panggil service yang sesuai
@@ -151,6 +213,13 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
     final selectedSchool = _schools.firstWhereOrNull(
       (s) => s.id == _selectedSchoolId,
     );
+    final isWaliKelas = widget.initialRole == 'walikelas';
+    final availableQuota = _totalSchoolCapacity - _allocatedCapacity;
+    final maxAllowed =
+        availableQuota +
+        (widget.initialData['studentCountClass'] ??
+            0); // Max yang boleh diinput saat edit
+
     return Scaffold(
       appBar: AppBar(
         title: Text("Edit Akun ${widget.initialRole.toUpperCase()}"),
@@ -265,7 +334,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
                     ],
 
                     // Field Khusus Wali Kelas
-                    if (widget.initialRole == 'walikelas')
+                    if (isWaliKelas) ...[
                       TextFormField(
                         controller: _classController,
                         decoration: const InputDecoration(
@@ -274,29 +343,79 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
                         ),
                         validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
                       ),
-                    const SizedBox(height: 30),
+                      const SizedBox(height: 15),
 
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _isSubmitting ? null : _submit,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.orange[800],
-                          padding: const EdgeInsets.symmetric(vertical: 15),
-                        ),
-                        child: _isSubmitting
-                            ? const CircularProgressIndicator(
-                                color: Colors.white,
-                              )
-                            : const Text(
-                                "SIMPAN PERUBAHAN",
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
+                      // INFO KUOTA SEKOLAH
+                      if (_totalSchoolCapacity > 0)
+                        Card(
+                          color: Colors.blue[50],
+                          margin: const EdgeInsets.only(bottom: 15),
+                          child: Padding(
+                            padding: const EdgeInsets.all(12.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  "Total Siswa Sekolah: $_totalSchoolCapacity",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
-                              ),
+                                Text(
+                                  "Dialokasikan Kelas Lain: $_allocatedCapacity Siswa",
+                                  style: const TextStyle(color: Colors.red),
+                                ),
+                                Text(
+                                  "Quota Max Kelas Ini: $maxAllowed Siswa",
+                                  style: const TextStyle(color: Colors.green),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                      // [BARU] JUMLAH PENERIMA MANFAAT DI KELAS INI
+                      TextFormField(
+                        controller: _classStudentCountController,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: "Jml Penerima Kelas Ini",
+                          hintText: "Maksimal: $maxAllowed",
+                          prefixIcon: const Icon(Icons.people),
+                        ),
+                        validator: (v) {
+                          if (v!.isEmpty) return "Wajib diisi";
+                          final count = int.tryParse(v) ?? 0;
+                          if (count <= 0) return "Jumlah harus lebih dari 0";
+                          if (count > maxAllowed)
+                            return "Melebihi kuota tersedia ($maxAllowed)";
+                          return null;
+                        },
                       ),
-                    ),
+                      const SizedBox(height: 30),
+
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _isSubmitting ? null : _submit,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange[800],
+                            padding: const EdgeInsets.symmetric(vertical: 15),
+                          ),
+                          child: _isSubmitting
+                              ? const CircularProgressIndicator(
+                                  color: Colors.white,
+                                )
+                              : const Text(
+                                  "SIMPAN PERUBAHAN",
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

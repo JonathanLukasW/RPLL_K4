@@ -22,6 +22,14 @@ class DashboardTeacherScreen extends StatefulWidget {
   State<DashboardTeacherScreen> createState() => _DashboardTeacherScreenState();
 }
 
+// Helper untuk model masalah dinamis
+class IssueDetail {
+  String? qtyImpacted; // Jumlah item/porsi rusak/kurang/telat
+  String? notes; // Detail keterangan
+
+  IssueDetail({this.qtyImpacted, this.notes});
+}
+
 class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
   final TeacherReceptionService _service = TeacherReceptionService();
   final StorageService _storageService = StorageService();
@@ -90,43 +98,200 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
     return _deliveries[dateKey] ?? [];
   }
 
-  // === FILE: lib/features/walikelas/screens/dashboard_teacher_screen.dart ===
-  // ... (lines 1-100 remain the same)
-
   // Event Handler untuk konfirmasi penerimaan
   void _showReceptionDialog(Map<String, dynamic> stopData) {
     final stopId = stopData['id'];
     final schoolName = stopData['schools']['name'] ?? 'Sekolah?';
-    // FIX: Ambil Menu Default sebagai referensi menu
     final menuRef = stopData['schools']['menu_default'] ?? 'Menu Belum Diset';
-    // FIX: Target portions merujuk ke TOTAL siswa yang dilayani di sekolah, bukan 0.
-    final schoolPortions = stopData['schools']['student_count'] ?? 0;
+
+    // [BARU]: Ambil kuantitas yang diharapkan untuk kelas ini
+    final expectedClassPortions = stopData['expected_class_portions'] ?? 0;
     final className = stopData['my_class_name'];
 
+    // [FIX KRITIS 1]: Defaultkan qtyController ke kuantitas KELAS
     final qtyController = TextEditingController(
-      text: schoolPortions.toString(),
-    ); // Default ke total sekolah
+      text: expectedClassPortions.toString(),
+    );
+
+    // Kontroler untuk input dinamis
     final notesController = TextEditingController();
-    // Wali Kelas tidak perlu input Nama Penerima, karena itu dia sendiri
+    final dynamicQtyController =
+        TextEditingController(); // Untuk porsi kurang / rusak / basi
+
     String? issueType; // null = aman, string = ada masalah
     File? photoFile;
     bool isSubmitting = false;
 
-    // List jenis masalah untuk dropdown (Kualitas Makanan)
+    // [FIX KRITIS 2]: Update List Jenis Masalah
     const List<String> issueOptions = [
       'Makanan Basi/Berbau',
-      'Kualitas Buruk',
+      'Kemasan Rusak', // Dulu Kualitas Buruk
       'Porsi Kurang',
       'Lain-lain',
     ];
-
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(
         builder: (context, setDialogState) {
-          // Gunakan Form key untuk validasi
           final formKey = GlobalKey<FormState>();
+
+          // Helper untuk menampilkan input dinamis
+          Widget _buildDynamicIssueFields() {
+            if (issueType == null) return const SizedBox.shrink();
+
+            // [FIX: Logic Porsi Kurang]
+            if (issueType == 'Porsi Kurang') {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: dynamicQtyController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: "Jumlah Porsi yang Kurang",
+                      hintText: "Contoh: 5",
+                    ),
+                    validator: (v) =>
+                        (v == null || v.isEmpty || int.tryParse(v)! <= 0)
+                        ? "Wajib isi jumlah kekurangan."
+                        : null,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: notesController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: "Detail Masalah (Opsional)",
+                    ),
+                  ),
+                ],
+              );
+            }
+            // [FIX: Logic Makanan Basi/Kemasan Rusak]
+            else if (issueType == 'Makanan Basi/Berbau' ||
+                issueType == 'Kemasan Rusak') {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: dynamicQtyController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText:
+                          "Jumlah Porsi/Kotak yang ${issueType == 'Makanan Basi/Berbau' ? 'Basi/Rusak' : 'Rusak Kemasan'}",
+                      hintText: "Total yang terdampak",
+                    ),
+                    validator: (v) =>
+                        (v == null || v.isEmpty || int.tryParse(v)! < 0)
+                        ? "Wajib isi jumlah yang terdampak (0 jika tidak tahu)"
+                        : null,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: notesController,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: "Keterangan Detail (Wajib Diisi)",
+                    ),
+                    validator: (v) =>
+                        v!.isEmpty ? "Keterangan wajib diisi." : null,
+                  ),
+                ],
+              );
+            }
+            // [FIX: Logic Lain-lain]
+            else if (issueType == 'Lain-lain') {
+              return Column(
+                children: [
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: notesController,
+                    maxLines: 4,
+                    decoration: const InputDecoration(
+                      labelText: "Keterangan Detail (Wajib Diisi)",
+                    ),
+                    validator: (v) =>
+                        v!.isEmpty ? "Keterangan wajib diisi." : null,
+                  ),
+                ],
+              );
+            }
+
+            return const SizedBox.shrink(); // Default jika tidak ada
+          }
+
+          // Logika Submission
+          Future<void> _handleSubmission() async {
+            if (!formKey.currentState!.validate()) return;
+
+            // Validasi Foto Bukti (selalu wajib jika issueType != null)
+            if (issueType != null && photoFile == null) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Semua laporan masalah butuh foto bukti!"),
+                  backgroundColor: Colors.red,
+                ),
+              );
+              return;
+            }
+
+            setDialogState(() => isSubmitting = true);
+            String? uploadedUrl;
+
+            try {
+              // Upload foto
+              if (photoFile != null) {
+                uploadedUrl = await _storageService.uploadEvidence(
+                  photoFile!,
+                  'teacher_reception',
+                );
+              }
+
+              // Gabungkan notes dan dynamic input untuk dikirim ke DB
+              String finalNotes = notesController.text.trim();
+              if (issueType != null) {
+                final String qtyInfo = dynamicQtyController.text.isNotEmpty
+                    ? " (Terdampak: ${dynamicQtyController.text})"
+                    : "";
+                finalNotes = "[$issueType$qtyInfo] $finalNotes";
+              }
+
+              // Panggil service untuk konfirmasi
+              await _service.submitClassReception(
+                stopId: stopId,
+                className: className,
+                qty: int.tryParse(qtyController.text) ?? 0,
+                notes: finalNotes, // Mengirim catatan gabungan
+                issueType: issueType,
+                proofUrl: uploadedUrl,
+              );
+
+              if (!mounted) return;
+              Navigator.pop(ctx);
+              await _fetchDeliveries();
+              // ... (feedback messages)
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    issueType == null
+                        ? "Konfirmasi Kelas Berhasil!"
+                        : "Keluhan Kualitas Terkirim ke Admin SPPG!",
+                  ),
+                  backgroundColor: issueType == null
+                      ? Colors.green
+                      : Colors.red,
+                ),
+              );
+            } catch (e) {
+              // ... (error handling)
+            } finally {
+              if (mounted) setDialogState(() => isSubmitting = false);
+            }
+          }
 
           return AlertDialog(
             title: Text("Konfirmasi Kelas $className: $schoolName"),
@@ -137,17 +302,24 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
+                    // [FIX TAMPILAN]: Porsi yang Diharapkan
+                    const Text("Kuantitas Seharusnya:"),
                     Text(
-                      "Menu Diterima Sekolah: $menuRef (Total $schoolPortions Porsi)",
+                      "$expectedClassPortions Porsi",
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                        color: Colors.indigo,
+                      ),
                     ),
-                    const SizedBox(height: 15),
+                    const SizedBox(height: 10),
 
                     // --- Kuantitas Diterima ---
                     TextFormField(
                       controller: qtyController,
                       keyboardType: TextInputType.number,
                       decoration: const InputDecoration(
-                        labelText: "Jumlah Porsi untuk Kelas Ini",
+                        labelText: "Jumlah Porsi yang Diterima Kelas",
                       ),
                       validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
                     ),
@@ -174,25 +346,24 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                           ),
                         ),
                       ],
-                      onChanged: (val) => setDialogState(() => issueType = val),
+                      onChanged: (val) {
+                        setDialogState(() {
+                          issueType = val;
+                          // Clear dynamic inputs saat tipe berubah
+                          dynamicQtyController.clear();
+                          notesController.clear();
+                          photoFile =
+                              null; // Reset foto saat masalah dipilih/dibatalkan
+                        });
+                      },
                     ),
 
+                    // --- INPUT DINAMIS MASALAH ---
+                    _buildDynamicIssueFields(),
+
+                    // --- FOTO BUKTI ---
                     if (issueType != null) ...[
                       const SizedBox(height: 15),
-                      // --- Catatan Komplain (Jika Ada Masalah) ---
-                      TextFormField(
-                        controller: notesController,
-                        maxLines: 3,
-                        decoration: const InputDecoration(
-                          labelText: "Detail Masalah Kualitas (Wajib Diisi)",
-                        ),
-                        validator: (v) => (issueType != null && v!.isEmpty)
-                            ? "Detail masalah wajib diisi."
-                            : null,
-                      ),
-                      const SizedBox(height: 15),
-
-                      // --- Foto Bukti (Wajib Jika Ada Masalah) ---
                       const Text(
                         "Foto Bukti (Wajib jika ada masalah):",
                         style: TextStyle(fontWeight: FontWeight.bold),
@@ -211,13 +382,17 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                           width: double.infinity,
                           decoration: BoxDecoration(
                             color: Colors.grey[200],
-                            border: Border.all(color: Colors.grey),
+                            border: Border.all(color: Colors.red),
                           ),
                           child: photoFile == null
                               ? const Column(
                                   mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Icon(Icons.camera_alt, size: 30),
+                                    Icon(
+                                      Icons.camera_alt,
+                                      size: 30,
+                                      color: Colors.red,
+                                    ),
                                     Text("Ambil Foto Bukti"),
                                   ],
                                 )
@@ -225,7 +400,6 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 15),
                   ],
                 ),
               ),
@@ -236,76 +410,7 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                 child: const Text("Batal"),
               ),
               ElevatedButton(
-                onPressed: isSubmitting
-                    ? null
-                    : () async {
-                        if (formKey.currentState!.validate()) {
-                          if (issueType != null &&
-                              (notesController.text.isEmpty ||
-                                  photoFile == null)) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  "Masalah butuh detail dan foto bukti, TOLOL!",
-                                ),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                            return;
-                          }
-
-                          setDialogState(() => isSubmitting = true);
-
-                          String? uploadedUrl;
-                          try {
-                            // Upload foto jika ada masalah
-                            if (photoFile != null) {
-                              uploadedUrl = await _storageService.uploadEvidence(
-                                photoFile!,
-                                'teacher_reception', // Folder baru untuk wali kelas
-                              );
-                            }
-
-                            // Panggil service untuk konfirmasi
-                            await _service.submitClassReception(
-                              stopId: stopId,
-                              className: className,
-                              qty: int.tryParse(qtyController.text) ?? 0,
-                              notes: notesController.text.trim(),
-                              issueType: issueType,
-                              proofUrl: uploadedUrl,
-                            );
-
-                            if (!mounted) return;
-                            Navigator.pop(ctx);
-                            await _fetchDeliveries(); // Refresh jadwal
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  issueType == null
-                                      ? "Konfirmasi Kelas Berhasil!"
-                                      : "Keluhan Kualitas Terkirim ke Admin SPPG!", // FIX PESAN
-                                ),
-                                backgroundColor: issueType == null
-                                    ? Colors.green
-                                    : Colors.red,
-                              ),
-                            );
-                          } catch (e) {
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text("Gagal Simpan: $e"),
-                                backgroundColor: Colors.red,
-                              ),
-                            );
-                          } finally {
-                            if (mounted)
-                              setDialogState(() => isSubmitting = false);
-                          }
-                        }
-                      },
+                onPressed: isSubmitting ? null : _handleSubmission,
                 style: ElevatedButton.styleFrom(
                   backgroundColor: issueType == null
                       ? Colors.indigo
@@ -326,7 +431,6 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
       ),
     );
   }
-  // ... (rest of the file remains the same)
 
   // Helper untuk mendapatkan icon status
   IconData _getStatusIcon(bool alreadyReceived, String stopStatus) {
@@ -457,7 +561,9 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
         final bool isClassReceived = stop['already_received'] == true;
         final String menuName =
             stop['schools']['menu_default'] ?? 'Menu Default Belum Diset';
-        final int portions = stop['schools']['student_count'] ?? 0;
+
+        // [FIX KRITIS 1]: Gunakan porsi kelas yang sudah dihitung di service
+        final int classPortions = stop['expected_class_portions'] ?? 0;
 
         // --- STATUS CHECK ---
         // Status ini mencerminkan aksi terakhir di delivery_stops (Kurir/Koordinator)
@@ -491,14 +597,14 @@ class _DashboardTeacherScreenState extends State<DashboardTeacherScreen> {
                       : (isSchoolReceived ? Colors.orange : Colors.indigo),
                 ),
                 title: Text(
-                  // FIX TAMPILAN: Ganti "Status Sekolah" menjadi "Status Penerimaan Awal"
                   "Status Penerimaan Awal: ${isSchoolFinalized ? 'SUDAH DITERIMA' : 'PENDING'}",
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
                 subtitle: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text("Menu: $menuName (Total: $portions Porsi)"),
+                    // [FIX KRITIS 2]: Tampilkan porsi kelas
+                    Text("Menu: $menuName (Kelas: $classPortions Porsi)"),
                     // FIX TAMPILAN: Status kelas dan detail keluhan
                     Text(
                       "Kelas Anda: $receptionStatusText",

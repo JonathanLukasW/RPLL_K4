@@ -1,0 +1,26 @@
+
+
+2. SBB buat rute kan jadinya ini masih manual nentuin ke sekolah apa ajanya… sementara kurang cek muatan, kaya misal harusnya mobil cuma bisa nampung 500 tapi masih bisa ngitim 650 pax.
+–   3. Inputan jadwal khusus masih belum bener 
+–   4. Highrisk/ bukan harus dijelasin kenapanya atau ilangin aja lah
+5. Melihat  dashboard laporan distribusi seperti history pengiriman, bukti penerimaan digital, jadwal pengiriman setiap SPPG, persentase ketepatan waktu pengiriman. dan laporan keluhan/masalah dari semua SPPG.
+6. Kalau si kurir udah sampe, ngirim notif ke koord dan walikelas
+7. Mingdep cobain benerin waktu produksi jadi si porsi masuk ke hitungan 
+–   8. Tambahin di menu high isk atau bukan
+–   9. Pembuatan menu set harus di cek dlu itu menunya udah ngerangkup semua belum dari karbo, protein, lauk, dll.
+–   Tambah nomor telpon di tampilan data user, laporan belum
+Ui dibenerin warna dan segala macemnya
+Laporan penjadwalan di bgn diperjelas
+--  Klasifikasi pengaduan per tanggal 
+Gambar bukti pengaduannya belum bisa di cek
+Detail status rute/penjelasannya yang sudah tiba siapa aja, tambahin filter
+–   Tambahin knek atau assisten kurir
+Deskripsi sistem jangan di brebet di rapihin 
+–   Tambahin angka kecukupan gizi baik di pengajuan maupun di produksi
+Tambahin fitur back saat pemilihan
+–   Jangan namain per menu tapi per kategori
+Kalau udah di select di highlight
+Ingat kalau tk, sd dan smp itu beda standar kalori oonya atau porsinya butuh berapa! Jadi buat defaultnya per sekolah
+Kata katanya beberapa ada yang ambigu, misal kaya di keluhan 
+Porsi harusnya nempel ke kelas bukan sekolah nanti porsi sekolah tinggal ditambahin porsi per kelas
+

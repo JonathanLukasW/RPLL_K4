@@ -5,8 +5,11 @@ import '../../shared/services/notification_service.dart'; // <--- FIX 2: MISSING
 class ComplaintService {
   final _supabase = Supabase.instance.client;
 
-  // 1. AMBIL KELUHAN (BARU) - Menggunakan RPC
-  Future<List<Map<String, dynamic>>> getSppgComplaints() async {
+  // 1. AMBIL KELUHAN (MENGGUNAKAN RPC) - Diperbarui dengan Filter
+  Future<List<Map<String, dynamic>>> getSppgComplaints({
+    DateTime? date,
+    String? schoolId,
+  }) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
       final profile = await _supabase
@@ -16,12 +19,20 @@ class ComplaintService {
           .single();
       final String mySppgId = profile['sppg_id'];
 
+      final dateStr = date != null
+          ? DateFormat('yyyy-MM-dd').format(date)
+          : null;
+
       final response = await _supabase.rpc(
         'get_sppg_all_complaints',
-        params: {'sppg_id_input': mySppgId},
+        params: {
+          'sppg_id_input': mySppgId,
+          'date_filter_input': dateStr, // BARU
+          'school_id_filter_input': schoolId, // BARU
+        },
       );
+      // Catatan: Fungsi SQL get_sppg_all_complaints perlu diperbarui untuk menerima filter ini
 
-      // Map the result from the RPC call
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       throw Exception("Gagal ambil semua keluhan: $e");

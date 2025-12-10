@@ -800,20 +800,48 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
 
             final bool canCancel = item.status == 'pending';
 
+            // [BARU] Ambil catatan yang sudah diformat
+            final formattedNotes = _formatRequestNotes(
+              item.type,
+              item.oldNotes,
+            );
+
             return Card(
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
               child: ListTile(
+                // JUDUL UTAMA (TIPE REQUEST + TANGGAL)
                 title: Text(
-                  item.type,
+                  "${item.type} (${item.requestDate})",
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
-                subtitle: Text(
-                  "Tanggal: ${item.requestDate}\nCatatan: ${item.oldNotes}\nRespon: ${item.adminResponse ?? '-'}",
-                  style: const TextStyle(fontSize: 12),
-                  maxLines: 3,
-                  overflow: TextOverflow.ellipsis,
+
+                // SUBTITLE: DETAIL REQUEST & RESPON ADMIN
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Detail Request (Sudah Diformat)
+                    Text(
+                      formattedNotes,
+                      style: const TextStyle(fontSize: 12),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    // Respon Admin
+                    if (item.adminResponse != null)
+                      Text(
+                        "Respon Admin: ${item.adminResponse}",
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: statusColor,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                  ],
                 ),
                 isThreeLine: true,
+
+                // TRAILING: HANYA STATUS & CANCEL BUTTON
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -843,5 +871,71 @@ class _CoordinatorRequestScreenState extends State<CoordinatorRequestScreen> {
         );
       },
     );
+  }
+
+  // [BARU HELPER] Fungsi untuk mem-parse oldNotes yang berisi hack data
+  String _formatRequestNotes(String type, String notes) {
+    if (notes.isEmpty) return 'Tidak ada catatan tambahan.';
+
+    try {
+      if (type == 'Perubahan Jadwal') {
+        final scheduleMatch = RegExp(r'REQ_JADWAL: ({.*?})').firstMatch(notes);
+        final toleranceMatch = RegExp(
+          r'REQ_TOLERANCE: (\d+)',
+        ).firstMatch(notes);
+        final noteMatch = RegExp(r'Note: (.*)').firstMatch(notes);
+
+        String schedule = 'Jadwal Rutin: N/A';
+        if (scheduleMatch != null && scheduleMatch.group(1) != null) {
+          final Map<String, dynamic> scheduleMap = jsonDecode(
+            scheduleMatch.group(1)!,
+          );
+          final List<String> entries = [];
+          scheduleMap.forEach((day, time) {
+            entries.add('$day: ${(time as String).substring(0, 5)}');
+          });
+          schedule = 'Jadwal Baru: ${entries.join(', ')}';
+        }
+
+        final tolerance = toleranceMatch?.group(1) ?? 'N/A';
+        final userNote = noteMatch?.group(1) ?? '';
+
+        return '$schedule (Toleransi: $tolerance mnt). Catatan: "$userNote"';
+      } else if (type == 'Tambah/Kurang Porsi') {
+        final portionMatch = RegExp(r'REQ_PORSI: (\d+)').firstMatch(notes);
+        final userNote =
+            RegExp(r'Note: (.*)').firstMatch(notes)?.group(1) ?? '';
+        final newPortion = portionMatch?.group(1) ?? 'N/A';
+        return 'Diajukan Porsi Baru: $newPortion Siswa. Catatan: "$userNote"';
+      } else if (type == 'Perubahan Menu') {
+        // Skenario 1: Custom Set Menu Baru
+        if (notes.contains('REQ_MENU_SET_CUSTOM:')) {
+          final nameMatch = RegExp(r'NEW_NAME: (.*?) \|').firstMatch(notes);
+          final newSetName = nameMatch?.group(1)?.trim() ?? 'Set Kustom Baru';
+          return 'Ajuan Set Menu Kustom: "$newSetName" (Menunggu pembuatan set baru oleh Admin).';
+        }
+        // Skenario 2: Pilih Set Menu Lama
+        else if (notes.contains('REQ_MENU_SET_ID:')) {
+          final newNameMatch = RegExp(r'NEW_NAME: (.*?) \|').firstMatch(notes);
+          final newSetName =
+              newNameMatch?.group(1)?.trim() ?? 'Set Baru Dipilih';
+          return 'Ganti Set Rutin ke: "$newSetName".';
+        }
+        // Skenario 3: Menu Item Lama (Fallback - Dihapus di skenario baru)
+        else if (notes.contains('REQ_MENU:')) {
+          final menuNames = notes
+              .split('|')[0]
+              .replaceAll("REQ_MENU:", "")
+              .trim();
+          final userNote =
+              RegExp(r'Note: (.*)').firstMatch(notes)?.group(1) ?? '';
+          return 'Ganti Item Menu Lama: $menuNames. Catatan: "$userNote"';
+        }
+      }
+    } catch (e) {
+      // Jika parsing gagal (format JSON rusak)
+      return 'Gagal memformat catatan (Raw Data: $notes)';
+    }
+    return notes; // Fallback jika tidak ada format yang cocok
   }
 }

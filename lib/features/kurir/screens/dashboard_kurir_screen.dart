@@ -217,10 +217,6 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
       itemCount: routes.length,
       itemBuilder: (context, index) {
         final route = routes[index];
-        // [PERBAIKAN] Tampilkan nama menu dari Route Model
-        final menuText = route.menuName != null
-            ? "Menu: ${route.menuName}"
-            : "Menu belum diset";
 
         return Card(
           elevation: 3,
@@ -237,13 +233,7 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
             ),
             subtitle: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("Status: ${route.status.toUpperCase()}"),
-                Text(
-                  menuText,
-                  style: const TextStyle(fontSize: 12, color: Colors.grey),
-                ),
-              ],
+              children: [Text("Status: ${route.status.toUpperCase()}")],
             ),
             trailing: const Icon(Icons.arrow_forward_ios, size: 16),
             onTap: () {

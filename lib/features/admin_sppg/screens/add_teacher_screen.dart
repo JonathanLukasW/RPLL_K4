@@ -14,9 +14,16 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _classController = TextEditingController(); // Input Nama Kelas
+  // [FIX 1]: Deklarasikan Controller Siswa Kelas
+  final TextEditingController _classStudentCountController =
+      TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _phoneController = TextEditingController(); // [BARU]
+
+  // [BARU] State Kuota
+  int _totalSchoolCapacity = 0;
+  int _allocatedCapacity = 0; // Kapasitas yang sudah diambil kelas lain
 
   final SchoolService _schoolService = SchoolService();
   List<School> _schools = [];
@@ -29,15 +36,64 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
     _fetchSchools();
   }
 
+  // Diperbarui: Fetch Schools & Inisialisasi Kuota Sekolah
   Future<void> _fetchSchools() async {
     try {
       final data = await _schoolService.getMySchools();
       setState(() => _schools = data);
-    } catch (e) {}
+
+      // Jika sudah ada sekolah terpilih, load quota detailnya
+      if (_selectedSchoolId != null) {
+        await _loadQuotaDetails(_selectedSchoolId!);
+      }
+    } catch (e) {
+      // Handle error
+    }
   }
 
+  // [BARU] Load Detail Kuota Sekolah
+  Future<void> _loadQuotaDetails(String schoolId) async {
+    try {
+      final quota = await TeacherService().getSchoolQuotaDetails(
+        schoolId,
+        // Karena ini mode Add, tidak ada excludeUserId
+      );
+      if (mounted) {
+        setState(() {
+          _totalSchoolCapacity = quota['totalSchool'] ?? 0;
+          _allocatedCapacity = quota['allocated'] ?? 0;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error load kuota: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  // --- SUBMIT ---
   Future<void> _submit() async {
     if (_formKey.currentState!.validate()) {
+      final int classCount =
+          int.tryParse(_classStudentCountController.text) ?? 0;
+
+      // Validasi Kuota Total
+      if (classCount + _allocatedCapacity > _totalSchoolCapacity) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Jumlah siswa melebihi kuota sekolah yang tersedia!"),
+            backgroundColor: Colors.red,
+          ),
+        );
+        return;
+      }
+
       setState(() => _isSubmitting = true);
       try {
         await TeacherService().createTeacherAccount(
@@ -47,6 +103,7 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
           schoolId: _selectedSchoolId!,
           className: _classController.text.trim(),
           phoneNumber: _phoneController.text.trim(), // [BARU] Pass phone
+          studentCountClass: classCount, // BARU
         );
 
         if (!mounted) return;
@@ -69,6 +126,8 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final availableQuota = _totalSchoolCapacity - _allocatedCapacity;
+
     return Scaffold(
       appBar: AppBar(
         title: const Text("Tambah Akun Wali Kelas"),
@@ -95,10 +154,51 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
                       child: Text(school.name, overflow: TextOverflow.ellipsis),
                     );
                   }).toList(),
-                  onChanged: (val) => setState(() => _selectedSchoolId = val),
+                  onChanged: (val) {
+                    setState(() {
+                      _selectedSchoolId = val;
+                      // [FIX 2]: Ganti _portionController.clear() menjadi _classStudentCountController.clear()
+                      _classStudentCountController.clear();
+
+                      if (val != null) {
+                        _loadQuotaDetails(val); // <-- Load Kuota Baru
+                      } else {
+                        _totalSchoolCapacity = 0;
+                        _allocatedCapacity = 0;
+                      }
+                    });
+                  },
                   validator: (val) =>
                       val == null ? "Wajib pilih sekolah" : null,
                 ),
+                const SizedBox(height: 15),
+
+                // INFO QUOTA
+                if (_selectedSchoolId != null && _totalSchoolCapacity > 0)
+                  Card(
+                    color: Colors.blue[50],
+                    margin: const EdgeInsets.only(bottom: 15),
+                    child: Padding(
+                      padding: const EdgeInsets.all(12.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Total Siswa Sekolah: $_totalSchoolCapacity",
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          Text(
+                            "Sudah Dialokasikan: $_allocatedCapacity Siswa",
+                            style: const TextStyle(color: Colors.red),
+                          ),
+                          Text(
+                            "Quota Tersedia: $availableQuota Siswa",
+                            style: const TextStyle(color: Colors.green),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
                 const SizedBox(height: 15),
                 TextFormField(
                   controller: _nameController,
@@ -118,6 +218,26 @@ class _AddTeacherScreenState extends State<AddTeacherScreen> {
                     prefixIcon: Icon(Icons.class_),
                   ),
                   validator: (v) => v!.isEmpty ? "Wajib diisi" : null,
+                ),
+                const SizedBox(height: 15),
+
+                // [BARU] JUMLAH PENERIMA MANFAAT DI KELAS INI
+                TextFormField(
+                  controller: _classStudentCountController,
+                  keyboardType: TextInputType.number,
+                  decoration: InputDecoration(
+                    labelText: "Jml Penerima Kelas Ini",
+                    hintText: "Maksimal: $availableQuota",
+                    prefixIcon: const Icon(Icons.people),
+                  ),
+                  validator: (v) {
+                    if (v!.isEmpty) return "Wajib diisi";
+                    final count = int.tryParse(v) ?? 0;
+                    if (count <= 0) return "Jumlah harus lebih dari 0";
+                    if (count > availableQuota)
+                      return "Melebihi kuota tersedia ($availableQuota)";
+                    return null;
+                  },
                 ),
                 const SizedBox(height: 15),
                 // [BARU] Field Nomor Telepon

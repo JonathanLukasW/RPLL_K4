@@ -10,6 +10,8 @@ class TeacherModel {
   final String className;
   final String? schoolId; // <--- ADD THIS FUCKING FIELD
   final String? phoneNumber; // [BARU]
+  // [BARU] Kuota Siswa Kelas
+  final int studentCountClass;
 
   TeacherModel({
     required this.id,
@@ -19,6 +21,7 @@ class TeacherModel {
     required this.className,
     this.schoolId, // <--- ADD TO CONSTRUCTOR
     this.phoneNumber, // <--- ADD TO CONSTRUCTOR
+    this.studentCountClass = 0, // [BARU]
   });
 
   factory TeacherModel.fromJson(Map<String, dynamic> json) {
@@ -33,6 +36,9 @@ class TeacherModel {
       className: json['class_name'] ?? '-',
       schoolId: json['school_id']?.toString(), // <--- PASTI INI ADA
       phoneNumber: json['phone_number'] ?? json['phone'],
+      studentCountClass: json['student_count_class'] != null
+          ? int.tryParse(json['student_count_class'].toString()) ?? 0
+          : 0, // [BARU]
     );
   }
 }
@@ -53,7 +59,7 @@ class TeacherService {
       final response = await _supabase
           .from('profiles')
           .select(
-            'id, full_name, email, class_name, school_id, schools(name), phone_number', // <--- PASTIKAN 'school_id' ADA DI SINI
+            'id, full_name, email, class_name, school_id, student_count_class, schools(name), phone_number', // <-- Tambahkan student_count_class
           )
           .eq('sppg_id', mySppgId)
           .eq('role', 'walikelas');
@@ -73,6 +79,7 @@ class TeacherService {
     required String schoolId,
     required String className, // Input Baru
     required String phoneNumber, // [BARU] Terima nomor telepon
+    required int studentCountClass,
   }) async {
     const String projectUrl = 'https://mqyfrqgfpqwlrloqtpvi.supabase.co';
     const String anonKey =
@@ -113,7 +120,8 @@ class TeacherService {
           'sppg_id': mySppgId,
           'school_id': schoolId,
           'class_name': className,
-          'phone_number': phoneNumber, // [BARU] Simpan nomor telepon
+          'phone_number': phoneNumber,
+          'student_count_class': studentCountClass, // BARU
         });
       } else {
         final errorData = jsonDecode(response.body);
@@ -132,8 +140,8 @@ class TeacherService {
     String userId,
     Map<String, dynamic> data,
   ) async {
+    // data harus sudah memiliki 'student_count_class'
     try {
-      // Update data di tabel profiles
       await _supabase.from('profiles').update(data).eq('id', userId);
     } catch (e) {
       throw Exception('Gagal update akun wali kelas: $e');
@@ -150,6 +158,50 @@ class TeacherService {
       );
     } catch (e) {
       throw Exception('Gagal hapus akun wali kelas: $e');
+    }
+  }
+
+  // [BARU] Hitung kuota yang tersedia di sekolah
+  // Mengembalikan: {totalSchool: int, allocated: int}
+  Future<Map<String, int>> getSchoolQuotaDetails(
+    String schoolId, {
+    String? excludeUserId,
+  }) async {
+    try {
+      // 1. Ambil Total Siswa Sekolah
+      final school = await _supabase
+          .from('schools')
+          .select('student_count')
+          .eq('id', schoolId)
+          .single();
+
+      final int totalSchool = school['student_count'] ?? 0;
+
+      // 2. Hitung Kuota yang Sudah Dialokasikan ke Wali Kelas lain
+      var query = _supabase
+          .from('profiles')
+          .select('student_count_class')
+          .eq('school_id', schoolId)
+          .eq('role', 'walikelas');
+
+      // Kecualikan diri sendiri (saat mode edit)
+      if (excludeUserId != null) {
+        query = query.not('id', 'eq', excludeUserId);
+      }
+
+      final allocatedProfiles = await query;
+      // [FIX KRITIS TYPE ERROR]: Memaksa sum awal menjadi int, dan memastikan hasil fold adalah int.
+      // Konversi nilai profil ke int secara eksplisit sebelum penjumlahan.
+      final int allocated = allocatedProfiles.fold<int>(0, (sum, profile) {
+        // Pastikan nilai profile['student_count_class'] diubah ke int dengan null check
+        final classCount =
+            (profile['student_count_class'] as num?)?.toInt() ?? 0;
+        return sum + classCount;
+      });
+
+      return {'totalSchool': totalSchool, 'allocated': allocated};
+    } catch (e) {
+      throw Exception("Gagal menghitung kuota sekolah: $e");
     }
   }
 }

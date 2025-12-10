@@ -2,6 +2,8 @@
 import 'package:fl_chart/fl_chart.dart'; // Import Library Grafik
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+// [FIX 1]: Import Model DeliveryRoute yang hilang
+import '../../../models/route_model.dart';
 import '../services/stats_service.dart';
 // BARU: Import service report yang baru kita buat
 import '../services/stats_service.dart';
@@ -9,6 +11,9 @@ import '../services/report_service.dart';
 import '../services/complaint_service.dart'; // <--- PASTIKAN INI ADA
 import '../services/coordinator_service.dart';
 import '../services/teacher_service.dart';
+import '../../../models/vehicle_model.dart'; // Import Vehicle Model
+import '../services/vehicle_service.dart'; // Import Vehicle Service
+import 'edit_route_screen.dart'; // Import EditRouteScreen
 
 class StatisticsScreen extends StatefulWidget {
   const StatisticsScreen({super.key});
@@ -22,6 +27,7 @@ class _StatisticsScreenState extends State<StatisticsScreen>
   late TabController _tabController;
   final StatsService _statsService = StatsService();
   final AdminReportService _reportService = AdminReportService();
+  final VehicleService _vehicleService = VehicleService(); // BARU
   final ComplaintService _complaintService =
       ComplaintService(); // UNTUK KOMPLAIN
 
@@ -31,35 +37,63 @@ class _StatisticsScreenState extends State<StatisticsScreen>
   Map<String, int>? _stats;
   bool _isLoading = true;
 
+  // [BARU] State Filter
+  DateTime _selectedRouteDate = DateTime.now();
+  String? _selectedVehicleId;
+  List<Vehicle> _allVehicles = [];
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this); // 4 Tabs
-    _loadStats();
+    _tabController = TabController(length: 4, vsync: this);
+    _loadInitialData();
   }
 
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
+  // [FIX 2]: Implementasi _loadInitialData (HILANG)
+  Future<void> _loadInitialData() async {
+    await Future.wait([_loadStats(), _loadVehicles()]);
+    _refreshAllTabs(); // Refresh data setelah filter dimuat
   }
 
+  // [FIX 3]: Fungsi _loadStats (Anda sudah memasukkannya, jadi biarkan di sini)
   Future<void> _loadStats() async {
+    setState(() => _isLoading = true);
     try {
       final data = await _statsService.getDeliveryStats();
-      setState(() {
-        _stats = data;
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _stats = data;
+          _isLoading = false;
+        });
+      }
     } catch (e) {
-      setState(() => _isLoading = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+        // Optional: Show error via Snackbar if fatal
+      }
     }
   }
 
-  // Fungsi Refresh untuk semua tab
+  Future<void> _loadVehicles() async {
+    try {
+      final data = await _vehicleService.getMyVehicles();
+      if (mounted) {
+        setState(() {
+          _allVehicles = data;
+          // Default ke "Semua Mobil"
+          _selectedVehicleId = 'all';
+        });
+      }
+    } catch (e) {
+      print("Error loading vehicles: $e");
+    }
+  }
+
+  // Fungsi Refresh untuk semua tab (Memaksa rebuild FutureBuilder)
   void _refreshAllTabs() {
     _loadStats();
-    setState(() {});
+    // Memaksa rebuild FutureBuilder _buildRoutesDetailTab
+    if (mounted) setState(() {});
   }
 
   @override
@@ -68,7 +102,7 @@ class _StatisticsScreenState extends State<StatisticsScreen>
       appBar: AppBar(
         // RENAME: Laporan Kinerja -> Laporan Distribusi & Kualitas
         title: const Text("Laporan Distribusi & Kualitas"),
-        backgroundColor: Colors.indigo[800],
+        backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -233,91 +267,143 @@ class _StatisticsScreenState extends State<StatisticsScreen>
     }
   }
 
-  // TAB 2: RUTE & DETAIL (Ongoing & History)
+  // TAB 2: RUTE & DETAIL (Ditambahkan Filter & Navigasi)
   Widget _buildRoutesDetailTab() {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      future: _reportService.getDetailedRoutes(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
-        final routes = snapshot.data ?? [];
-        if (routes.isEmpty)
-          return const Center(child: Text("Belum ada data rute."));
+    // List Item Dropdown Mobil
+    final List<DropdownMenuItem<String?>> vehicleItems = [
+      const DropdownMenuItem(value: 'all', child: Text("Semua Mobil")),
+      ..._allVehicles.map(
+        (vehicle) => DropdownMenuItem(
+          value: vehicle.id,
+          child: Text(vehicle.plateNumber),
+        ),
+      ),
+    ];
 
-        return ListView.builder(
-          itemCount: routes.length,
-          itemBuilder: (ctx, i) {
-            final route = routes[i];
-            final routeStops = route['delivery_stops'] as List<dynamic>? ?? [];
-            final courierName =
-                route['profiles!courier_id']?['full_name'] ??
-                'Kurir N/A'; //also make sure the courier name is properly displayed
-            final status = route['status'];
-            final isOngoing = status == 'active' || status == 'pending';
-            final formattedDate = DateFormat(
-              'dd MMM yy',
-            ).format(DateTime.parse(route['date']));
-
-            return Card(
-              color: isOngoing ? Colors.blue[50] : Colors.grey[100],
-              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: ExpansionTile(
-                leading: Icon(
-                  isOngoing ? Icons.directions_run : Icons.local_shipping,
-                  color: isOngoing ? Colors.blue : Colors.grey,
+    return Column(
+      children: [
+        // FILTER Section
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              // Filter Tanggal
+              Expanded(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.calendar_today,
+                    color: Colors.indigo,
+                  ),
+                  title: Text(
+                    DateFormat(
+                      'd MMMM yyyy',
+                      'id_ID',
+                    ).format(_selectedRouteDate),
+                  ),
+                  onTap: () async {
+                    final DateTime? picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedRouteDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime(2030),
+                    );
+                    if (picked != null && picked != _selectedRouteDate) {
+                      setState(() {
+                        _selectedRouteDate = picked;
+                      });
+                    }
+                  },
                 ),
-                title: Text(
-                  "[${isOngoing ? 'ONGOING' : 'HISTORY'}] $formattedDate - ${route['vehicles']['plate_number']}",
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Text(
-                  "Kurir: $courierName | Status: ${status.toUpperCase()}",
-                ),
-                children: routeStops.map<Widget>((stop) {
-                  final school = stop['schools'];
-                  final stopStatus = stop['status'];
-                  final eta =
-                      stop['estimated_arrival_time']?.substring(0, 5) ??
-                      '--:--';
-                  final finalStatus = stopStatus == 'received'
-                      ? 'Diterima'
-                      : (stopStatus == 'issue_reported'
-                            ? 'KOMPLAIN'
-                            : (stopStatus == 'completed'
-                                  ? 'Kurir Tiba'
-                                  : 'Pending'));
-
-                  return ListTile(
-                    contentPadding: const EdgeInsets.only(
-                      left: 30,
-                      right: 16,
-                      top: 4,
-                      bottom: 4,
-                    ),
-                    leading: Icon(
-                      stopStatus == 'received'
-                          ? Icons.check_circle
-                          : (stopStatus == 'issue_reported'
-                                ? Icons.error
-                                : Icons.remove_red_eye),
-                      color: _getStatusColor(stopStatus),
-                    ),
-                    title: Text(
-                      school['name'],
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    subtitle: Text("Est. Tiba: $eta | Status: $finalStatus"),
-                    trailing: Text("Porsi: ${school['student_count']}"),
-                  );
-                }).toList(),
               ),
-            );
-          },
-        );
-      },
+              // Filter Mobil
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  value: _selectedVehicleId,
+                  decoration: const InputDecoration(labelText: "Filter Mobil"),
+                  items: vehicleItems,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedVehicleId = newValue;
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // LIST RUTE HASIL FILTER
+        Expanded(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            // Panggil service dengan filter yang baru
+            future: _reportService.getDetailedRoutes(
+              date: _selectedRouteDate,
+              vehicleId: _selectedVehicleId,
+            ),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting)
+                return const Center(child: CircularProgressIndicator());
+
+              final routes = snapshot.data ?? [];
+              if (routes.isEmpty)
+                return const Center(
+                  child: Text("Tidak ada rute yang cocok dengan filter."),
+                );
+
+              return ListView.builder(
+                itemCount: routes.length,
+                itemBuilder: (ctx, i) {
+                  final route = routes[i];
+                  final routeId = route['id'];
+                  final courierName =
+                      route['profiles!courier_id']?['full_name'] ?? 'Kurir N/A';
+                  final status = route['status'];
+                  final isOngoing = status == 'active' || status == 'pending';
+                  final formattedDate = DateFormat(
+                    'dd MMM yy',
+                  ).format(DateTime.parse(route['date']));
+
+                  return Card(
+                    color: isOngoing ? Colors.blue[50] : Colors.grey[100],
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      onTap: () {
+                        // [FIX KRITIS 4]: Gunakan fromJson langsung.
+                        // Jika modelnya benar-benar diperbaiki, ini akan berfungsi.
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => EditRouteScreen(
+                              route: DeliveryRoute.fromJson(
+                                route,
+                              ), // Pass Map ke Model
+                            ),
+                          ),
+                        );
+                      },
+                      leading: Icon(
+                        isOngoing ? Icons.directions_run : Icons.local_shipping,
+                        color: isOngoing ? Colors.blue : Colors.grey,
+                      ),
+                      title: Text(
+                        "[${isOngoing ? 'ONGOING' : 'HISTORY'}] $formattedDate - ${route['vehicles']['plate_number']}",
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        "Kurir: $courierName | Status: ${status.toUpperCase()}",
+                      ),
+                      trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 

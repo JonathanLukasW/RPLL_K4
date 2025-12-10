@@ -6,21 +6,26 @@ class TeacherReceptionService {
   final _supabase = Supabase.instance.client;
 
   // 1. AMBIL JADWAL BULANAN (Untuk Kalender)
-  // ... (Fungsi ini sama, tapi gue pastikan nama kelas di-inject)
   Future<List<Map<String, dynamic>>> getMonthlyDeliveries(
     DateTime month,
   ) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
-      // A. Cari Profile Wali Kelas (Wajib select class_name juga)
+
+      // A. Cari Profile Wali Kelas (Wajib select class_name DAN student_count_class)
       final profile = await _supabase
           .from('profiles')
-          .select('school_id, class_name')
+          .select(
+            'school_id, class_name, student_count_class',
+          ) // <--- HARUS ADA
           .eq('id', userId)
           .single();
+
+      final int myClassPortions =
+          profile['student_count_class'] ?? 0; // <--- Porsi Kelas
       final String? mySchoolId = profile['school_id'];
-      // FIX: Pastikan nama kelas diambil dengan benar
       final String myClassName = profile['class_name'] ?? '-';
+
       if (mySchoolId == null) throw Exception("Akun tidak terhubung sekolah.");
 
       // B. Hitung Range Tanggal
@@ -33,7 +38,7 @@ class TeacherReceptionService {
           .select(
             // FIX KRITIS: TAMBAHKAN student_count di schools join
             '*, delivery_routes!inner(date), schools(menu_default, student_count)',
-          ) // Ambil menu_default dan student_count.
+          )
           .eq('school_id', mySchoolId)
           .gte('delivery_routes.date', startDate.toIso8601String())
           .lte('delivery_routes.date', endDate.toIso8601String())
@@ -59,6 +64,8 @@ class TeacherReceptionService {
       for (var item in deliveries) {
         item['already_received'] = receivedStopIds.contains(item['id']);
         item['my_class_name'] = myClassName;
+        item['expected_class_portions'] =
+            myClassPortions; // <--- BARU: Masukkan kuota kelas
       }
       return deliveries;
     } catch (e) {
@@ -105,7 +112,7 @@ class TeacherReceptionService {
         'teacher_id': userId,
         'class_name': className,
         'qty_received': qty,
-        'notes': notes,
+        'notes': notes, // NOTES sekarang bisa berisi deskripsi detail masalah
         'issue_type': issueType,
         'proof_photo_url': proofUrl,
       });

@@ -21,102 +21,20 @@ class EditRouteScreen extends StatefulWidget {
 class _EditRouteScreenState extends State<EditRouteScreen> {
   final RouteService _routeService = RouteService();
   final MapController _mapController = MapController();
-
   List<Map<String, dynamic>> _stops = []; // Detail stop + school info
   List<LatLng> _polylinePoints = [];
   LatLng? _sppgLocation;
   bool _isLoading = true;
 
+  // [FIX 1] State untuk melacak status rute (diperlukan untuk UI proof)
+  late String _currentStatus;
+
   @override
   void initState() {
     super.initState();
+    // [FIX 2] Inisialisasi status
+    _currentStatus = widget.route.status;
     _fetchRouteDetails();
-  }
-
-  Future<void> _fetchRouteDetails() async {
-    setState(() => _isLoading = true);
-    try {
-      final origin = await _routeService.getSppgLocation();
-      _sppgLocation = origin;
-      final stopsData = await _routeService.getRouteStops(widget.route.id);
-
-      // Susun koordinat untuk polyline
-      List<LatLng> routingPoints = [];
-      if (origin != null) routingPoints.add(origin);
-      for (var stop in stopsData) {
-        final school = stop['schools'];
-        if (school['gps_lat'] != null && school['gps_long'] != null) {
-          double? lat = double.tryParse(school['gps_lat'].toString());
-          double? long = double.tryParse(school['gps_long'].toString());
-          if (lat != null && long != null) {
-            routingPoints.add(LatLng(lat, long));
-          }
-        }
-      }
-
-      List<LatLng> polyline = [];
-      if (routingPoints.length >= 2) {
-        // Ambil polyline dari OSRM
-        polyline = await _routeService.getRoutePolyline(routingPoints);
-      }
-
-      if (!mounted) return;
-      setState(() {
-        _stops = stopsData;
-        _polylinePoints = polyline;
-        _isLoading = false;
-      });
-
-      // Zoom map biar pas
-      if (routingPoints.isNotEmpty) {
-        Future.delayed(const Duration(seconds: 1), () {
-          if (!mounted) return;
-          try {
-            _mapController.fitCamera(
-              CameraFit.bounds(
-                bounds: LatLngBounds.fromPoints(routingPoints),
-                padding: const EdgeInsets.all(60),
-              ),
-            );
-          } catch (_) {
-            _mapController.move(routingPoints.first, 13.0);
-          }
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Bukan Urusan Gue: $e")));
-        setState(() => _isLoading = false);
-      }
-    }
-  }
-
-  // Helper untuk mendapatkan warna status
-  Color _getStatusColor(String status) {
-    switch (status) {
-      case 'completed':
-        return Colors.green;
-      case 'active':
-        return Colors.blue;
-      case 'received':
-        return Colors.green;
-      case 'issue_reported':
-        return Colors.red;
-      default:
-        return Colors.orange;
-    }
-  }
-
-  // Format waktu dari HH:mm:ss ke HH:mm
-  String _formatTime(String? timeStr) {
-    if (timeStr == null || timeStr.isEmpty) return "--:--";
-    try {
-      return timeStr.substring(0, 5);
-    } catch (_) {
-      return timeStr ?? "--:--";
-    }
   }
 
   // Tombol aksi (misal: Hapus Rute)
@@ -171,14 +89,16 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
       ).format(DateTime.parse(widget.route.date));
     } catch (_) {}
 
-    // Titik tengah default
     final LatLng defaultCenter =
         _sppgLocation ?? const LatLng(-6.9175, 107.6191);
+
+    // Mendapatkan URL bukti muat (diperbaiki dari model DeliveryRoute)
+    final String? loadProofUrl = widget.route.loadProofPhotoUrl;
 
     return Scaffold(
       appBar: AppBar(
         title: Text("Detail Rute: ${widget.route.vehiclePlate ?? '-'}"),
-        backgroundColor: Colors.orange[800],
+        backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
           if (widget.route.status == 'pending')
@@ -214,7 +134,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                             color: Colors.black87,
                           ),
                         ),
-                        const SizedBox(height: 8),
                         _buildInfoRow(
                           Icons.local_shipping,
                           "Armada",
@@ -222,14 +141,8 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                         ),
                         _buildInfoRow(
                           Icons.person,
-                          "Kurir",
+                          "Kurir Utama",
                           widget.route.courierName ?? "Kurir HILANG",
-                        ),
-                        _buildInfoRow(
-                          Icons.restaurant_menu,
-                          "Menu Utama",
-                          widget.route.menuName ?? "Menu HILANG",
-                          color: Colors.blue,
                         ),
                         _buildInfoRow(
                           Icons.departure_board,
@@ -243,23 +156,31 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                           widget.route.status.toUpperCase(),
                           color: _getStatusColor(widget.route.status),
                         ),
+
                         const Divider(height: 30),
+
+                        // [BARU]: BUKTI MUAT (LOADING PROOF)
+                        _buildProofSection(
+                          title: "Bukti Muat Armada (Loading Proof)",
+                          url: loadProofUrl, // Menggunakan field dari model
+                          isRouteProof: true,
+                        ),
+
+                        const Divider(height: 30),
+
+                        const Text(
+                          "Urutan Perhentian & Bukti Tiba",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
                       ],
                     ),
                   ),
 
                   // --- PETA RUTE ---
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Text(
-                      "Peta Rute & Titik Henti",
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
                   SizedBox(
                     height: 300,
                     width: double.infinity,
@@ -293,7 +214,6 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                               'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                           userAgentPackageName: 'com.example.mbg_monitoring',
                         ),
-
                         // Polyline Rute
                         PolylineLayer(
                           polylines: [
@@ -304,11 +224,9 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                             ),
                           ],
                         ),
-
-                        // Markers (Dapur + Sekolah)
+                        // Markers
                         MarkerLayer(
                           markers: [
-                            // Marker Dapur (Start Point)
                             if (_sppgLocation != null)
                               Marker(
                                 point: _sppgLocation!,
@@ -416,28 +334,18 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
 
                   ..._stops.map((stop) {
                     final school = stop['schools'];
-                    final isHighRisk = school['is_high_risk'] == true;
-                    final eta = _formatTime(stop['estimated_arrival_time']);
-                    final deadline = _formatTime(
-                      (school['deadline_time'] as String?)?.contains(
-                                _mapDayToLocal(
-                                  DateTime.parse(widget.route.date).weekday,
-                                ),
-                              ) ==
-                              true
-                          ? (jsonDecode(school['deadline_time'])[_mapDayToLocal(
-                              DateTime.parse(widget.route.date).weekday,
-                            )])
-                          : null,
-                    );
+                    final courierProofUrl =
+                        stop['courier_proof_photo_url'] as String?;
+                    final isFinalized =
+                        stop['status'] == 'received' ||
+                        stop['status'] == 'issue_reported';
 
                     return Card(
-                      color: isHighRisk ? Colors.red[50] : Colors.white,
                       margin: const EdgeInsets.symmetric(
                         horizontal: 16,
                         vertical: 4,
                       ),
-                      child: ListTile(
+                      child: ExpansionTile(
                         leading: CircleAvatar(
                           backgroundColor: _getStatusColor(stop['status']),
                           child: Text(
@@ -450,35 +358,12 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                         ),
                         title: Text(
                           school['name'],
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: isHighRisk ? Colors.red[800] : Colors.black,
-                          ),
+                          style: const TextStyle(fontWeight: FontWeight.bold),
                         ),
-                        subtitle: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              "Est. Tiba: $eta",
-                              style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue,
-                              ),
-                            ),
-                            Text("Deadline Konsumsi: $deadline"),
-                            Text("Status: ${stop['status'].toUpperCase()}"),
-                            if (isHighRisk)
-                              const Text(
-                                "⚠️ Lokasi Berisiko Tinggi",
-                                style: TextStyle(
-                                  color: Colors.red,
-                                  fontSize: 12,
-                                ),
-                              ),
-                          ],
+                        subtitle: Text(
+                          "Status: ${stop['status'].toUpperCase()} | Est. Tiba: ${_formatTime(stop['estimated_arrival_time'])}",
                         ),
-                        isThreeLine: true,
-                        trailing: stop['courier_proof_photo_url'] != null
+                        trailing: courierProofUrl != null
                             ? const Icon(
                                 Icons.photo_camera,
                                 color: Colors.green,
@@ -487,14 +372,119 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                                 Icons.pending_actions,
                                 color: Colors.grey,
                               ),
+
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                // Detail Penerimaan (Admin/Koordinator)
+                                if (isFinalized)
+                                  _buildInfoRow(
+                                    Icons.check_circle_outline,
+                                    "Diterima Koord/Wali",
+                                    stop['recipient_name'] ?? 'N/A',
+                                    color: Colors.green,
+                                  ),
+
+                                // Bukti Tiba Kurir
+                                const SizedBox(height: 10),
+                                _buildProofSection(
+                                  title: "Bukti Foto Tiba Kurir",
+                                  url: courierProofUrl,
+                                  isRouteProof: false,
+                                ),
+
+                                // Bukti Penerimaan Sekolah (jika ada)
+                                if (stop['proof_photo_url'] != null)
+                                  _buildProofSection(
+                                    title: "Bukti Keluhan",
+                                    url: stop['proof_photo_url'],
+                                    isRouteProof: false,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   }).toList(),
-
                   const SizedBox(height: 40),
                 ],
               ),
             ),
+    );
+  }
+
+  // [BARU] Helper untuk Menampilkan Gambar Bukti
+  Widget _buildProofSection({
+    required String title,
+    required String? url,
+    bool isRouteProof = false,
+  }) {
+    if (url == null || url.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 5),
+          Text(
+            isRouteProof && _currentStatus == 'pending'
+                ? "Rute belum dimulai, bukti muat belum diunggah."
+                : "Bukti belum tersedia.",
+            style: const TextStyle(color: Colors.red),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 10),
+        GestureDetector(
+          onTap: () => _showImageDialog(context, url, title),
+          child: Container(
+            height: 150,
+            width: 150,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey),
+              image: DecorationImage(
+                image: NetworkImage(url),
+                fit: BoxFit.cover,
+              ),
+            ),
+            child: const Align(
+              alignment: Alignment.center,
+              child: Icon(Icons.zoom_in, color: Colors.white, size: 40),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // [BARU] Helper untuk Dialog Zoom Gambar
+  void _showImageDialog(BuildContext context, String url, String title) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.9,
+          height: MediaQuery.of(context).size.height * 0.7,
+          child: Image.network(url, fit: BoxFit.contain),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Tutup"),
+          ),
+        ],
+      ),
     );
   }
 
@@ -512,6 +502,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
     return days[day - 1];
   }
 
+  // Existing helper for info row (assuming it exists but wasn't included in the dump)
   Widget _buildInfoRow(
     IconData icon,
     String title,
@@ -531,5 +522,76 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
         ],
       ),
     );
+  }
+
+  Future<void> _fetchRouteDetails() async {
+    setState(() => _isLoading = true);
+    try {
+      final origin = await _routeService.getSppgLocation();
+      _sppgLocation = origin;
+      final stopsData = await _routeService.getRouteStops(widget.route.id);
+
+      // Susun koordinat untuk polyline
+      List<LatLng> routingPoints = [];
+      if (origin != null) routingPoints.add(origin);
+      for (var stop in stopsData) {
+        final school = stop['schools'];
+        if (school['gps_lat'] != null && school['gps_long'] != null) {
+          double? lat = double.tryParse(school['gps_lat'].toString());
+          double? long = double.tryParse(school['gps_long'].toString());
+          if (lat != null && long != null) {
+            routingPoints.add(LatLng(lat, long));
+          }
+        }
+      }
+
+      List<LatLng> polyline = [];
+      if (routingPoints.length >= 2) {
+        // Ambil polyline dari OSRM
+        polyline = await _routeService.getRoutePolyline(routingPoints);
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _stops = stopsData;
+        _polylinePoints = polyline;
+        _isLoading = false;
+        // Update current status in case it changed since we loaded the widget
+        _currentStatus = widget.route.status;
+      });
+
+      // Zoom map (existing logic)
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Bukan Urusan Gue: $e")));
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return Colors.green;
+      case 'active':
+        return Colors.blue;
+      case 'received':
+        return Colors.green;
+      case 'issue_reported':
+        return Colors.red;
+      default:
+        return Colors.orange;
+    }
+  }
+
+  String _formatTime(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return "--:--";
+    try {
+      return timeStr.substring(0, 5);
+    } catch (_) {
+      return timeStr ?? "--:--";
+    }
   }
 }

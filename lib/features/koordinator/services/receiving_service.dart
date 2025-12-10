@@ -1,4 +1,5 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'dart:convert'; // Import untuk jsonEncode
 
 class ReceivingService {
   final _supabase = Supabase.instance.client;
@@ -44,29 +45,36 @@ class ReceivingService {
     }
   }
 
-  // 2. KONFIRMASI PENERIMAAN
+  // 2. KONFIRMASI PENERIMAAN (Diperbarui untuk Multi-Problem Reporting)
   Future<void> confirmReception({
     required String stopId,
     required int receivedQty,
-    required String notes,
     required String recipientName,
-    String? issueType,
+    required List<Map<String, dynamic>> issues, // BARU: List of issues
     String? proofUrl,
   }) async {
     try {
-      final String status = (issueType != null && issueType.isNotEmpty)
-          ? 'issue_reported'
-          : 'received';
+      // Tentukan status akhir: 'received' jika tidak ada masalah, 'issue_reported' jika ada
+      final String status = issues.isEmpty ? 'received' : 'issue_reported';
+
+      // Simpan issues array sebagai JSON string/object
+      final issuesJson = issues.isEmpty ? null : jsonEncode(issues);
+
+      // Ambil ID Koordinator yang sedang login
+      final userId = _supabase.auth.currentUser!.id;
 
       await _supabase
           .from('delivery_stops')
           .update({
             'status': status,
             'received_qty': receivedQty,
-            'reception_notes': notes,
             'recipient_name': recipientName,
             'completion_time': DateTime.now().toIso8601String(),
-            'proof_photo_url': proofUrl,
+            'proof_photo_url': proofUrl, // Bukti foto penerimaan
+            'issue_details':
+                issuesJson, // BARU: Detail masalah dalam bentuk JSONB
+            'koordinator_id':
+                userId, // BARU: Simpan ID Koordinator yang melaporkan
           })
           .eq('id', stopId);
     } catch (e) {

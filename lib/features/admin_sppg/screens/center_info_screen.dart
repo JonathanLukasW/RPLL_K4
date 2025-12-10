@@ -4,6 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../shared/services/request_service.dart';
 import '../services/complaint_service.dart';
+import '../services/school_service.dart'; // <--- FIX 1: TAMBAH IMPORT SERVICE
+import '../../../models/school_model.dart'; // <--- FIX 2: TAMBAH IMPORT MODEL SCHOOL
+import 'dart:convert';
+import 'package:collection/collection.dart';
 
 class CenterInfoScreen extends StatefulWidget {
   const CenterInfoScreen({super.key});
@@ -21,17 +25,103 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
   // [FIX] Definisikan Key untuk memaksa refresh tab Komplain
   Key _complaintKey = UniqueKey();
 
+  // [BARU] State untuk Filter Pengaduan
+  final SchoolService _schoolService = SchoolService();
+  List<School> _allSppgSchools = [];
+  DateTime _selectedComplaintDate = DateTime.now();
+  String? _selectedSchoolFilterId; // null = Semua Sekolah
+  bool _isLoadingSchools = true;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
+    _fetchFilterData(); // Load data sekolah
+  }
+
+  // [BARU] Load data sekolah untuk filter
+  Future<void> _fetchFilterData() async {
+    try {
+      final schools = await _schoolService.getMySchools();
+      if (mounted) {
+        setState(() {
+          _allSppgSchools = schools;
+          _isLoadingSchools = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) setState(() => _isLoadingSchools = false);
+      print("Error loading schools for filter: $e");
+    }
   }
 
   void _refreshData() {
+    _fetchFilterData(); // Refresh list sekolah
     setState(() {
-      // Force refresh of the complaint tab's FutureBuilder
       _complaintKey = UniqueKey();
     });
+  }
+
+  // [BARU HELPER] Fungsi untuk mem-parse oldNotes yang berisi hack data
+  String _formatRequestNotes(String type, String notes) {
+    if (notes.isEmpty) return 'Tidak ada catatan tambahan.';
+
+    try {
+      if (type == 'Perubahan Jadwal') {
+        final scheduleMatch = RegExp(r'REQ_JADWAL: ({.*?})').firstMatch(notes);
+        final toleranceMatch = RegExp(
+          r'REQ_TOLERANCE: (\d+)',
+        ).firstMatch(notes);
+        final noteMatch = RegExp(r'Note: (.*)').firstMatch(notes);
+
+        String schedule = 'Jadwal Rutin: N/A';
+        if (scheduleMatch != null && scheduleMatch.group(1) != null) {
+          final Map<String, dynamic> scheduleMap = jsonDecode(
+            scheduleMatch.group(1)!,
+          );
+          final List<String> entries = [];
+          scheduleMap.forEach((day, time) {
+            entries.add('$day: ${(time as String).substring(0, 5)}');
+          });
+          schedule = 'Jadwal Baru: ${entries.join(', ')}';
+        }
+
+        final tolerance = toleranceMatch?.group(1) ?? 'N/A';
+        final userNote = noteMatch?.group(1) ?? '';
+
+        return '$schedule (Toleransi: $tolerance mnt). Catatan: "$userNote"';
+      } else if (type == 'Tambah/Kurang Porsi') {
+        final portionMatch = RegExp(r'REQ_PORSI: (\d+)').firstMatch(notes);
+        final userNote =
+            RegExp(r'Note: (.*)').firstMatch(notes)?.group(1) ?? '';
+        final newPortion = portionMatch?.group(1) ?? 'N/A';
+        return 'Diajukan Porsi Baru: $newPortion Siswa. Catatan: "$userNote"';
+      } else if (type == 'Perubahan Menu') {
+        if (notes.contains('REQ_MENU_SET_CUSTOM:')) {
+          final nameMatch = RegExp(r'NEW_NAME: (.*?) \|').firstMatch(notes);
+          final newSetName = nameMatch?.group(1)?.trim() ?? 'Set Kustom Baru';
+          return 'Ajuan Set Menu Kustom: "$newSetName" (Akan dibuatkan set baru di DB).';
+        } else if (notes.contains('REQ_MENU_SET_ID:')) {
+          final newNameMatch = RegExp(r'NEW_NAME: (.*?) \|').firstMatch(notes);
+          final newSetName =
+              newNameMatch?.group(1)?.trim() ?? 'Set Baru Dipilih';
+          return 'Ganti Set Rutin ke: "$newSetName".';
+        }
+        // Fallback untuk skenario lama (jika masih ada data lama)
+        else if (notes.contains('REQ_MENU:')) {
+          final menuNames = notes
+              .split('|')[0]
+              .replaceAll("REQ_MENU:", "")
+              .trim();
+          final userNote =
+              RegExp(r'Note: (.*)').firstMatch(notes)?.group(1) ?? '';
+          return 'Ganti Item Menu Lama: $menuNames. Catatan: "$userNote"';
+        }
+      }
+    } catch (e) {
+      return 'Gagal memformat catatan (Raw Data: $notes)';
+    }
+    return notes;
   }
 
   // --- APPROVAL DIALOG (Untuk Request) ---
@@ -55,8 +145,11 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
               color: Colors.grey[200],
               width: double.infinity,
               child: Text(
-                request.oldNotes,
-              ), // Shows the summarized request data
+                _formatRequestNotes(
+                  request.type,
+                  request.oldNotes,
+                ), // <-- GUNAKAN HELPER
+              ), // Shows the formatted request data
             ),
             const SizedBox(height: 15),
             const Text("Catatan Admin (Alasan Ditolak/Info):"),
@@ -122,7 +215,7 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
     return Scaffold(
       appBar: AppBar(
         title: const Text("Pusat Informasi"), // Renamed from Pusat Pengaduan
-        backgroundColor: Colors.indigo,
+        backgroundColor: Colors.orange[800],
         foregroundColor: Colors.white,
         actions: [
           IconButton(
@@ -153,158 +246,385 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
 
   // --- WIDGET LIST PENGAJUAN (REQUEST) ---
   Widget _buildRequestList() {
-    return FutureBuilder<List<ChangeRequestModel>>(
-      future: _requestService.getIncomingRequests(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
+    // Dropdown items untuk filter sekolah
+    final List<DropdownMenuItem<String?>> schoolItems = [
+      const DropdownMenuItem(value: null, child: Text("Semua Sekolah")),
+      ..._allSppgSchools.map(
+        (school) =>
+            DropdownMenuItem(value: school.id, child: Text(school.name)),
+      ),
+    ];
 
-        final data = snapshot.data ?? [];
-        if (data.isEmpty)
-          return const Center(child: Text("Tidak ada pengajuan masuk."));
-
-        return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final item = data[i];
-            bool isPending = item.status == 'pending';
-            return Card(
-              margin: const EdgeInsets.all(8),
-              child: ListTile(
-                leading: Icon(
-                  item.type.contains("Menu")
-                      ? Icons.restaurant_menu
-                      : (item.type.contains("Porsi")
-                            ? Icons.pie_chart
-                            : Icons.calendar_today),
-                  color: Colors.indigo,
+    // Panggil FutureBuilder dengan filter yang berlaku saat ini
+    return Column(
+      children: [
+        // FILTER Section
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              // Filter Tanggal
+              Expanded(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.calendar_today,
+                    color: Colors.indigo,
+                  ),
+                  title: Text(
+                    DateFormat(
+                      'd MMMM yyyy',
+                      'id_ID',
+                    ).format(_selectedComplaintDate),
+                  ),
+                  onTap: () async {
+                    final DateTime? picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedComplaintDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime(2030),
+                    );
+                    if (picked != null) {
+                      setState(() {
+                        _selectedComplaintDate = picked;
+                        _refreshData();
+                      });
+                    }
+                  },
                 ),
-                title: Text(
-                  item.schoolName,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text("[${item.type}]"),
-                    Text(
-                      item.oldNotes,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    if (!isPending)
-                      Text(
-                        "Status: ${item.status.toUpperCase()} (${item.adminResponse})",
-                        style: TextStyle(
-                          color: item.status == 'approved'
-                              ? Colors.green
-                              : Colors.red,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                  ],
-                ),
-                trailing: isPending
-                    ? ElevatedButton(
-                        onPressed: () => _showApprovalDialog(item),
-                        child: const Text("Review"),
-                      )
-                    : const Icon(Icons.check_circle, color: Colors.grey),
               ),
-            );
-          },
-        );
-      },
+              // Filter Sekolah
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  value: _selectedSchoolFilterId,
+                  decoration: const InputDecoration(
+                    labelText: "Filter Sekolah",
+                  ),
+                  items: schoolItems,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedSchoolFilterId = newValue;
+                      _refreshData();
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+
+        // List Pengajuan
+        Expanded(
+          child: FutureBuilder<List<ChangeRequestModel>>(
+            // Panggil service dengan filter
+            future: _requestService.getIncomingRequests(
+              date: _selectedComplaintDate,
+              schoolId: _selectedSchoolFilterId,
+            ),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting)
+                return const Center(child: CircularProgressIndicator());
+
+              final data = snapshot.data ?? [];
+              if (data.isEmpty)
+                return const Center(
+                  child: Text("Tidak ada pengajuan masuk sesuai filter."),
+                );
+
+              return ListView.builder(
+                itemCount: data.length,
+                itemBuilder: (ctx, i) {
+                  final item = data[i];
+                  bool isPending = item.status == 'pending';
+                  final formattedNotes = _formatRequestNotes(
+                    item.type,
+                    item.oldNotes,
+                  );
+
+                  return Card(
+                    margin: const EdgeInsets.all(8),
+                    child: ListTile(
+                      leading: Icon(
+                        item.type.contains("Menu")
+                            ? Icons.restaurant_menu
+                            : (item.type.contains("Porsi")
+                                  ? Icons.pie_chart
+                                  : Icons.calendar_today),
+                        color: Colors.indigo,
+                      ),
+                      title: Text(
+                        item.schoolName,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("[${item.type}]"),
+                          Text(
+                            formattedNotes, // <-- GUNAKAN FORMAT BARU
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          if (!isPending)
+                            Text(
+                              "Status: ${item.status.toUpperCase()} (${item.adminResponse})",
+                              style: TextStyle(
+                                color: item.status == 'approved'
+                                    ? Colors.green
+                                    : Colors.red,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                        ],
+                      ),
+                      trailing: isPending
+                          ? ElevatedButton(
+                              onPressed: () => _showApprovalDialog(item),
+                              child: const Text("Review"),
+                            )
+                          : const Icon(Icons.check_circle, color: Colors.grey),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
   // --- WIDGET LIST PENGADUAN (COMPLAINT) ---
   Widget _buildComplaintList({required Key key}) {
-    return FutureBuilder<List<Map<String, dynamic>>>(
-      key: key,
-      future: _complaintService.getSppgComplaints(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text("Error: ${snapshot.error}"));
-        }
+    if (_isLoadingSchools) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-        final data = snapshot.data ?? [];
-        if (data.isEmpty) {
-          return const Center(
-            child: Text(
-              "Tidak ada keluhan masuk dari Koordinator maupun Wali Kelas.",
-            ),
-          );
-        }
+    // Dropdown items untuk filter sekolah
+    final List<DropdownMenuItem<String?>> schoolItems = [
+      const DropdownMenuItem(value: null, child: Text("Semua Sekolah")),
+      ..._allSppgSchools.map(
+        (school) =>
+            DropdownMenuItem(value: school.id, child: Text(school.name)),
+      ),
+    ];
 
-        return ListView.builder(
-          itemCount: data.length,
-          itemBuilder: (ctx, i) {
-            final item = data[i];
-            final isResolved = item['admin_response'] != null;
-            final reporterRole = item['reporter_role'] ?? 'N/A';
-
-            // Tentukan target table dan ID untuk update
-            // ID complaint di RPC (item['id']) adalah ID PRIMARY KEY di CR/DS
-            final targetTable = reporterRole == 'walikelas'
-                ? 'class_receptions'
-                : 'delivery_stops';
-            final targetId = item['id'];
-
-            return Card(
-              color: isResolved ? Colors.green[50] : Colors.red[100],
-              margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: ListTile(
-                leading: Icon(
-                  isResolved ? Icons.check_circle : Icons.warning,
-                  color: isResolved ? Colors.green : Colors.red,
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              // Filter Tanggal
+              Expanded(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.calendar_today,
+                    color: Colors.indigo,
+                  ),
+                  title: Text(
+                    DateFormat(
+                      'd MMMM yyyy',
+                      'id_ID',
+                    ).format(_selectedComplaintDate),
+                  ),
+                  onTap: () async {
+                    final DateTime? picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedComplaintDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime(2030),
+                    );
+                    if (picked != null) {
+                      setState(() {
+                        _selectedComplaintDate = picked;
+                        _refreshData();
+                      });
+                    }
+                  },
                 ),
-                title: Text(
-                  item['school_name'] ?? 'Sekolah N/A',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "Dari: ${item['reporter_name']} (${reporterRole.toUpperCase()})",
-                    ),
-                    Text("Keluhan: ${item['notes']}"),
-                    Text(
-                      isResolved
-                          ? "Respon: ${item['admin_response']}"
-                          : "Status: BELUM DITINDAK LANJUT",
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: isResolved ? Colors.green[800] : Colors.red[800],
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-                trailing: isResolved
-                    ? const Icon(Icons.reply, color: Colors.grey)
-                    : ElevatedButton(
-                        onPressed: () => _showRespondComplaintDialog(
-                          item,
-                          reporterRole,
-                          targetTable,
-                          targetId,
-                        ),
-                        child: const Text("Tindak Lanjut"),
-                      ),
               ),
-            );
-          },
-        );
-      },
+              // Filter Sekolah
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  value: _selectedSchoolFilterId,
+                  decoration: const InputDecoration(
+                    labelText: "Filter Sekolah",
+                  ),
+                  items: schoolItems,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedSchoolFilterId = newValue;
+                      _refreshData();
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+
+        // List Pengaduan
+        Expanded(
+          child: FutureBuilder<List<Map<String, dynamic>>>(
+            key: key,
+            // Panggil service dengan filter
+            future: _complaintService.getSppgComplaints(
+              date: _selectedComplaintDate,
+              schoolId: _selectedSchoolFilterId,
+            ),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Center(child: Text("Error: ${snapshot.error}"));
+              }
+
+              final data = snapshot.data ?? [];
+              if (data.isEmpty) {
+                return const Center(
+                  child: Text("Tidak ada keluhan masuk sesuai filter."),
+                );
+              }
+
+              return ListView.builder(
+                itemCount: data.length,
+                itemBuilder: (ctx, i) {
+                  final item = data[i];
+                  final isResolved = item['admin_response'] != null;
+                  final reporterRole = item['reporter_role'] ?? 'N/A';
+
+                  // Tentukan target table dan ID untuk update
+                  // ID complaint di RPC (item['id']) adalah ID PRIMARY KEY di CR/DS
+                  final targetTable = reporterRole == 'walikelas'
+                      ? 'class_receptions'
+                      : 'delivery_stops';
+                  final targetId = item['id'];
+
+                  return Card(
+                    color: isResolved ? Colors.green[50] : Colors.red[100],
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    child: ListTile(
+                      onTap: () => _showRespondComplaintDialog(
+                        item,
+                        reporterRole,
+                        targetTable,
+                        targetId,
+                      ),
+                      leading: Icon(
+                        isResolved ? Icons.check_circle : Icons.warning,
+                        color: isResolved ? Colors.green : Colors.red,
+                      ),
+                      title: Text(
+                        item['school_name'] ?? 'Sekolah N/A',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            "Dari: ${item['reporter_name']} (${reporterRole.toUpperCase()})",
+                          ),
+                          // [FIX KRITIS]: Gunakan helper untuk mengurai JSON
+                          Text(
+                            "Rincian Isu:\n${_formatComplaintDetails(reporterRole, item['notes'])}",
+                            // notes di sini seharusnya adalah issue_details JSONB
+                            // Namun karena RPC mengembalikan 'notes', kita asumsikan 'notes' = JSONB issues
+                          ),
+                          Text(
+                            isResolved
+                                ? "Respon: ${item['admin_response']}"
+                                : "Status: BELUM DITINDAK LANJUT",
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: isResolved
+                                  ? Colors.green[800]
+                                  : Colors.red[800],
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      trailing: isResolved
+                          ? const Icon(Icons.reply, color: Colors.grey)
+                          : ElevatedButton(
+                              onPressed: () => _showRespondComplaintDialog(
+                                item,
+                                reporterRole,
+                                targetTable,
+                                targetId,
+                              ),
+                              child: const Text("Tindak Lanjut"),
+                            ),
+                    ),
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 
-  // --- DIALOG TINDAK LANJUT KOMPLAIN ---
+  // [BARU HELPER] Mengurai JSON Issue Details dari Koordinator/Wali Kelas
+  String _formatComplaintDetails(String reporterRole, String rawNotes) {
+    if (rawNotes.isEmpty) return 'Tidak ada detail spesifik.';
+
+    // Kasus 1: Laporan Koordinator (Diharapkan format JSON Array dari issue_details)
+    if (reporterRole == 'koordinator') {
+      try {
+        String cleanedNotes = rawNotes.trim();
+
+        // [FIX KRITIS JSON STRING]: Hapus quotes ganda di awal/akhir
+        // Ini mengatasi masalah jika PostgREST mengembalikan JSONB sebagai string ber-quote.
+        if (cleanedNotes.startsWith('"') && cleanedNotes.endsWith('"')) {
+          cleanedNotes = cleanedNotes.substring(1, cleanedNotes.length - 1);
+        }
+        // Hapus escape character '\' yang mungkin tersisa
+        cleanedNotes = cleanedNotes.replaceAll(r'\"', '"');
+
+        final List<dynamic> issues = jsonDecode(
+          cleanedNotes,
+        ); // <-- Coba decode string yang sudah dibersihkan
+
+        if (issues.isEmpty) return 'Diterima, tetapi detail masalah kosong.';
+
+        return issues
+            .mapIndexed((index, issue) {
+              final type = issue['type'] ?? 'Masalah Umum';
+              final notes = issue['notes']?.trim() ?? '—';
+              final qty = issue['qty_impacted'];
+
+              String qtyStr = '';
+              if (type == 'Jumlah Tidak Sesuai') {
+                qtyStr = ' (Defisit: ${qty} Porsi)';
+              } else if (type == 'Kemasan Rusak') {
+                qtyStr = ' (Rusak: ${qty} Kotak)';
+              } else if (type == 'Terlambat') {
+                qtyStr = ' (Telat: ${qty} Menit)';
+              }
+
+              return '${index + 1}. [${type}]${qtyStr}. Detail: "${notes}"';
+            })
+            .join('\n');
+      } catch (e) {
+        // Jika decoding JSON masih gagal
+        // Yuuri: "Maaf, raw data tidak dapat diurai..."
+        return 'Detail Masalah JSON Rusak. Raw Data: $rawNotes';
+      }
+    }
+    // Kasus 2: Laporan Wali Kelas (Masih menggunakan format notes lama/tunggal)
+    else {
+      return rawNotes;
+    }
+  }
+
   void _showRespondComplaintDialog(
     Map<String, dynamic> complaint,
     String reporterRole,
@@ -313,16 +633,66 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
   ) {
     final responseController = TextEditingController();
 
+    // [BARU]: Ambil detail isu yang sudah diformat
+    final issueDetailsText = _formatComplaintDetails(
+      reporterRole,
+      complaint['notes'],
+    );
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Tindak Lanjut Keluhan"),
-        content: TextField(
-          controller: responseController,
-          decoration: InputDecoration(
-            labelText:
-                "Instruksi / Tindak Lanjut Admin SPPG (Untuk ${reporterRole.toUpperCase()})",
-            border: const OutlineInputBorder(),
+        content: SingleChildScrollView(
+          // <-- Agar konten bisa discroll
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                "Detail Pengaduan:",
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  color: Colors.red,
+                ),
+              ),
+              const SizedBox(height: 5),
+
+              // Tampilkan Rincian Isu (sudah diformat)
+              Container(
+                padding: const EdgeInsets.all(8),
+                width: double.infinity,
+                decoration: BoxDecoration(
+                  color: Colors.red[100],
+                  border: Border.all(color: Colors.red),
+                  borderRadius: BorderRadius.circular(5),
+                ),
+                child: SelectableText(
+                  // Gunakan SelectableText agar bisa dicopy
+                  issueDetailsText,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+
+              const SizedBox(height: 20),
+              const Text(
+                "Respon Admin:",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+
+              // [FIX KRITIS]: Ubah menjadi TextFormField besar (multi-line)
+              TextFormField(
+                controller: responseController,
+                maxLines: 4, // <-- Tambah baris
+                keyboardType: TextInputType.multiline,
+                decoration: InputDecoration(
+                  labelText: "Instruksi / Tindak Lanjut Admin SPPG",
+                  hintText:
+                      "Contoh: Sudah kami cek, dan akan kami kirimkan ganti rugi 10 porsi besok.",
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+            ],
           ),
         ),
         actions: [

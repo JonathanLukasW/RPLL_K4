@@ -1,5 +1,5 @@
 // === FILE: lib/features/admin_sppg/services/report_service.dart ===
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart'; // Perlu pastikan ini diimpor dengan alias
 
 class AdminReportService {
   final _supabase = Supabase.instance.client;
@@ -38,22 +38,43 @@ class AdminReportService {
   }
 
   // 2. GET ALL ACTIVE & HISTORY ROUTES WITH DETAILS (for Maps & History Tab)
-  Future<List<Map<String, dynamic>>> getDetailedRoutes() async {
+  Future<List<Map<String, dynamic>>> getDetailedRoutes({
+    DateTime? date, // [BARU] Filter Tanggal
+    String? vehicleId, // [BARU] Filter Mobil
+  }) async {
     try {
       final mySppgId = await _getMySppgId();
 
-      final response = await _supabase
+      // [FIX KRITIS SUPABASE TYPE]: Mulai dengan PostgrestFilterBuilder sebelum select
+      // A. Ambil PostgrestFilterBuilder: Cukup panggil from()
+      var queryBuilder = _supabase
           .from('delivery_routes')
-          .select('''
-            *,
-            vehicles(plate_number, driver_name),
-            profiles!courier_id(full_name),
-            delivery_stops(*, schools(name, student_count, deadline_time, tolerance_minutes, is_high_risk)),
-            route_menus(menus(name))
-          ''')
-          .eq('sppg_id', mySppgId)
-          .order('date', ascending: false);
+          .select('*') // <-- Memanggil select('*') hanya dengan 1 argumen
+          .eq('sppg_id', mySppgId); // Mulai filtering di sini
 
+      // Terapkan Filter Tanggal
+      if (date != null) {
+        final dateStr = date.toIso8601String().split('T')[0];
+        queryBuilder = queryBuilder.eq('date', dateStr);
+      }
+
+      // Terapkan Filter Mobil
+      if (vehicleId != null && vehicleId != 'all') {
+        queryBuilder = queryBuilder.eq('vehicle_id', vehicleId);
+      }
+
+      // B. Lakukan SELECT join yang kompleks setelah semua filter diterapkan
+      // Ini akan menimpa select('*') di atas. Supabase API memungkinkan ini.
+      var query = queryBuilder.select('''*,
+        vehicles(id, plate_number, driver_name),
+        profiles!courier_id(full_name),
+        delivery_stops(*, schools(name, student_count, deadline_time, tolerance_minutes, is_high_risk)),
+        route_menus(menus(name))
+      ''');
+
+      query = query.order('date', ascending: false);
+
+      final response = await query;
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       throw Exception('Gagal ambil detail rute: $e');
