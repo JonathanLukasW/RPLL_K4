@@ -1,9 +1,10 @@
 // === FILE: lib/features/admin_sppg/services/report_service.dart ===
 import 'package:supabase_flutter/supabase_flutter.dart'; // Perlu pastikan ini diimpor dengan alias
+import '../services/teacher_service.dart'; // Import TeacherModel
+import '../services/coordinator_service.dart'; // Import CoordinatorModel
 
 class AdminReportService {
   final _supabase = Supabase.instance.client;
-
   Future<String> _getMySppgId() async {
     final userId = _supabase.auth.currentUser!.id;
     final profile = await _supabase
@@ -21,13 +22,21 @@ class AdminReportService {
     try {
       final mySppgId = await _getMySppgId();
 
+      // [FIX KRITIS FINAL]: Menggunakan .filter() dengan sintaks string SQL yang eksplisit
+      // Ini memaksa PostgREST untuk mencari role yang cocok di dalam array literal.
+      const String roleFilterString = '("kurir", "koordinator", "walikelas")';
+
       final response = await _supabase
           .from('profiles')
-          .select('id, full_name, email, role, school_id, schools(name)')
+          .select(
+            'id, full_name, email, role, phone_number, class_name, student_count_class, school_id, schools(name)',
+          )
           .eq('sppg_id', mySppgId)
-          // FIX KRITIS: Ganti .in_() yang gagal di PostgrestFilterBuilder
-          // menjadi .filter() yang universal untuk operator 'in'.
-          .filter('role', 'in', ['kurir', 'koordinator', 'walikelas'])
+          .filter(
+            'role',
+            'in',
+            roleFilterString,
+          ) // <--- FIX AKHIR: Menggunakan filter string yang andal
           .order('role', ascending: true)
           .order('full_name', ascending: true);
 
@@ -39,18 +48,17 @@ class AdminReportService {
 
   // 2. GET ALL ACTIVE & HISTORY ROUTES WITH DETAILS (for Maps & History Tab)
   Future<List<Map<String, dynamic>>> getDetailedRoutes({
-    DateTime? date, // [BARU] Filter Tanggal
-    String? vehicleId, // [BARU] Filter Mobil
+    DateTime? date,
+    String? vehicleId,
+    bool includeAllStatuses = false,
   }) async {
     try {
       final mySppgId = await _getMySppgId();
 
-      // [FIX KRITIS SUPABASE TYPE]: Mulai dengan PostgrestFilterBuilder sebelum select
-      // A. Ambil PostgrestFilterBuilder: Cukup panggil from()
       var queryBuilder = _supabase
           .from('delivery_routes')
-          .select('*') // <-- Memanggil select('*') hanya dengan 1 argumen
-          .eq('sppg_id', mySppgId); // Mulai filtering di sini
+          .select('*')
+          .eq('sppg_id', mySppgId);
 
       // Terapkan Filter Tanggal
       if (date != null) {
@@ -63,24 +71,22 @@ class AdminReportService {
         queryBuilder = queryBuilder.eq('vehicle_id', vehicleId);
       }
 
-      // B. Lakukan SELECT join yang kompleks setelah semua filter diterapkan
-      // Ini akan menimpa select('*') di atas. Supabase API memungkinkan ini.
-      var query = queryBuilder.select('''*,
-        vehicles(id, plate_number, driver_name),
-        profiles!courier_id(full_name),
-        delivery_stops(*, schools(name, student_count, deadline_time, tolerance_minutes, is_high_risk)),
-        route_menus(menus(name))
-      ''');
+      // Menggunakan ALIAS BARU yang JELAS (Lebih aman)
+      var finalQuery = queryBuilder.select('''
+    id, date, vehicle_id, courier_id, status, departure_time, load_proof_photo_url,
+    vehicles(plate_number),
+    courier_data:profiles!courier_id(full_name),
+    route_menus(menus(name)),
+    delivery_stops(id, sequence_order, status, estimated_arrival_time, arrival_time, completion_time, schools(name))
+   ''');
 
-      query = query.order('date', ascending: false);
+      final responseData = await finalQuery;
 
-      final response = await query;
-      return List<Map<String, dynamic>>.from(response);
+      return List<Map<String, dynamic>>.from(responseData);
     } catch (e) {
-      throw Exception('Gagal ambil detail rute: $e');
+      throw Exception('Gagal ambil detail rute: ${e.toString()}');
     }
   }
-
-  // 3. GET COMPLAINTS (Koordinator & Wali Kelas) - Reuse existing logic
-  // (We'll rely on ComplaintService for this part, but ensuring the tab exists)
 }
+// Tidak ada perubahan di statistics_screen.dart karena logika tampilan sudah benar, 
+// hanya data yang hilang dari service.

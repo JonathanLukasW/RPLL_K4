@@ -16,129 +16,350 @@ class RouteService {
   // BAGIAN 1: LOGIKA PEMBUATAN & PERHITUNGAN RUTE (CORE LOGIC)
   // ===========================================================================
 
-  Future<Map<String, dynamic>> _getBottleneckMenu(List<School> schools) async {
-    // ... (logic sama, tidak perlu diulang)
-    if (schools.isEmpty) return {'duration': 0, 'menuIds': [], 'menusData': []};
+  Future<Map<String, dynamic>> getBottleneckMenuSetInfo(
+    List<School> schools,
+  ) async {
+    if (schools.isEmpty)
+      return {'duration': 0, 'menuIds': [], 'menuSetNames': []};
 
-    Set<String> uniqueMenuNames = {};
-    for (var school in schools) {
-      if (school.menuDefault != null) {
-        school.menuDefault!.split(',').forEach((name) {
-          uniqueMenuNames.add(name.trim());
-        });
-      }
-    }
+    final mySppgId = await _getMySppgId();
+    Set<String> uniqueMenuSetNames = schools
+        .where((s) => s.menuDefault != null)
+        .map((s) => s.menuDefault!)
+        .toSet();
 
-    if (uniqueMenuNames.isEmpty)
-      return {'duration': 0, 'menuIds': [], 'menusData': []};
+    if (uniqueMenuSetNames.isEmpty)
+      return {'duration': 0, 'menuIds': [], 'menuSetNames': []};
 
-    final menus = await _supabase
-        .from('menus')
-        .select('id, name, cooking_duration_minutes, max_consume_minutes');
+    // 1. Ambil Menu Set yang terlibat
+    final menuSetsRaw = await _supabase
+        .from('menu_sets')
+        .select(
+          '*, karbo_menus:karbo_id(max_consume_minutes, cooking_duration_minutes), protein_menus:protein_id(max_consume_minutes, cooking_duration_minutes), sayur_menus:sayur_id(max_consume_minutes, cooking_duration_minutes), buah_menus:buah_id(max_consume_minutes, cooking_duration_minutes), nabati_menus:nabati_id(max_consume_minutes, cooking_duration_minutes), pelengkap_menus:pelengkap_id(max_consume_minutes, cooking_duration_minutes)',
+        )
+        .eq('sppg_id', mySppgId)
+        .filter('set_name', 'in', uniqueMenuSetNames.toList());
 
-    int maxDuration = 0;
-    List<String> requiredMenuIds = [];
-    List<Map<String, dynamic>> relatedMenus = [];
+    // 2. Cari Menu dengan MaxConsumeMinutes terpendek (Kritis Mutu) dan Durasi Masak terlama (Bottleneck)
+    int minMaxConsume = 9999;
+    int maxCookingDuration = 0;
+    Set<String> allRequiredMenuIds = {};
 
-    for (var name in uniqueMenuNames) {
-      final menuData = menus.firstWhereOrNull((m) => m['name'] == name);
-      if (menuData != null) {
-        final duration = menuData['cooking_duration_minutes'] as int;
-        final id = menuData['id'] as String;
+    for (var set in menuSetsRaw) {
+      final menuFields = [
+        'karbo_menus',
+        'protein_menus',
+        'sayur_menus',
+        'buah_menus',
+        'nabati_menus',
+        'pelengkap_menus',
+      ];
 
-        if (duration > maxDuration) {
-          maxDuration = duration;
+      for (var field in menuFields) {
+        final menu = set[field];
+        if (menu != null) {
+          final maxConsume = menu['max_consume_minutes'] as int? ?? 120;
+          final duration = menu['cooking_duration_minutes'] as int? ?? 0;
+
+          // Kritis Mutu: Cari Batas Konsumsi Terpendek (Prioritas Urutan Kirim)
+          if (maxConsume < minMaxConsume) {
+            minMaxConsume = maxConsume;
+          }
+
+          // Bottleneck Produksi: Cari Durasi Masak Terlama (Untuk Hitungan Mundur Produksi)
+          if (duration > maxCookingDuration) {
+            maxCookingDuration = duration;
+          }
         }
-        requiredMenuIds.add(id);
-        relatedMenus.add(menuData as Map<String, dynamic>);
+      }
+
+      // Kumpulkan SEMUA Menu ID dari SEMUA Set yang terlibat (untuk dicatat di route_menus)
+      final idFields = [
+        'karbo_id',
+        'protein_id',
+        'sayur_id',
+        'buah_id',
+        'nabati_id',
+        'pelengkap_id',
+      ];
+      for (var idField in idFields) {
+        if (set[idField] != null) {
+          allRequiredMenuIds.add(set[idField].toString());
+        }
       }
     }
+
+    // ASUMSI KRITIS: Kita hanya menggunakan maxCookingDuration untuk backward scheduling.
+    // Dan minMaxConsume AKAN DIGUNAKAN UNTUK SORTING SEKOLAH (Nanti di step G)
 
     return {
-      'duration': maxDuration, // Durasi terlama (bottleneck)
-      'menuIds': requiredMenuIds
-          .toSet()
-          .toList(), // Semua menu ID unik yang terlibat
-      'menusData': relatedMenus.toSet().toList(), // Data mentah semua menu
+      'duration': maxCookingDuration,
+      'menuIds': allRequiredMenuIds.toList(),
+      'menuSetNames': uniqueMenuSetNames.toList(),
+      'minMaxConsume':
+          minMaxConsume, // <--- BARU: Kirim Batas Konsumsi Terpendek
     };
+  }
+
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase
+        .from('profiles')
+        .select('sppg_id')
+        .eq('id', userId)
+        .single();
+    // Karena user profile harus selalu punya sppg_id (kecuali BGN), kita asumsikan tidak null.
+    if (profile['sppg_id'] == null) {
+      throw Exception("User profile missing SPPG ID.");
+    }
+    return profile['sppg_id'] as String; // Mengembalikan tipe String
+  }
+
+  // [BARU CORE LOGIC]: Fungsi untuk menghasilkan urutan sekolah berdasarkan prioritas
+  Future<List<School>> _getPrioritizedSchools(
+    List<School> schools,
+    DateTime date,
+  ) async {
+    // <--- TAMBAH PARAMETER DATE
+    // 1. Ambil Menu Set Details
+    // bottleneckData tidak bergantung pada hari, jadi tetap sama.
+    final bottleneckData = await getBottleneckMenuSetInfo(schools);
+
+    final currentDayName = DateFormat(
+      'EEEE',
+      'id_ID',
+    ).format(date); // <--- GUNAKAN DATE
+
+    // 2. Hitung Priority Score untuk setiap sekolah (Deadline + Menu Criticality)
+    List<Map<String, dynamic>> prioritizedSchools = [];
+
+    for (var school in schools) {
+      int deadlineMinutes = 9999;
+      int schoolMenuMaxConsume = 9999;
+
+      // A. Cari Deadline Sekolah (Waktu harus SELESAI konsumsi)
+      try {
+        final Map<String, dynamic> scheduleMap = jsonDecode(
+          school.deadlineTime!,
+        );
+        if (scheduleMap.containsKey(currentDayName)) {
+          final deadlineString =
+              scheduleMap[currentDayName] as String; // e.g., "10:00:00"
+          final parts = deadlineString.split(':');
+          deadlineMinutes = int.parse(parts[0]) * 60 + int.parse(parts[1]);
+        }
+      } catch (_) {
+        /* ignore */
+      }
+      // B. Cari Batas Konsumsi Menu Set Sekolah (Waktu kritis menu)
+
+      // >>> START PERBAIKAN DI SINI: Terapkan null check untuk menuDefault <<<
+      if (school.menuDefault == null || school.menuDefault!.isEmpty) {
+        // Jika tidak ada menu default, lewati atau berikan prioritas terendah
+        // Untuk saat ini, kita anggap dia non-kritis agar tidak mengganggu scheduling lain.
+        // Kita langsung set sort key tertinggi (prioritas terendah) dan lanjutkan loop.
+        prioritizedSchools.add({'school': school, 'priorityKey': 9999999});
+        continue; // Lanjut ke sekolah berikutnya
+      }
+
+      final menuSet = await _supabase
+          .from('menu_sets')
+          .select(
+            '*, karbo_menus:karbo_id(max_consume_minutes)',
+          ) // Hanya perlu satu field untuk trigger join
+          .eq(
+            'set_name',
+            school.menuDefault as Object,
+          ) // <--- FIX ERROR: Casting String? ke Object yang aman
+          .limit(1)
+          .single();
+      // >>> END PERBAIKAN <<<
+
+      // Cari min MaxConsumeMinutes di Menu Set ini
+      final menuFields = [
+        'karbo_menus',
+        'protein_menus',
+        'sayur_menus',
+        'buah_menus',
+        'nabati_menus',
+        'pelengkap_menus',
+      ];
+      int tempMinConsume = 9999;
+      for (var field in menuFields) {
+        if (menuSet.containsKey(field) && menuSet[field] != null) {
+          final maxConsume =
+              menuSet[field]['max_consume_minutes'] as int? ?? 120;
+          if (maxConsume < tempMinConsume) {
+            tempMinConsume = maxConsume;
+          }
+        }
+      }
+      schoolMenuMaxConsume = tempMinConsume;
+
+      // PRIORITY SCORE: Jarak waktu dari sekarang ke (Deadline - MaxConsumeMenu)
+      // Semakin kecil score, semakin kritis (harus dikirim duluan).
+      // Kritis Waktu Tiba = Deadline - Tolerance
+      int criticalDeliveryTime = deadlineMinutes - school.toleranceMinutes;
+
+      // Priority Score = (Critical Delivery Time) - (Paling cepat basi)
+      // ASUMSI: Sekolah yang menunya cepat basi DAN deadline-nya cepat, harus didahulukan.
+      int priorityScore = (criticalDeliveryTime - schoolMenuMaxConsume);
+
+      // Sort Key: Urutan: (Waktu Tiba Kritis) + (Menu Max Consume)
+      int finalSortKey =
+          criticalDeliveryTime * 1000 +
+          schoolMenuMaxConsume; // Semakin kecil, semakin prioritas
+
+      prioritizedSchools.add({'school': school, 'priorityKey': finalSortKey});
+    }
+
+    // Sort schools: Smallest key first (highest priority)
+    prioritizedSchools.sort(
+      (a, b) => (a['priorityKey'] as int).compareTo(b['priorityKey'] as int),
+    );
+
+    return prioritizedSchools.map((e) => e['school'] as School).toList();
   }
 
   Future<String> getFirstCourierId() async {
     return await _getFirstCourierId();
   }
 
-  Future<Map<String, dynamic>> getBottleneckMenuPublic(
-    List<School> schools,
-  ) async {
-    return await _getBottleneckMenu(schools);
-  }
-
+  // [FIX DAN UPDATE MULTI-TRIP]: createBatchRoutes
   Future<void> createBatchRoutes({
     required List<String> vehicleIds,
     required String courierId,
     required List<String> menuIds,
-    required DateTime date,
+    required DateTime date, // <--- Gunakan 'date' ini
     required List<School> selectedSchools,
     required int cookingDuration,
   }) async {
-    // ... (logic sama)
-    try {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase
+        .from('profiles')
+        .select('sppg_id')
+        .eq('id', userId)
+        .single();
+    final String mySppgId = profile['sppg_id'];
+
+    if (vehicleIds.isEmpty || menuIds.isEmpty) return;
+
+    // >>> KRITIS: Logic Multi-Trip (Hanya untuk 1 kendaraan di mode manual) <<<
+    if (vehicleIds.length != 1) {
+      throw Exception(
+        "Hanya mendukung 1 kendaraan untuk Rute Manual saat ini.",
+      );
+    }
+
+    final vehicleId = vehicleIds.first;
+    final vehicleRaw = await _supabase
+        .from('vehicles')
+        .select('capacity_limit')
+        .eq('id', vehicleId)
+        .single();
+    final vehicleCapacity = vehicleRaw['capacity_limit'] as int;
+
+    // [BARU] Helper untuk CreateRouteScreen, mengambil rute hari tertentu
+    Future<List<Map<String, dynamic>>> getRoutesByDate(DateTime date) async {
       final userId = _supabase.auth.currentUser!.id;
       final profile = await _supabase
           .from('profiles')
           .select('sppg_id')
           .eq('id', userId)
           .single();
-      final String mySppgId = profile['sppg_id'];
+      final String mySppgId = profile['sppg_id']; // <--- sudah pasti String
 
-      if (vehicleIds.isEmpty || menuIds.isEmpty) return;
+      final response = await _supabase
+          .from('delivery_routes')
+          .select('vehicle_id')
+          .eq(
+            'sppg_id',
+            mySppgId,
+          ) // <--- ERROR HILANG KARENA mySppgId sudah String
+          .eq('date', DateFormat('yyyy-MM-dd').format(date));
 
-      final vehiclesData = await _supabase
-          .from('vehicles')
-          .select('id, courier_profile_id')
-          .filter('id', 'in', vehicleIds);
+      return List<Map<String, dynamic>>.from(response);
+    }
 
-      final Map<String, String?> vehicleCourierMap = {
-        for (var v in vehiclesData) v['id']: v['courier_profile_id'],
-      };
+    // 1. PRIORITASISASI SEKOLAH BERDASARKAN KRITIS WAKTU/MENU
+    // Perubahan KRITIS: Meskipun ini manual, kita harus menggunakan sorting yang sama
+    // agar rute yang dihasilkan optimal sesuai constraint menu.
+    List<School> sortedSchools = await _getPrioritizedSchools(
+      selectedSchools,
+      date,
+    ); // <--- FIX: KIRIM ARGUMEN DATE
 
-      int schoolsPerVehicle = (selectedSchools.length / vehicleIds.length)
-          .ceil();
+    List<School> remainingSchools = List.from(sortedSchools);
+    int routeIndex = 1;
+    int routesCreated = 0;
 
-      for (int i = 0; i < vehicleIds.length; i++) {
-        int start = i * schoolsPerVehicle;
-        int end = (start + schoolsPerVehicle < selectedSchools.length)
-            ? start + schoolsPerVehicle
-            : selectedSchools.length;
+    // Lakukan Loop sampai semua sekolah terlayani (Multi-Trip Logic)
+    while (remainingSchools.isNotEmpty) {
+      List<School> currentTripSchools = [];
+      int currentLoad = 0;
 
-        if (start >= selectedSchools.length) break;
+      // 2. PEMBAGIAN TRIP: Ambil sekolah sebanyak mungkin sesuai kapasitas
+      int i = 0;
+      while (i < remainingSchools.length) {
+        final school = remainingSchools[i];
 
-        List<School> assignedSchools = selectedSchools.sublist(start, end);
-        String currentVehicleId = vehicleIds[i];
+        if (school.studentCount > vehicleCapacity) {
+          throw Exception(
+            "Sekolah ${school.name} porsi (${school.studentCount}) melebihi kapasitas mobil (${vehicleCapacity}).",
+          );
+        }
 
-        final String finalCourierId =
-            vehicleCourierMap[currentVehicleId] ?? courierId;
-
-        await _createSingleRouteCalculation(
-          sppgId: mySppgId,
-          vehicleId: currentVehicleId,
-          courierId: finalCourierId,
-          menuIds: menuIds,
-          date: date,
-          schools: assignedSchools,
-          cookingDuration: cookingDuration,
-          isDailyBatch: false,
-        );
+        if (currentLoad + school.studentCount <= vehicleCapacity) {
+          currentLoad += school.studentCount;
+          currentTripSchools.add(school);
+          i++;
+        } else {
+          break; // Kapasitas penuh
+        }
       }
-    } catch (e) {
-      throw Exception("Gagal bagi rute: $e");
+
+      if (currentTripSchools.isEmpty) {
+        break; // Tidak ada lagi sekolah yang muat
+      }
+
+      // 3. BUAT RUTE UNTUK TRIP INI
+      await _createSingleRouteCalculation(
+        sppgId: mySppgId,
+        vehicleId: vehicleId,
+        courierId: courierId,
+        menuIds: menuIds,
+        date: date,
+        schools: currentTripSchools, // Hanya sekolah untuk trip ini
+        cookingDuration: cookingDuration,
+        isDailyBatch: false, // Ini tetap manual
+        notesPrefix: "Manual Trip $routeIndex",
+      );
+
+      routesCreated++;
+      routeIndex++;
+
+      // Hapus sekolah yang sudah ditambahkan di trip ini dari remainingSchools
+      remainingSchools.removeRange(0, currentTripSchools.length);
+    }
+
+    // Mengganti return/throw error lama
+    if (routesCreated == 0) {
+      throw Exception(
+        "Gagal membuat rute. Mungkin kapasitas mobil terlalu kecil atau tidak ada sekolah yang muat.",
+      );
     }
   }
 
-  Future<List<School>> _getScheduledSchoolsForToday(String mySppgId) async {
-    // ... (logic sama)
-    final now = DateTime.now();
-    final currentDayName = DateFormat('EEEE', 'id_ID').format(now);
+  // Ubah signature function
+  Future<List<School>> _getScheduledSchoolsForDay(
+    String mySppgId,
+    DateTime date,
+  ) async {
+    // Gunakan target date untuk mendapatkan nama hari
+    final currentDayName = DateFormat(
+      'EEEE',
+      'id_ID',
+    ).format(date); // <--- GUNAKAN DATE
 
     final response = await _supabase
         .from('schools')
@@ -160,7 +381,9 @@ class RouteService {
           final Map<String, dynamic> scheduleMap = jsonDecode(
             school.deadlineTime!,
           );
-          if (scheduleMap.containsKey(currentDayName) &&
+          if (scheduleMap.containsKey(
+                currentDayName,
+              ) && // <--- GUNAKAN currentDayName
               school.menuDefault != null) {
             scheduledSchools.add(school);
           }
@@ -168,6 +391,7 @@ class RouteService {
       }
     }
 
+    // Sorting tetap menggunakan deadline hari itu
     scheduledSchools.sort((a, b) {
       try {
         final Map<String, dynamic> aMap = jsonDecode(a.deadlineTime!);
@@ -208,8 +432,9 @@ class RouteService {
     }
   }
 
-  Future<int> generateDailyRoutes() async {
-    // ... (logic sama)
+  // Ubah signature function
+  Future<int> generateDailyRoutes({required DateTime date}) async {
+    // <--- TAMBAH PARAMETER DATE
     final userId = _supabase.auth.currentUser!.id;
     final profile = await _supabase
         .from('profiles')
@@ -217,19 +442,62 @@ class RouteService {
         .eq('id', userId)
         .single();
     final String mySppgId = profile['sppg_id'];
-    final DateTime today = DateTime(
-      DateTime.now().year,
-      DateTime.now().month,
-      DateTime.now().day,
-    );
 
-    final scheduledSchools = await _getScheduledSchoolsForToday(mySppgId);
+    // Gunakan tanggal yang dimasukkan, bukan DateTime.now()
+    final DateTime targetDate = DateTime(date.year, date.month, date.day);
+
+    // Cek konflik: apakah sudah ada rute hari ini?
+    final existingRoutes = await _supabase
+        .from('delivery_routes')
+        .select('id')
+        .eq('sppg_id', mySppgId)
+        .eq(
+          'date',
+          DateFormat('yyyy-MM-dd').format(targetDate),
+        ); // <--- GUNAKAN targetDate
+
+    if (existingRoutes.isNotEmpty) {
+      throw Exception(
+        "Rute untuk tanggal ini (${DateFormat('dd MMM').format(targetDate)}) sudah ada. Hapus rute lama untuk generate yang baru.",
+      );
+    }
+
+    // 1. Ambil Semua Sekolah yang Terjadwal Hari Ini
+    // PERLU MEMODIFIKASI _getScheduledSchoolsForToday agar menerima date
+    List<School> scheduledSchools = await _getScheduledSchoolsForDay(
+      mySppgId,
+      targetDate,
+    ); // <--- KIRIM targetDate
+
     if (scheduledSchools.isEmpty) {
+      throw Exception(
+        "Tidak ada sekolah yang memiliki jadwal rutin, menu default, atau koordinat yang lengkap untuk tanggal ini.",
+      );
+    }
+
+    // 2. Prioritasisasi Sekolah (berdasarkan Deadline Kritis & Menu Max Consume)
+    // PERLU MEMODIFIKASI _getPrioritizedSchools agar menerima date
+    List<School> sortedSchools = await _getPrioritizedSchools(
+      scheduledSchools,
+      targetDate,
+    ); // <--- KIRIM targetDate
+
+    if (sortedSchools.isEmpty) {
       throw Exception(
         "Tidak ada sekolah yang memiliki jadwal rutin, menu default, atau koordinat yang lengkap untuk hari ini.",
       );
     }
 
+    // 2. Prioritasisasi Sekolah (berdasarkan Deadline Kritis & Menu Max Consume)
+    // NOTE: Fungsi ini juga melakukan filter jika menu_default sekolah null
+
+    if (sortedSchools.isEmpty) {
+      throw Exception(
+        "Sekolah tersedia, namun tidak ada yang memiliki Menu Set dan GPS yang valid.",
+      );
+    }
+
+    // 3. Ambil Kendaraan Aktif dan Kapasitasnya
     final vehicles = await _supabase
         .from('vehicles')
         .select('id, capacity_limit, courier_profile_id')
@@ -242,12 +510,11 @@ class RouteService {
       throw Exception("Tidak ada kendaraan aktif yang bisa ditugaskan.");
     }
 
-    final bottleneckData = await _getBottleneckMenu(scheduledSchools);
+    // 4. Hitung Bottleneck Produksi (Durasi Masak Terlama)
+    final bottleneckData = await getBottleneckMenuSetInfo(sortedSchools);
     final int bottleneckDuration = bottleneckData['duration'] as int;
     final List<String> requiredMenuIds =
         bottleneckData['menuIds'] as List<String>;
-    final List<Map<String, dynamic>> relatedMenus =
-        bottleneckData['menusData'] as List<Map<String, dynamic>>;
 
     if (requiredMenuIds.isEmpty || bottleneckDuration == 0) {
       throw Exception(
@@ -255,45 +522,82 @@ class RouteService {
       );
     }
 
-    Map<String, List<School>> vehicleAssignments = {
-      for (var v in activeVehicles) v['id'].toString(): [],
-    };
-    List<String> vehicleIds = activeVehicles
-        .map((v) => v['id'].toString())
-        .toList();
+    // 5. PENUGASAN & PEMBAGIAN RUTE DENGAN MULTI-TRIP (Core Logic Perbaikan)
+
+    // Kita akan menggunakan semua mobil yang tersedia secara berulang (round-robin)
+    // sambil memecah beban setiap sekolah ke trip yang muat kapasitas.
+
+    List<School> remainingSchools = List.from(sortedSchools);
+    int routesCreated = 0;
+    int vehicleIndex = 0;
 
     final String fallbackCourierId = await _getFirstCourierId();
 
-    int schoolIndex = 0;
-    for (var school in scheduledSchools) {
-      final vehicleId = vehicleIds[schoolIndex % vehicleIds.length];
-      vehicleAssignments[vehicleId]!.add(school);
-      schoolIndex++;
-    }
-
-    int routesCreated = 0;
-    for (var entry in vehicleAssignments.entries) {
-      final vehicleId = entry.key;
-      final schoolsForVehicle = entry.value;
-
-      if (schoolsForVehicle.isEmpty) continue;
-
-      final vehicle = activeVehicles.firstWhere((v) => v['id'] == vehicleId);
+    // Loop ini akan terus berjalan sampai semua sekolah terlayani
+    while (remainingSchools.isNotEmpty) {
+      // Tentukan mobil yang bertugas di trip ini (Round-Robin vehicle assignment)
+      final vehicle = activeVehicles[vehicleIndex % activeVehicles.length];
+      final String vehicleId = vehicle['id'].toString();
+      final int capacity = vehicle['capacity_limit'] as int;
       final String courierId =
           vehicle['courier_profile_id'] ?? fallbackCourierId;
+
+      List<School> currentTripSchools = [];
+      int currentLoad = 0;
+
+      // Ambil sekolah dari awal list (prioritas tertinggi) yang muat di kapasitas mobil
+      int i = 0;
+      while (i < remainingSchools.length) {
+        final school = remainingSchools[i];
+
+        // Cek apakah porsi sekolah ini melebihi kapasitas total mobil.
+        // Jika ya, kita harus menghentikan proses, karena asumsi kita adalah porsi < capacity.
+        if (school.studentCount > capacity) {
+          throw Exception(
+            "Sekolah ${school.name} memiliki porsi (${school.studentCount}) melebihi kapasitas mobil (${capacity}). Mohon alokasikan mobil dengan kapasitas lebih besar atau perbarui data.",
+          );
+        }
+
+        if (currentLoad + school.studentCount <= capacity) {
+          currentLoad += school.studentCount;
+          currentTripSchools.add(school);
+          i++; // Lanjut ke sekolah berikutnya di remainingSchools
+        } else {
+          // Kapasitas mobil untuk trip ini sudah penuh.
+          break;
+        }
+      }
+
+      if (currentTripSchools.isEmpty) {
+        // Ini seharusnya hanya terjadi jika remainingSchools sudah kosong,
+        // atau jika semua mobil sudah dicoba dan tidak ada yang bisa melayani.
+        break;
+      }
 
       await _createSingleRouteCalculation(
         sppgId: mySppgId,
         vehicleId: vehicleId,
         courierId: courierId,
         menuIds: requiredMenuIds,
-        date: today,
-        schools: schoolsForVehicle,
+        date: targetDate, // <--- KIRIM targetDate
+        schools: currentTripSchools,
         cookingDuration: bottleneckDuration,
         isDailyBatch: true,
-        bottleneckMenusData: relatedMenus,
+        notesPrefix: "AUTO Batch ${DateFormat('HH:mm').format(DateTime.now())}",
       );
       routesCreated++;
+
+      // Hapus sekolah yang sudah dialokasikan dari remainingSchools
+      remainingSchools.removeRange(0, currentTripSchools.length);
+
+      // Pindah ke mobil berikutnya untuk trip selanjutnya
+      vehicleIndex++;
+    }
+
+    if (routesCreated == 0) {
+      throw Exception(
+        "Gagal membuat rute. Tidak ada mobil yang muat atau tidak ada sekolah yang tersisa untuk dikirim.",
+      );
     }
 
     return routesCreated;
@@ -309,6 +613,7 @@ class RouteService {
     required int cookingDuration,
     bool isDailyBatch = false,
     List<Map<String, dynamic>>? bottleneckMenusData,
+    String? notesPrefix, // <--- BARU TAMBAHKAN INI
   }) async {
     // ... (logic sama)
     // A. Ambil Lokasi Dapur (Titik Awal)
@@ -472,9 +777,11 @@ class RouteService {
       bottleneckMenuId = menuMatch?['id'] as String? ?? menuIds.first;
     }
 
-    String notes = isDailyBatch
-        ? 'Auto-Daily Batch (Rute #$newRouteId, Bottleneck: ${cookingDuration} mnt)'
-        : 'Auto-Schedule (Rute #$newRouteId, Bottleneck: ${cookingDuration} mnt)';
+    String notes = notesPrefix != null
+        ? '$notesPrefix | Rute #$newRouteId, Bottleneck: ${cookingDuration} mnt'
+        : (isDailyBatch
+              ? 'Auto-Daily Batch (Rute #$newRouteId, Bottleneck: ${cookingDuration} mnt)'
+              : 'Auto-Schedule (Rute #$newRouteId, Bottleneck: ${cookingDuration} mnt)'); // <--- LOGIKA NOTES BARU
 
     await _supabase.from('production_schedules').insert({
       'sppg_id': sppgId,
@@ -485,6 +792,33 @@ class RouteService {
       'target_finish_time': fmtDep,
       'notes': notes,
     });
+  }
+
+  // --- 8. AMBIL NEXT STOP YANG BELUM SELESAI ---
+  Future<Map<String, dynamic>?> getNextPendingStop(String routeId) async {
+    try {
+      // Ambil stop dengan sequence order terendah (LIMIT 1)
+      // yang statusnya BUKAN 'received', 'issue_reported', atau 'completed'
+      final response = await _supabase
+          .from('delivery_stops')
+          .select('*, schools(name)') // Hanya butuh nama sekolah
+          .eq('route_id', routeId)
+          .not('status', 'in', '("received", "issue_reported", "completed")')
+          .order('sequence_order', ascending: true)
+          .limit(1)
+          .single();
+
+      return response;
+    } on PostgrestException catch (e) {
+      // Jika tidak ada stop pending/active (semua sudah selesai), Supabase throw PGRST116.
+      if (e.code == 'PGRST116') {
+        return null;
+      }
+      throw Exception("Gagal ambil next stop: ${e.message}");
+    } catch (e) {
+      // Error umum lainnya
+      return null;
+    }
   }
 
   Future<void> updateRouteSchools(
@@ -593,7 +927,10 @@ class RouteService {
   }
 
   // --- 5. AMBIL SEMUA RUTE (LIST HISTORY ADMIN) ---
-  Future<List<DeliveryRoute>> getMyRoutes() async {
+  Future<List<DeliveryRoute>> getMyRoutes({
+    DateTime? date, // <--- TAMBAH FILTER
+    String? vehicleId, // <--- TAMBAH FILTER
+  }) async {
     try {
       final userId = _supabase.auth.currentUser!.id;
       final profile = await _supabase
@@ -603,13 +940,26 @@ class RouteService {
           .single();
       final String mySppgId = profile['sppg_id'];
 
-      final response = await _supabase
+      var query = _supabase
           .from('delivery_routes')
           .select(
             '*, vehicles(plate_number), profiles!courier_id(full_name), route_menus(menu_id, menus(name))',
           )
-          .eq('sppg_id', mySppgId)
-          .order('date', ascending: false);
+          .eq('sppg_id', mySppgId);
+
+      // Terapkan filter tanggal jika ada
+      if (date != null) {
+        query = query.eq('date', DateFormat('yyyy-MM-dd').format(date));
+      }
+
+      // Terapkan filter mobil jika ada (kecuali 'all')
+      if (vehicleId != null && vehicleId != 'all') {
+        query = query.eq('vehicle_id', vehicleId);
+      }
+
+      final response = await query
+          .order('date', ascending: false)
+          .order('departure_time', ascending: false);
 
       final List<dynamic> data = response;
       return data.map((json) => DeliveryRoute.fromJson(json)).toList();

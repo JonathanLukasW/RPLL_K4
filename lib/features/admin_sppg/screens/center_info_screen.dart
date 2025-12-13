@@ -614,8 +614,6 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
             })
             .join('\n');
       } catch (e) {
-        // Jika decoding JSON masih gagal
-        // Yuuri: "Maaf, raw data tidak dapat diurai..."
         return 'Detail Masalah JSON Rusak. Raw Data: $rawNotes';
       }
     }
@@ -625,6 +623,27 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
     }
   }
 
+  // Helper untuk menampilkan dialog gambar (Disalin dari EditRouteScreen)
+  void _showImageDialog(BuildContext context, String url, String title) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: MediaQuery.of(context).size.width * 0.9,
+          height: MediaQuery.of(context).size.height * 0.7,
+          child: Image.network(url, fit: BoxFit.contain),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Tutup"),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showRespondComplaintDialog(
     Map<String, dynamic> complaint,
     String reporterRole,
@@ -632,23 +651,25 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
     String targetTableId,
   ) {
     final responseController = TextEditingController();
-
-    // [BARU]: Ambil detail isu yang sudah diformat
     final issueDetailsText = _formatComplaintDetails(
       reporterRole,
       complaint['notes'],
     );
+
+    // [BARU]: Ambil URL Foto dari item (asumsi sudah ditarik di RPC)
+    final photoUrl = complaint['proof_photo_url'];
+    final receivedQty = complaint['received_qty']; // Ambil kuantitas (jika ada)
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("Tindak Lanjut Keluhan"),
         content: SingleChildScrollView(
-          // <-- Agar konten bisa discroll
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Detail Pengaduan
               const Text(
                 "Detail Pengaduan:",
                 style: TextStyle(
@@ -658,7 +679,16 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
               ),
               const SizedBox(height: 5),
 
-              // Tampilkan Rincian Isu (sudah diformat)
+              // Kuantitas Diterima (relevan untuk Koordinator)
+              if (receivedQty != null)
+                Text(
+                  "Kuantitas Diterima: $receivedQty Porsi",
+                  style: const TextStyle(fontWeight: FontWeight.w500),
+                ),
+
+              const SizedBox(height: 10),
+
+              // Rincian Isu (Formatted)
               Container(
                 padding: const EdgeInsets.all(8),
                 width: double.infinity,
@@ -668,11 +698,40 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: SelectableText(
-                  // Gunakan SelectableText agar bisa dicopy
                   issueDetailsText,
                   style: const TextStyle(fontSize: 13),
                 ),
               ),
+
+              // [BARU]: BUKTI FOTO
+              if (photoUrl != null) ...[
+                const SizedBox(height: 15),
+                const Text(
+                  "Bukti Foto Pelapor:",
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 8),
+                GestureDetector(
+                  onTap: () => _showImageDialog(
+                    ctx,
+                    photoUrl,
+                    "Bukti dari ${complaint['reporter_name']}",
+                  ),
+                  child: Container(
+                    height: 100,
+                    width: 100,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(5),
+                      image: DecorationImage(
+                        image: NetworkImage(photoUrl),
+                        fit: BoxFit.cover,
+                      ),
+                      border: Border.all(color: Colors.grey),
+                    ),
+                    child: const Icon(Icons.zoom_in, color: Colors.white70),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 20),
               const Text(
@@ -680,15 +739,14 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
 
-              // [FIX KRITIS]: Ubah menjadi TextFormField besar (multi-line)
+              // Text Form Field Respon
               TextFormField(
                 controller: responseController,
-                maxLines: 4, // <-- Tambah baris
+                maxLines: 4,
                 keyboardType: TextInputType.multiline,
                 decoration: InputDecoration(
                   labelText: "Instruksi / Tindak Lanjut Admin SPPG",
-                  hintText:
-                      "Contoh: Sudah kami cek, dan akan kami kirimkan ganti rugi 10 porsi besok.",
+                  hintText: "Contoh: Sudah kami cek...",
                   border: const OutlineInputBorder(),
                 ),
               ),
@@ -703,7 +761,6 @@ class _CenterInfoScreenState extends State<CenterInfoScreen>
           ElevatedButton(
             onPressed: () async {
               if (responseController.text.isEmpty) {
-                if (!mounted) return;
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text("Wajib isi instruksi!")),
                 );

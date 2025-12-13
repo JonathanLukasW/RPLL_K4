@@ -84,6 +84,13 @@ const List<Map<String, String>> _debugAccounts = [
     'password': 'andika123',
     'role': 'koordinator',
   },
+
+  {
+    'name': 'Koord MTS Islam (Arnold)',
+    'email': 'arnoldislamal@gmail.com',
+    'password': 'arnold123',
+    'role': 'koordinator',
+  },
   // WALI KELAS
   {
     'name': 'Wali Kelas 8A SMPN6 (William)',
@@ -110,6 +117,7 @@ const List<Map<String, String>> _debugAccounts = [
     'role': 'walikelas',
   },
 ];
+bool isDebugModeActive = false;
 // --- END OF DEBUG ACCOUNTS ---
 
 class LoginScreen extends StatefulWidget {
@@ -276,55 +284,57 @@ class _LoginScreenState extends State<LoginScreen> {
               const SizedBox(height: 40),
 
               // --- DEBUG QUICK LOGIN SECTION ---
-              Container(
-                margin: const EdgeInsets.only(bottom: 30),
-                padding: const EdgeInsets.all(15),
-                decoration: BoxDecoration(
-                  color: Colors.red[50], // Nice, angry red for warnings
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.redAccent),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      "⚠️ DEBUG QUICK SELECT (AUTO-FILL) - DELETE IN PRODUCTION!",
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: Colors.red[900],
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    // Dropdown for accounts
-                    DropdownButtonFormField<Map<String, String>>(
-                      decoration: const InputDecoration(
-                        labelText: "Pilih Akun Cepat",
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(
-                          Icons.person_search,
-                          color: Colors.redAccent,
+              // --- DEBUG QUICK LOGIN SECTION ---
+              if (isDebugModeActive) // <--- KRITIS: Hanya tampilkan jika active
+                Container(
+                  margin: const EdgeInsets.only(bottom: 30),
+                  padding: const EdgeInsets.all(15),
+                  decoration: BoxDecoration(
+                    color: Colors.red[50],
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.redAccent),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        "⚠️ DEBUG QUICK SELECT (AUTO-FILL) - DELETE IN PRODUCTION!",
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red[900],
                         ),
                       ),
-                      value: _selectedDebugAccount,
-                      items: _debugAccounts.map((account) {
-                        return DropdownMenuItem<Map<String, String>>(
-                          value: account,
-                          child: Text(
-                            "${account['name']} (${account['role']?.toUpperCase()})",
+                      const SizedBox(height: 10),
+                      // Dropdown for accounts
+                      DropdownButtonFormField<Map<String, String>>(
+                        decoration: const InputDecoration(
+                          labelText: "Pilih Akun Cepat",
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(
+                            Icons.person_search,
+                            color: Colors.redAccent,
                           ),
-                        );
-                      }).toList(),
-                      onChanged:
-                          _populateFields, // Use the new auto-fill function
-                    ),
-                    const SizedBox(height: 5),
-                    const Text(
-                      "Memilih akun akan otomatis mengisi Email dan Password di bawah.",
-                      style: TextStyle(fontSize: 12, color: Colors.grey),
-                    ),
-                  ],
+                        ),
+                        value: _selectedDebugAccount,
+                        items: _debugAccounts.map((account) {
+                          return DropdownMenuItem<Map<String, String>>(
+                            value: account,
+                            child: Text(
+                              "${account['name']} (${account['role']?.toUpperCase()})",
+                            ),
+                          );
+                        }).toList(),
+                        onChanged:
+                            _populateFields, // Use the new auto-fill function
+                      ),
+                      const SizedBox(height: 5),
+                      const Text(
+                        "Memilih akun akan otomatis mengisi Email dan Password di bawah.",
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
               // --- END DEBUG QUICK LOGIN SECTION ---
 
               // Input Email (Original)

@@ -10,18 +10,49 @@ import 'bgn_report_screen.dart'; // Screen Laporan Terpadu
 
 // [PENTING] Import Halaman Profil (Tempat Ganti Password)
 import '../../../core/screens/profile_screen.dart';
+import '../../autentikasi/screens/login_screen.dart'
+    as login_screen; // <--- Import dengan alias
 
-class DashboardBgnScreen extends StatelessWidget {
+class DashboardBgnScreen extends StatefulWidget {
   const DashboardBgnScreen({super.key});
 
-  // Fungsi Logout (Cadangan jika tombol profil bermasalah)
-  Future<void> _logout(BuildContext context) async {
+  @override
+  State<DashboardBgnScreen> createState() => _DashboardBgnScreenState(); // <-- UBAH KE STATEFUL
+}
+
+class _DashboardBgnScreenState extends State<DashboardBgnScreen> {
+  // <-- UBAH KE STATE
+
+  // Ambil initial state dari variabel global
+  bool _isDebugActive = login_screen.isDebugModeActive;
+
+  Future<void> _logout() async {
     await AuthService().signOut();
-    if (!context.mounted) return;
+    if (!mounted) return;
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (route) => false,
     );
+  }
+
+  // [BARU] Toggle Debug Mode
+  void _toggleDebugMode(bool isActive) {
+    setState(() {
+      _isDebugActive = isActive;
+      login_screen.isDebugModeActive = isActive; // UPDATE GLOBAL STATE
+
+      // Memberikan feedback yang jelas
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            isActive
+                ? "Debug Mode AKTIF. Perlu Log out untuk melihat perubahan."
+                : "Debug Mode NONAKTIF.",
+          ),
+          backgroundColor: isActive ? Colors.red : Colors.green,
+        ),
+      );
+    });
   }
 
   @override
@@ -32,6 +63,17 @@ class DashboardBgnScreen extends StatelessWidget {
         backgroundColor: Colors.blue[800],
         foregroundColor: Colors.white,
         actions: [
+          // [BARU] TOGGLE DEBUG MENU
+          Tooltip(
+            message: "Toggle Quick Login Debug",
+            child: Switch(
+              value: _isDebugActive,
+              onChanged: _toggleDebugMode,
+              activeColor: Colors.redAccent,
+              inactiveThumbColor: Colors.grey[400],
+              inactiveTrackColor: Colors.grey[200],
+            ),
+          ),
           // [FITUR GANTI PASSWORD ADA DI SINI]
           // Tombol Profil (Icon Orang)
           IconButton(

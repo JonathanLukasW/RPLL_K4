@@ -390,26 +390,6 @@ class _AddSchoolScreenState extends State<AddSchoolScreen> {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 15),
-
-                    // [BARU]: TOGGLE IS HIGH RISK
-                    Row(
-                      children: [
-                        const Text(
-                          "Lokasi Berisiko Tinggi?",
-                          style: TextStyle(fontSize: 16),
-                        ),
-                        const Spacer(),
-                        Switch(
-                          value: _isHighRisk,
-                          onChanged: (bool value) {
-                            setState(() {
-                              _isHighRisk = value;
-                            });
-                          },
-                        ),
-                      ],
-                    ),
 
                     const SizedBox(height: 10),
                     const Divider(thickness: 2),

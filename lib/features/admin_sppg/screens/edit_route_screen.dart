@@ -396,6 +396,7 @@ class _EditRouteScreenState extends State<EditRouteScreen> {
                                   isRouteProof: false,
                                 ),
 
+                                const SizedBox(height: 10),
                                 // Bukti Penerimaan Sekolah (jika ada)
                                 if (stop['proof_photo_url'] != null)
                                   _buildProofSection(

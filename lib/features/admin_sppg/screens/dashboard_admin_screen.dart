@@ -57,21 +57,49 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
 
   // State untuk tombol Generate Otomatis
   bool _isGenerating = false;
+  // [BARU] State untuk Tanggal Generate Otomatis
+  DateTime _generateDate = DateTime.now(); // Default hari ini
+
+  // [BARU] State untuk Filter Rute
+  DateTime _selectedRouteFilterDate = DateTime.now(); // <--- BARU
+  String?
+  _selectedRouteFilterVehicleId; // <--- BARU ('all' jika tidak ada filter)
+  List<Vehicle> _allVehicles = []; // <--- Cache kendaraan (sudah ada)
 
   @override
   void initState() {
     super.initState();
+    // Inisialisasi tanggal filter
+    _selectedRouteFilterDate = DateTime(
+      _selectedRouteFilterDate.year,
+      _selectedRouteFilterDate.month,
+      _selectedRouteFilterDate.day,
+    );
+
     _loadInitialFilters(); // Load sekolah untuk filter
+    // Tambahkan inisialisasi _generateDate ke midnight
+    _generateDate = DateTime(
+      _generateDate.year,
+      _generateDate.month,
+      _generateDate.day,
+    );
   }
 
-  // [BARU] Fungsi Load Sekolah untuk Filter Dropdown
+  // ... (perlu modifikasi _loadInitialFilters untuk memuat vehicles)
   Future<void> _loadInitialFilters() async {
     try {
-      final schools = await _schoolService.getMySchools();
+      final results = await Future.wait([
+        _schoolService.getMySchools(),
+        _vehicleService.getMyVehicles(), // Load Vehicles
+      ]);
+      final schools = results[0] as List<School>;
+      final vehicles = results[1] as List<Vehicle>; // Ambil data kendaraan
+
       if (mounted) {
         setState(() {
           _allSppgSchools = schools;
-          // Default filter ke 'Semua Sekolah' (null)
+          _allVehicles = vehicles; // Set data kendaraan
+          _selectedRouteFilterVehicleId = 'all'; // Default filter mobil
         });
       }
     } catch (e) {
@@ -379,6 +407,91 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     return charA.compareTo(charB);
   }
 
+  // [BARU] Fungsi Generate Routes Otomatis
+  // [MODIFIKASI] Fungsi Generate Routes Otomatis (Sekarang bisa memilih tanggal)
+  Future<void> _generateRoutesForToday() async {
+    // 1. Tampilkan Date Picker
+    final DateTime? pickedDate = await showDatePicker(
+      context: context,
+      initialDate: _generateDate,
+      firstDate: DateTime.now(),
+      lastDate: DateTime.now().add(const Duration(days: 90)),
+      helpText: 'Pilih Tanggal Generate Rute',
+    );
+
+    if (pickedDate == null) return;
+
+    final targetDate = DateTime(
+      pickedDate.year,
+      pickedDate.month,
+      pickedDate.day,
+    );
+
+    // 2. Konfirmasi setelah tanggal dipilih
+    final bool? confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Konfirmasi Generate Rute"),
+        content: Text(
+          "Anda yakin ingin membuat rute otomatis untuk tanggal ${DateFormat('EEEE, d MMMM yyyy', 'id_ID').format(targetDate)}?",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text("Batal"),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              "GENERATE SEKARANG",
+              style: TextStyle(color: Colors.white),
+            ),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    setState(() {
+      _isGenerating = true;
+      _generateDate = targetDate; // Simpan tanggal yang dipilih
+    });
+
+    try {
+      // Memanggil logika routing di RouteService DENGAN TANGGAL YANG DIPILIH
+      final routesCreated = await _routeService.generateDailyRoutes(
+        date: targetDate,
+      ); // <--- KIRIM TANGGAL
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Berhasil membuat $routesCreated rute pengiriman otomatis untuk ${DateFormat('d MMM').format(targetDate)}!",
+          ),
+          backgroundColor: Colors.green,
+          duration: const Duration(seconds: 4),
+        ),
+      );
+      setState(() {}); // Refresh list rute
+    } catch (e) {
+      // <--- TAMBAHKAN 'e' DI SINI
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Gagal Generate Rute: ${e.toString().replaceAll('Exception:', '')}",
+          ),
+          backgroundColor: Colors.red,
+          duration: const Duration(seconds: 7),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isGenerating = false);
+    }
+  }
   // --- END HELPER METHODS ---
 
   @override
@@ -415,7 +528,6 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                   )
                 : // END _isGenerating
                   Row(
-                    // <<< FIX: WRAP ICON BUTTONS IN A ROW IF _isGenerating IS FALSE
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // 1. CALENDAR ICON (Routes/Jadwal Rutin Calendar)
@@ -430,6 +542,16 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                             ),
                           );
                         },
+                      ),
+                      // [BARU] TOMBOL GENERATE OTOMATIS (Di sebelah kanan)
+                      IconButton(
+                        icon: const Icon(
+                          Icons.auto_awesome,
+                          color: Colors.amber,
+                        ), // Icon yang menarik
+                        tooltip: "Generate Rute Otomatis Hari Ini",
+                        onPressed:
+                            _generateRoutesForToday, // Panggil fungsi baru
                       ),
                     ],
                   ),
@@ -1034,7 +1156,8 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                       ),
                       // [UPDATE SUBTITLE] Tampilkan sekolah, kelas, email, dan nomor telepon
                       subtitle: Text(
-                        "${teacher.schoolName} - Kelas ${teacher.className}\n${teacher.email}\nTelp: ${teacher.phoneNumber ?? '-'}",
+                        // [FIX 1]: Tampilkan jumlah penerima kelas
+                        "${teacher.schoolName} - Kelas ${teacher.className} (${teacher.studentCountClass} Siswa)\n${teacher.email}\nTelp: ${teacher.phoneNumber ?? '-'}",
                         style: const TextStyle(fontSize: 12),
                       ),
                       isThreeLine: true,
@@ -1053,8 +1176,9 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
                                 'schoolId': teacher.schoolId,
                                 'className': teacher.className,
                                 'phoneNumber': teacher.phoneNumber,
-                                'schoolName': teacher
-                                    .schoolName, // <--- KRITIS: TAMBAH INI
+                                'schoolName': teacher.schoolName,
+                                // [FIX 2]: Tambahkan data kuota kelas ke initialData
+                                'studentCountClass': teacher.studentCountClass,
                               },
                             ),
                           ), // DELETE Button (UC32)
@@ -1076,120 +1200,254 @@ class _DashboardAdminScreenState extends State<DashboardAdminScreen> {
     );
   }
 
+  // Helper untuk format waktu
+  String _formatTime(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return "--:--";
+    try {
+      return timeStr.substring(0, 5);
+    } catch (_) {
+      return timeStr;
+    }
+  }
+
   Widget _buildRouteList() {
-    return FutureBuilder<List<DeliveryRoute>>(
-      future: _routeService.getMyRoutes(),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting)
-          return const Center(child: CircularProgressIndicator());
-        final routes = snapshot.data ?? [];
-        if (routes.isEmpty)
-          return _buildEmptyState("Belum ada jadwal rute.", Icons.map_outlined);
-        return ListView.builder(
-          padding: const EdgeInsets.all(12),
-          itemCount: routes.length,
-          itemBuilder: (context, index) {
-            final route = routes[index];
-            final date = DateTime.tryParse(route.date) ?? DateTime.now();
-            String dateStr = route.date;
-            try {
-              dateStr = DateFormat('EEEE, d MMM yyyy', 'id_ID').format(date);
-            } catch (_) {}
-            final isPending = route.status == 'pending'; // Check the status
-            return Card(
-              elevation: 3,
-              margin: const EdgeInsets.only(bottom: 12),
-              child: InkWell(
-                // [AKSI] Tap opens the Edit/Detail screen
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => EditRouteScreen(route: route),
-                    ), // <<< PENTING: PANGGIL EDIT ROUTE
-                  ).then((val) {
-                    setState(() {});
-                  });
-                },
-                child: Padding(
-                  padding: const EdgeInsets.all(12),
-                  child: Column(
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            dateStr,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16,
-                            ),
-                          ),
-                          // Status Text
-                          Text(
-                            route.status.toUpperCase(),
-                            style: TextStyle(
-                              color: _getStatusColor(route.status),
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      const Divider(),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment
-                            .spaceBetween, // Added this for spacing
-                        children: [
-                          // Left Side: Courier & Vehicle Info
-                          Expanded(
-                            child: Row(
+    final List<DropdownMenuItem<String?>> vehicleItems = [
+      const DropdownMenuItem(value: 'all', child: Text("Semua Armada")),
+      ..._allVehicles
+          .map(
+            (vehicle) => DropdownMenuItem(
+              value: vehicle.id,
+              child: Text(vehicle.plateNumber),
+            ),
+          )
+          .toList(),
+    ];
+
+    return Column(
+      children: [
+        // --- FILTER SECTION ---
+        Padding(
+          padding: const EdgeInsets.all(8.0),
+          child: Row(
+            children: [
+              // Filter Tanggal
+              Expanded(
+                child: ListTile(
+                  leading: const Icon(
+                    Icons.calendar_today,
+                    color: Colors.indigo,
+                  ),
+                  title: Text(
+                    DateFormat(
+                      'd MMMM yyyy',
+                      'id_ID',
+                    ).format(_selectedRouteFilterDate),
+                  ),
+                  onTap: () async {
+                    final DateTime? picked = await showDatePicker(
+                      context: context,
+                      initialDate: _selectedRouteFilterDate,
+                      firstDate: DateTime(2024),
+                      lastDate: DateTime(2030),
+                    );
+                    if (picked != null) {
+                      setState(() {
+                        _selectedRouteFilterDate = picked;
+                      });
+                    }
+                  },
+                ),
+              ),
+              // Filter Mobil
+              Expanded(
+                child: DropdownButtonFormField<String?>(
+                  value: _selectedRouteFilterVehicleId,
+                  decoration: const InputDecoration(labelText: "Filter Mobil"),
+                  items: vehicleItems,
+                  onChanged: (String? newValue) {
+                    setState(() {
+                      _selectedRouteFilterVehicleId = newValue;
+                    });
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+
+        // --- LIST RUTE HASIL FILTER ---
+        Expanded(
+          child: FutureBuilder<List<DeliveryRoute>>(
+            future: _routeService.getMyRoutes(
+              date: _selectedRouteFilterDate,
+              vehicleId: _selectedRouteFilterVehicleId,
+            ),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting)
+                return const Center(child: CircularProgressIndicator());
+
+              final routes = snapshot.data ?? [];
+              if (routes.isEmpty)
+                return _buildEmptyState(
+                  "Tidak ada rute yang cocok dengan filter.",
+                  Icons.map_outlined,
+                );
+
+              return ListView.builder(
+                padding: const EdgeInsets.all(12),
+                itemCount: routes.length,
+                itemBuilder: (context, index) {
+                  final route = routes[index];
+                  final status = route.status;
+                  final date = DateTime.tryParse(route.date) ?? DateTime.now();
+                  final dateStr = DateFormat('dd MMM yy', 'id_ID').format(date);
+                  final isPending = status == 'pending';
+
+                  Color statusColor = _getStatusColor(status);
+
+                  // **INNER FUTURE BUILDER untuk mendapatkan Tujuan Pertama**
+                  return FutureBuilder<Map<String, dynamic>?>(
+                    future: _routeService.getNextPendingStop(route.id),
+                    builder: (context, stopSnapshot) {
+                      final nextStop = stopSnapshot.data;
+
+                      String tujuanInfo = "Semua Stop Selesai";
+                      String jamInfo = _formatTime(
+                        route.departureTime,
+                      ); // Default: Jam Berangkat
+
+                      if (route.status == 'completed' ||
+                          route.status == 'received' ||
+                          route.status == 'issue_reported') {
+                        tujuanInfo = "Rute Selesai Total";
+                        jamInfo = _formatTime(route.departureTime);
+                      } else if (nextStop != null &&
+                          (route.status == 'active' ||
+                              route.status == 'pending')) {
+                        tujuanInfo = "Tujuan 1: ${nextStop['schools']['name']}";
+                        jamInfo = _formatTime(
+                          nextStop['estimated_arrival_time'],
+                        ); // ETA ke Stop 1
+                      }
+
+                      return Card(
+                        elevation: 3,
+                        color:
+                            status == 'received' || status == 'issue_reported'
+                            ? Colors.green[50]
+                            : Colors.grey[100],
+                        margin: const EdgeInsets.only(bottom: 12),
+                        child: InkWell(
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => EditRouteScreen(route: route),
+                              ),
+                            ).then((val) {
+                              if (val == true) setState(() {});
+                            });
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(
-                                  Icons.person,
-                                  size: 16,
-                                  color: Colors.grey,
+                                // BARIS 1: TANGGAL & STATUS
+                                Row(
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      "$dateStr - ${route.vehiclePlate ?? '-'}",
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 16,
+                                      ),
+                                    ),
+                                    Text(
+                                      route.status.toUpperCase(),
+                                      style: TextStyle(
+                                        color: statusColor,
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 5),
+                                const Divider(height: 10),
+
+                                // BARIS 2: KURIR & TUJUAN
                                 Text(
-                                  route.courierName ?? "Kurir Hapus",
+                                  "Kurir: ${route.courierName ?? 'N/A'}",
                                   style: const TextStyle(fontSize: 14),
                                 ),
-                                const SizedBox(width: 15),
-                                const Icon(
-                                  Icons.local_shipping,
-                                  size: 16,
-                                  color: Colors.grey,
+                                const SizedBox(height: 5),
+
+                                // BARIS 3: TUJUAN DAN JAM KRITIS
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.location_on,
+                                      size: 16,
+                                      color: statusColor,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Expanded(
+                                      child: Text(
+                                        tujuanInfo,
+                                        style: const TextStyle(
+                                          fontSize: 14,
+                                          fontWeight: FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+
+                                    const SizedBox(width: 10),
+                                    Icon(
+                                      Icons.access_time,
+                                      size: 16,
+                                      color: statusColor,
+                                    ),
+                                    const SizedBox(width: 5),
+                                    Text(
+                                      jamInfo,
+                                      style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: 5),
-                                Text(
-                                  route.vehiclePlate ?? "-",
-                                  style: const TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w500,
+
+                                // Tombol Hapus (Hanya muncul jika Pending)
+                                if (isPending)
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: IconButton(
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                        size: 20,
+                                      ),
+                                      tooltip: "Hapus Rute",
+                                      onPressed: () => _deleteRoute(route.id),
+                                    ),
                                   ),
-                                ),
                               ],
                             ),
                           ),
-                          // Right Side: DELETE BUTTON
-                          if (isPending)
-                            IconButton(
-                              icon: const Icon(Icons.delete, color: Colors.red),
-                              tooltip: "Hapus Rute",
-                              onPressed: () => _deleteRoute(
-                                route.id,
-                              ), // <-- Panggil fungsi delete
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
+                        ),
+                      );
+                    },
+                  );
+                },
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

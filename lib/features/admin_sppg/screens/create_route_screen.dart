@@ -132,21 +132,20 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
 
     // Perhitungan Bottleneck Menu (Menu yang butuh waktu masak terlama)
     try {
-      final result = await _routeService.getBottleneckMenuPublic(
+      // >>> UBAH: Panggil service untuk menganalisis Menu Set yang terlibat <<<
+      final result = await _routeService.getBottleneckMenuSetInfo(
         _selectedSchools,
       );
 
-      final menusData = result['menusData'] as List<Map<String, dynamic>>;
-      final menuNames = menusData
-          .map((m) => m['name'] as String)
-          .toSet()
-          .toList();
+      // Hasilnya sekarang adalah: {duration: int, menuIds: List<String>, menuSetNames: List<String>}
 
       if (!mounted) return;
       setState(() {
         _bottleneckDuration = result['duration'] as int;
         _requiredMenuIds = result['menuIds'] as List<String>;
-        _requiredMenuNames = menuNames;
+        _requiredMenuNames =
+            result['menuSetNames']
+                as List<String>; // <-- Ini adalah nama Set yang terlibat
       });
     } catch (e) {
       if (mounted) {
@@ -175,15 +174,32 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
       return;
     }
 
+    // >>> KRITIS: Tambahkan cek kapasitas total! <<<
+    final totalPortions = _selectedSchools.fold(
+      0,
+      (sum, s) => sum + s.studentCount,
+    );
+    if (totalPortions > _selectedVehicle!.capacityLimit) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            "Total porsi (${totalPortions}) melebihi kapasitas mobil (${_selectedVehicle!.capacityLimit}). Rute akan dibuat Multi-Trip!",
+          ),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      // Lanjutkan proses, tapi service harus menangani Multi-Trip
+    }
+
     // WARNING: Logika OSRM dan Insert Route ada di Service!
     setState(() => _isSubmitting = true);
     try {
+      // Menggunakan fungsi yang sama (asumsi service yang mengontrol multi-trip)
       await _routeService.createBatchRoutes(
         vehicleIds: [_selectedVehicle!.id], // Hanya 1 mobil
         courierId:
             _selectedVehicle!.courierProfileId ??
-            await _routeService
-                .getFirstCourierId(), // <--- FIX: Panggil PUBLIC METHOD
+            await _routeService.getFirstCourierId(),
         menuIds: _requiredMenuIds,
         date: _selectedDate,
         selectedSchools: _selectedSchools,
@@ -193,7 +209,9 @@ class _CreateRouteScreenState extends State<CreateRouteScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Rute Manual Berhasil Dibuat dan Di-Optimasi!"),
+          content: Text(
+            "Rute Manual Berhasil Dibuat dan Di-Optimasi (Multi-Trip jika perlu)!",
+          ),
           backgroundColor: Colors.green,
         ),
       );

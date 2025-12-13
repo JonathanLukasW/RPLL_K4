@@ -2,7 +2,7 @@
 -- PostgreSQL database dump
 --
 
-\restrict IQqMjM0Z93D8dM9W6K8bbFlVo7hkR3EB3U1v42QlSQOZXpWNBSUat0n18WLDwUC
+\restrict dxsaFSA19ePnYeLiVSFnUYc7pifGxPjfXpdR0poooBPbn1HRdaA0gBCMUgdLj2Z
 
 -- Dumped from database version 17.6
 -- Dumped by pg_dump version 18.1 (Ubuntu 18.1-1.pgdg24.04+2)
@@ -809,6 +809,78 @@ BEGIN
         AND cr.issue_type IS NOT NULL
 
     ORDER BY created_at DESC;
+END;
+$$;
+
+
+--
+-- Name: get_sppg_all_complaints(uuid, date, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.get_sppg_all_complaints(sppg_id_input uuid, date_filter_input date DEFAULT NULL::date, school_id_filter_input uuid DEFAULT NULL::uuid) RETURNS TABLE(id uuid, reporter_name text, school_name text, issue_type text, notes text, admin_response text, created_at timestamp with time zone, reporter_role text, stop_id uuid, proof_photo_url text, received_qty integer)
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+
+RETURN QUERY
+-- 1. Complaints dari Koordinator (via delivery_stops)
+SELECT
+    ds.id,
+    ds.recipient_name AS reporter_name,
+    s.name AS school_name,
+    'Penerimaan Bermasalah' AS issue_type,
+    ds.issue_details::text AS notes,        
+    ds.admin_response,
+    ds.completion_time AS created_at,
+    'koordinator' AS reporter_role,
+    NULL::uuid AS stop_id,
+    ds.proof_photo_url,  -- URL Foto Koordinator
+    ds.received_qty      -- Kuantitas Diterima Koordinator
+FROM
+    public.delivery_stops ds
+JOIN
+    public.delivery_routes dr ON ds.route_id = dr.id
+JOIN
+    public.schools s ON ds.school_id = s.id
+WHERE
+    dr.sppg_id = sppg_id_input
+    AND ds.status = 'issue_reported'
+    -- APPLY FILTER TANGGAL (Jika ada input)
+    AND (date_filter_input IS NULL OR ds.completion_time::date = date_filter_input)
+    -- APPLY FILTER SEKOLAH (Jika ada input)
+    AND (school_id_filter_input IS NULL OR ds.school_id = school_id_filter_input)
+    
+UNION ALL
+
+-- 2. Complaints dari Wali Kelas (via class_receptions)
+SELECT
+    cr.id,
+    p.full_name AS reporter_name,
+    s.name AS school_name,
+    'Kualitas Makanan' AS issue_type,
+    cr.notes AS notes,
+    cr.admin_response,
+    cr.created_at,
+    'walikelas' AS reporter_role,
+    cr.stop_id,
+    cr.proof_photo_url,  -- URL Foto Wali Kelas
+    cr.qty_received      -- Kuantitas Diterima Wali Kelas
+FROM
+    public.class_receptions cr
+JOIN
+    public.profiles p ON cr.teacher_id = p.id
+JOIN
+    public.delivery_stops ds ON cr.stop_id = ds.id
+JOIN
+    public.schools s ON ds.school_id = s.id
+WHERE
+    p.sppg_id = sppg_id_input
+    AND cr.issue_type IS NOT NULL
+    -- APPLY FILTER TANGGAL (Jika ada input)
+    AND (date_filter_input IS NULL OR cr.created_at::date = date_filter_input)
+    AND (school_id_filter_input IS NULL OR ds.school_id = school_id_filter_input)
+
+ORDER BY created_at DESC;
 END;
 $$;
 
@@ -3067,14 +3139,37 @@ CREATE TABLE public.delivery_stops (
     arrival_time timestamp with time zone,
     completion_time timestamp with time zone,
     received_qty integer DEFAULT 0,
-    reception_notes text,
+    issue_details jsonb,
     proof_photo_url text,
     recipient_name text,
     admin_response text,
     resolved_at timestamp with time zone,
     courier_proof_photo_url text,
     estimated_arrival_time time without time zone,
+    koordinator_id uuid,
     CONSTRAINT delivery_stops_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'arrived'::text, 'completed'::text, 'received'::text, 'issue_reported'::text])))
+);
+
+
+--
+-- Name: menu_sets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.menu_sets (
+    id uuid DEFAULT extensions.uuid_generate_v4() NOT NULL,
+    sppg_id uuid,
+    set_name text NOT NULL,
+    karbo_id uuid,
+    protein_id uuid,
+    sayur_id uuid,
+    buah_id uuid,
+    nabati_id uuid,
+    pelengkap_id uuid,
+    created_at timestamp with time zone DEFAULT now(),
+    total_energy integer DEFAULT 0,
+    total_protein double precision DEFAULT 0,
+    total_fat double precision DEFAULT 0,
+    total_carbs double precision DEFAULT 0
 );
 
 
@@ -3089,7 +3184,11 @@ CREATE TABLE public.menus (
     category text,
     cooking_duration_minutes integer DEFAULT 0,
     created_at timestamp with time zone DEFAULT now(),
-    max_consume_minutes integer DEFAULT 120
+    max_consume_minutes integer DEFAULT 120,
+    energy integer DEFAULT 0,
+    protein double precision DEFAULT 0,
+    fat double precision DEFAULT 0,
+    carbs double precision DEFAULT 0
 );
 
 
@@ -3143,6 +3242,7 @@ CREATE TABLE public.profiles (
     address text,
     "position" text,
     phone_number text,
+    student_count_class integer DEFAULT 0,
     CONSTRAINT profiles_role_check CHECK ((role = ANY (ARRAY['bgn'::text, 'admin_sppg'::text, 'kurir'::text, 'koordinator'::text, 'walikelas'::text])))
 );
 
@@ -3223,7 +3323,8 @@ CREATE TABLE public.vehicles (
     driver_name text,
     capacity_limit integer DEFAULT 0,
     is_active boolean DEFAULT true,
-    courier_profile_id uuid
+    courier_profile_id uuid,
+    assistant_courier_id uuid
 );
 
 
@@ -3245,90 +3346,106 @@ PARTITION BY RANGE (inserted_at);
 
 
 --
--- Name: messages_2025_12_02; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2025_12_02 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- Name: messages_2025_12_03; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2025_12_03 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- Name: messages_2025_12_04; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2025_12_04 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- Name: messages_2025_12_05; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2025_12_05 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
--- Name: messages_2025_12_06; Type: TABLE; Schema: realtime; Owner: -
---
-
-CREATE TABLE realtime.messages_2025_12_06 (
-    topic text NOT NULL,
-    extension text NOT NULL,
-    payload jsonb,
-    event text,
-    private boolean DEFAULT false,
-    updated_at timestamp without time zone DEFAULT now() NOT NULL,
-    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
-    id uuid DEFAULT gen_random_uuid() NOT NULL
-);
-
-
---
 -- Name: messages_2025_12_07; Type: TABLE; Schema: realtime; Owner: -
 --
 
 CREATE TABLE realtime.messages_2025_12_07 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_08; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_08 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_09; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_09 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_10; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_10 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_11; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_11 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_12; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_12 (
+    topic text NOT NULL,
+    extension text NOT NULL,
+    payload jsonb,
+    event text,
+    private boolean DEFAULT false,
+    updated_at timestamp without time zone DEFAULT now() NOT NULL,
+    inserted_at timestamp without time zone DEFAULT now() NOT NULL,
+    id uuid DEFAULT gen_random_uuid() NOT NULL
+);
+
+
+--
+-- Name: messages_2025_12_13; Type: TABLE; Schema: realtime; Owner: -
+--
+
+CREATE TABLE realtime.messages_2025_12_13 (
     topic text NOT NULL,
     extension text NOT NULL,
     payload jsonb,
@@ -3538,45 +3655,52 @@ CREATE TABLE storage.vector_indexes (
 
 
 --
--- Name: messages_2025_12_02; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_02 FOR VALUES FROM ('2025-12-02 00:00:00') TO ('2025-12-03 00:00:00');
-
-
---
--- Name: messages_2025_12_03; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_03 FOR VALUES FROM ('2025-12-03 00:00:00') TO ('2025-12-04 00:00:00');
-
-
---
--- Name: messages_2025_12_04; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_04 FOR VALUES FROM ('2025-12-04 00:00:00') TO ('2025-12-05 00:00:00');
-
-
---
--- Name: messages_2025_12_05; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_05 FOR VALUES FROM ('2025-12-05 00:00:00') TO ('2025-12-06 00:00:00');
-
-
---
--- Name: messages_2025_12_06; Type: TABLE ATTACH; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_06 FOR VALUES FROM ('2025-12-06 00:00:00') TO ('2025-12-07 00:00:00');
-
-
---
 -- Name: messages_2025_12_07; Type: TABLE ATTACH; Schema: realtime; Owner: -
 --
 
 ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_07 FOR VALUES FROM ('2025-12-07 00:00:00') TO ('2025-12-08 00:00:00');
+
+
+--
+-- Name: messages_2025_12_08; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_08 FOR VALUES FROM ('2025-12-08 00:00:00') TO ('2025-12-09 00:00:00');
+
+
+--
+-- Name: messages_2025_12_09; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_09 FOR VALUES FROM ('2025-12-09 00:00:00') TO ('2025-12-10 00:00:00');
+
+
+--
+-- Name: messages_2025_12_10; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_10 FOR VALUES FROM ('2025-12-10 00:00:00') TO ('2025-12-11 00:00:00');
+
+
+--
+-- Name: messages_2025_12_11; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_11 FOR VALUES FROM ('2025-12-11 00:00:00') TO ('2025-12-12 00:00:00');
+
+
+--
+-- Name: messages_2025_12_12; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_12 FOR VALUES FROM ('2025-12-12 00:00:00') TO ('2025-12-13 00:00:00');
+
+
+--
+-- Name: messages_2025_12_13; Type: TABLE ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages ATTACH PARTITION realtime.messages_2025_12_13 FOR VALUES FROM ('2025-12-13 00:00:00') TO ('2025-12-14 00:00:00');
 
 
 --
@@ -3618,7 +3742,6 @@ c3c1040b-35a3-4fbf-98af-add97db5d201	87c98256-6c40-4fe4-a83c-67f11730b937	8a6534
 
 COPY auth.identities (provider_id, user_id, identity_data, provider, last_sign_in_at, created_at, updated_at, id) FROM stdin;
 87c98256-6c40-4fe4-a83c-67f11730b937	87c98256-6c40-4fe4-a83c-67f11730b937	{"sub": "87c98256-6c40-4fe4-a83c-67f11730b937", "email": "pengawasbgn@gmail.com", "email_verified": false, "phone_verified": false}	email	2025-11-19 06:22:50.74942+00	2025-11-19 06:22:50.751167+00	2025-11-19 06:22:50.751167+00	3115d2fd-2388-47fa-9c27-bbd09ce14d52
-575538d0-ec9f-4ade-ac19-8c17f1453900	575538d0-ec9f-4ade-ac19-8c17f1453900	{"sub": "575538d0-ec9f-4ade-ac19-8c17f1453900", "email": "sukajaya@gmail.com", "full_name": "Admin SPPG Sukajaya Lembang 1", "email_verified": false, "phone_verified": false}	email	2025-11-19 10:53:10.927946+00	2025-11-19 10:53:10.927999+00	2025-11-19 10:53:10.927999+00	e32b86aa-eda3-4e44-8b56-5ef97d13f50f
 4f8f6708-17d2-4df7-a0fd-8046df660ca4	4f8f6708-17d2-4df7-a0fd-8046df660ca4	{"sub": "4f8f6708-17d2-4df7-a0fd-8046df660ca4", "email": "rezkysukajaya@gmail.com", "full_name": "Rezky Asmir", "email_verified": false, "phone_verified": false}	email	2025-12-01 04:16:15.134379+00	2025-12-01 04:16:15.134438+00	2025-12-01 04:16:15.134438+00	3ab0e794-0015-4a7b-a39e-e2ebb9dfd6af
 fbc43a0a-9cf3-47e3-be55-d8c4456582dd	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	{"sub": "fbc43a0a-9cf3-47e3-be55-d8c4456582dd", "email": "amandakayuambon@gmail.com", "full_name": "Amanda Juliet", "email_verified": false, "phone_verified": false}	email	2025-12-01 04:24:16.930022+00	2025-12-01 04:24:16.930071+00	2025-12-01 04:24:16.930071+00	6ef38ace-a583-45a9-8a84-5b950328f41d
 854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	{"sub": "854b3bf3-77a5-46ae-8c00-d2ab86f78cbb", "email": "lewis@gmail.com", "full_name": "Lewis Hamilton", "email_verified": false, "phone_verified": false}	email	2025-12-01 04:59:31.407903+00	2025-12-01 04:59:31.407953+00	2025-12-01 04:59:31.407953+00	9ee67812-9920-4e2b-a8c1-ec64535a51ee
@@ -3629,12 +3752,12 @@ fbc43a0a-9cf3-47e3-be55-d8c4456582dd	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	{"sub"
 31c9657e-17b6-4f66-b3a3-d623c78dbdac	31c9657e-17b6-4f66-b3a3-d623c78dbdac	{"sub": "31c9657e-17b6-4f66-b3a3-d623c78dbdac", "email": "deffapgri@gmail.com", "full_name": "Deffa Momo", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:02:08.506131+00	2025-12-01 05:02:08.506205+00	2025-12-01 05:02:08.506205+00	1c38d9ff-0648-4343-af18-97596caf0f9a
 e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	{"sub": "e590dca8-4e0b-4aeb-9021-fe5ac9157f3f", "email": "khaerulpancasila@gmail.com", "full_name": "Khaerul Gacor", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:03:17.519959+00	2025-12-01 05:03:17.520004+00	2025-12-01 05:03:17.520004+00	3304bceb-14e7-40a6-9e43-9311517a705f
 a1c4810c-8829-4f1d-a1c3-691c8c573c29	a1c4810c-8829-4f1d-a1c3-691c8c573c29	{"sub": "a1c4810c-8829-4f1d-a1c3-691c8c573c29", "email": "smpn6_7a@gmail.com", "full_name": "Siti Nurhaliza", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:06:38.031919+00	2025-12-01 05:06:38.031968+00	2025-12-01 05:06:38.031968+00	ed50fc41-b539-42e1-aab0-2005b756b399
-3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	{"sub": "3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf", "email": "smpn6_7b@gmail.com", "full_name": "Eiza Sahputra", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:06:58.605146+00	2025-12-01 05:06:58.605204+00	2025-12-01 05:06:58.605204+00	b8da789a-b957-4e3e-ada3-f7e9094020e5
 56624f75-13c4-4487-ae0f-87f4f9115a42	56624f75-13c4-4487-ae0f-87f4f9115a42	{"sub": "56624f75-13c4-4487-ae0f-87f4f9115a42", "email": "smpn6_8a@gmail.com", "full_name": "William Nicole", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:07:24.164707+00	2025-12-01 05:07:24.164756+00	2025-12-01 05:07:24.164756+00	423d567b-53d9-49c2-b518-6a37633cbc58
-7d65be34-1117-4e69-a6c5-cc3866400df5	7d65be34-1117-4e69-a6c5-cc3866400df5	{"sub": "7d65be34-1117-4e69-a6c5-cc3866400df5", "email": "smpn6_8b@gmail.com", "full_name": "Kevin Just", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:08:01.011466+00	2025-12-01 05:08:01.011529+00	2025-12-01 05:08:01.011529+00	45752a87-d08e-4ec6-85e5-3dc1dfca2983
 df5a3994-22e3-4049-bd49-4a02a52828e6	df5a3994-22e3-4049-bd49-4a02a52828e6	{"sub": "df5a3994-22e3-4049-bd49-4a02a52828e6", "email": "aleykaryawangi@gmail.com", "full_name": "Aley Tirta", "email_verified": false, "phone_verified": false}	email	2025-12-01 05:19:18.055032+00	2025-12-01 05:19:18.05508+00	2025-12-01 05:19:18.05508+00	12c5c868-155a-4541-b069-dda7eae28728
 c9e5376f-6a51-46f4-bd7a-7599c4a86595	c9e5376f-6a51-46f4-bd7a-7599c4a86595	{"sub": "c9e5376f-6a51-46f4-bd7a-7599c4a86595", "email": "binawisata_11a@gmail.com", "full_name": "Jeremy Thomas Alva Edison", "email_verified": false, "phone_verified": false}	email	2025-12-03 04:13:57.936401+00	2025-12-03 04:13:57.936452+00	2025-12-03 04:13:57.936452+00	ce491729-7eb5-4c60-8578-b83e0e12dfe6
 9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	{"sub": "9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3", "email": "islamal_12a@gmail.com", "full_name": "Yogi Wisata", "email_verified": false, "phone_verified": false}	email	2025-12-09 04:20:20.739615+00	2025-12-09 04:20:20.739668+00	2025-12-09 04:20:20.739668+00	a26295ea-9999-4d62-a3c4-b45e7e44d6ed
+f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	{"sub": "f58ca1d9-1e13-4725-a8b9-a5c8d8456de0", "email": "george@gmail.com", "full_name": "George Russel", "email_verified": false, "phone_verified": false}	email	2025-12-09 07:35:39.661633+00	2025-12-09 07:35:39.662317+00	2025-12-09 07:35:39.662317+00	af6b8af9-b377-429a-b534-ce331583670c
+dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	{"sub": "dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446", "email": "leclerc@gmail.com", "full_name": "Charles Leclerc", "email_verified": false, "phone_verified": false}	email	2025-12-09 07:36:02.455119+00	2025-12-09 07:36:02.456287+00	2025-12-09 07:36:02.456287+00	d1d7d865-c011-4c71-866e-ec1ff911e890
 \.
 
 
@@ -3651,14 +3774,15 @@ COPY auth.instances (id, uuid, raw_base_config, created_at, updated_at) FROM std
 --
 
 COPY auth.mfa_amr_claims (session_id, created_at, updated_at, authentication_method, id) FROM stdin;
+05800afe-b457-422f-bf44-eaadd947a8d3	2025-12-10 15:00:32.644976+00	2025-12-10 15:00:32.644976+00	password	b9fcb6a2-80ad-419d-9156-48ac8e5fbb60
 7bc55c61-5a14-4c6b-8745-4a6937ec5b05	2025-12-01 05:19:18.070887+00	2025-12-01 05:19:18.070887+00	password	3b8c7da3-1c9e-4746-97fe-d4c7ffc3889c
 1a6835eb-ea88-4b5d-87a4-07367cd00081	2025-12-01 05:19:28.259147+00	2025-12-01 05:19:28.259147+00	password	b74fa6e4-0b6f-496a-a7ec-021dde388bc3
 ee41c673-2116-40d1-b628-94bea79ea81c	2025-12-01 22:47:57.205316+00	2025-12-01 22:47:57.205316+00	password	0efd2721-255e-4f7c-8d13-1d047d43e6c0
+d00ae7b2-fa3f-49b3-85f5-586bf918f813	2025-12-10 15:14:32.624559+00	2025-12-10 15:14:32.624559+00	password	90ca668b-c897-4bf5-8d21-90ba959597f3
 fa5eeb81-b4dc-40d2-969d-33068dc5b31f	2025-12-01 22:51:45.016016+00	2025-12-01 22:51:45.016016+00	password	6c5c6acc-58db-49f8-a491-bb8cffd63e1f
-7f4bc089-e09c-42a1-bd7a-63b5060585bf	2025-11-27 05:26:22.40044+00	2025-11-27 05:26:22.40044+00	password	ea0e58df-cf52-4be3-a749-249ddd1d532a
-ef35b9b2-5826-4bc3-a2a1-d91591f0b813	2025-11-27 06:51:48.688753+00	2025-11-27 06:51:48.688753+00	password	1d0c0bda-093f-497c-ba24-e51e75268b04
-f8048689-2a7e-44e1-b635-d3bad4ccfe36	2025-11-27 07:25:32.869028+00	2025-11-27 07:25:32.869028+00	password	13ea5a18-4482-41cc-8480-b8aba7780f79
-3967c48a-2884-4bf8-8a56-67c4f2928431	2025-11-27 07:33:45.684797+00	2025-11-27 07:33:45.684797+00	password	27c5780b-63c3-48a0-97ee-0a35681975fb
+f9480e33-e58f-4cb0-b32a-e4b1a6b7c0ca	2025-12-10 15:36:47.812095+00	2025-12-10 15:36:47.812095+00	password	da6d1512-f0e8-4207-a19c-a07cb9f1ebc0
+2f597856-2e00-4bf6-a716-fae165d33a22	2025-12-10 15:52:54.459417+00	2025-12-10 15:52:54.459417+00	password	5a2ac8fc-b5f7-47dc-8b4d-932d1353515a
+a5350822-6d17-4455-baab-070f8fa53ef4	2025-12-10 16:05:22.499828+00	2025-12-10 16:05:22.499828+00	password	a5e75d0c-3869-4133-92a9-5d6a3466a3a0
 5fc54002-865a-4828-8ee8-ce7bc437aad7	2025-12-01 23:03:44.273873+00	2025-12-01 23:03:44.273873+00	password	3b3f2bfa-7aac-4e21-9cbb-a5dd93075de9
 4585e0a2-1ded-45cb-9e67-fe3af0f0f909	2025-12-02 05:41:48.624788+00	2025-12-02 05:41:48.624788+00	password	1b8025a5-7a00-4308-ad19-f4aea4296d84
 a08921c7-2d68-4ad8-bfa3-946a8ba93a22	2025-12-04 06:36:40.911924+00	2025-12-04 06:36:40.911924+00	password	8592d7e9-0d37-42dc-a32f-3d92be931f49
@@ -3666,20 +3790,13 @@ ebd26c52-6fcb-44b7-bf5e-1f5c2f5eb62f	2025-12-01 11:51:12.168859+00	2025-12-01 11
 aef7a8fb-0a3c-446e-a377-eac793384ca7	2025-12-01 23:07:43.274719+00	2025-12-01 23:07:43.274719+00	password	b1f55031-ce2f-4735-bae4-7fcac60b3b23
 647034fc-8606-4010-b39a-7591b93896c4	2025-12-03 07:15:23.310949+00	2025-12-03 07:15:23.310949+00	password	385cd41e-cb23-49a4-b9d7-faa118f539eb
 e44372af-21e9-4d18-a64d-b8fce3553c72	2025-12-04 06:44:10.212701+00	2025-12-04 06:44:10.212701+00	password	ad981aab-a09f-43e9-bc9a-cb91b7f9cc78
-96938d54-bba1-4521-a580-6955e6a08bd6	2025-11-30 11:35:11.68447+00	2025-11-30 11:35:11.68447+00	password	bd2863b7-04a5-4ce7-9acb-3351226660d6
 fbdf825c-916a-42ed-8d49-49630604520d	2025-12-01 11:55:33.33383+00	2025-12-01 11:55:33.33383+00	password	eb4734b9-60f2-42d8-b8de-c629dbf1aeac
 fe574db9-8589-4ed8-8093-7cf36fdaa183	2025-12-01 12:10:01.830569+00	2025-12-01 12:10:01.830569+00	password	2946db46-1f0e-40d2-90e5-9ff438b31e6e
-49b43e3f-c369-409c-8860-e979f6949f3f	2025-11-30 12:28:03.925034+00	2025-11-30 12:28:03.925034+00	password	20b6a405-daa7-429c-8533-2c8ed9c3348d
-9879ad54-515e-4f0f-a913-fa49ce72a002	2025-11-30 12:43:48.377565+00	2025-11-30 12:43:48.377565+00	password	6a70fb5e-7934-494c-9f58-c330cf4f5c10
-e078405c-e3f0-4290-924a-5dca06358208	2025-11-30 13:07:47.947779+00	2025-11-30 13:07:47.947779+00	password	87c3f085-83e3-4043-a6ab-26619c5dd584
 f28cd1d0-d896-4e02-af52-1b5db996dde4	2025-12-08 04:09:59.519769+00	2025-12-08 04:09:59.519769+00	password	018caaf1-286b-4946-8685-b157d996e106
-2c6860db-3ff5-47fb-b6e7-045be9d0f79e	2025-11-30 14:06:17.888001+00	2025-11-30 14:06:17.888001+00	password	2a824e26-949f-4220-9717-9df537618ebb
 17c46947-922d-487e-b6f9-4c8e9702a67a	2025-12-01 23:24:11.192049+00	2025-12-01 23:24:11.192049+00	password	81e22f5a-8ae8-4b2a-ab04-d656f0a3e91e
 eb5f7419-05b7-48fc-95d8-30767dc8e1b5	2025-12-02 02:13:38.574891+00	2025-12-02 02:13:38.574891+00	password	59976d4a-9207-4ef6-b86e-f1f8e1f94a5e
-3203841c-da76-4941-85c8-8dde8e0e810c	2025-11-30 14:37:48.971374+00	2025-11-30 14:37:48.971374+00	password	c3e8b69b-6cee-45b4-9048-77f8f166a110
 69ac4771-6b35-41ba-acfc-63a93cc4151e	2025-12-02 02:38:33.341798+00	2025-12-02 02:38:33.341798+00	password	907966ab-f7f8-4e98-a4ba-08ae8a819852
 9072efc6-d072-466b-8d85-962a4a015fb7	2025-12-03 17:01:55.825261+00	2025-12-03 17:01:55.825261+00	password	7115cd77-5878-448e-adf5-669d09009e85
-d06eb9f8-951e-43f2-a3f3-5ec742787e70	2025-11-30 15:29:55.612299+00	2025-11-30 15:29:55.612299+00	password	a5f50836-45a2-48ca-a8fd-1a9208924d38
 5e10f96e-6a26-4b50-8493-faf501cd8d4b	2025-12-02 02:45:51.478831+00	2025-12-02 02:45:51.478831+00	password	354528a7-8c1e-4f4a-9896-3372125ce3c1
 d91bd682-7055-46f8-be57-c8aaeb9d48a9	2025-12-04 02:03:53.177957+00	2025-12-04 02:03:53.177957+00	password	c988e0cc-8a63-4b86-afe0-a7a66deabe1b
 1f6fea4c-9a7d-431f-9c9a-6d1dbb85f90c	2025-12-02 02:50:59.767576+00	2025-12-02 02:50:59.767576+00	password	3ed04340-3243-4005-9e7d-4d70752dc14d
@@ -3692,10 +3809,7 @@ d6200208-0a2e-4eca-9d13-422f292eaf82	2025-12-04 02:39:49.865182+00	2025-12-04 02
 90595848-39ca-49c6-9727-efd9b9321b0e	2025-12-08 14:05:52.124666+00	2025-12-08 14:05:52.124666+00	password	abb81e7e-a678-4cf0-bfb2-2296c7d02f84
 5f6bb49e-4231-466f-94ba-04728b3dfcfe	2025-12-08 14:59:42.451379+00	2025-12-08 14:59:42.451379+00	password	a4e3e8a6-e532-4624-b52f-c4e2897db360
 f1cbfb67-4614-4b39-8210-1d5bfdf3c6c9	2025-12-01 13:07:17.395792+00	2025-12-01 13:07:17.395792+00	password	41495986-4d7f-46c2-aa08-dea3df0f83fb
-8e3c8e6e-7a78-4289-87e3-c2337f11d92b	2025-12-01 13:18:49.588937+00	2025-12-01 13:18:49.588937+00	password	faf579f8-68b6-4024-9109-54878c97ddc4
-70787eac-d9f7-40a7-b378-7f37fce6b9c1	2025-12-01 13:19:03.200528+00	2025-12-01 13:19:03.200528+00	password	8c1e0dba-73bb-4bd8-9825-26080d4cc1ad
 c5959399-e666-4060-a054-dd7bb67a672b	2025-12-04 02:56:50.62097+00	2025-12-04 02:56:50.62097+00	password	7061e86b-871e-4e0c-bd1f-a423ebd5c0e8
-7377664c-2637-4987-9764-2a658cb81df6	2025-11-30 17:00:49.666225+00	2025-11-30 17:00:49.666225+00	password	0f55ddc5-16ea-4a28-9506-3c54720bd3a6
 f78d8113-f2b2-429b-a266-b49f8dfe7858	2025-12-04 03:44:07.139814+00	2025-12-04 03:44:07.139814+00	password	f2810228-b005-48d9-948a-246f8bef833d
 f9cc774d-1d8a-4af6-8fc4-258f49e81836	2025-12-04 04:16:40.716668+00	2025-12-04 04:16:40.716668+00	password	de17c22b-3fff-4a36-a89c-d9ad2e31bff8
 a0dc00a5-e5bb-47d1-ab99-6d9c682a43f8	2025-12-04 04:25:05.123721+00	2025-12-04 04:25:05.123721+00	password	83cdd2f1-6092-4fb9-9b41-5e04a5a67604
@@ -3704,7 +3818,6 @@ d9b33e9a-a86e-4851-969b-6067b8b4b1c4	2025-12-02 03:25:46.790599+00	2025-12-02 03
 8a95a400-52ba-495d-bf88-fcb3aa994e68	2025-11-30 17:43:25.500038+00	2025-11-30 17:43:25.500038+00	password	cea197a8-5de9-4b44-86f1-f54cf3dd36e1
 882d9d38-4eeb-4467-b797-52d3ccd07511	2025-12-04 05:03:18.479364+00	2025-12-04 05:03:18.479364+00	password	ea08c0f4-a53d-4273-b189-9f93aaa2ecee
 48fbb3dd-1656-48f4-838e-d5b7f9dcb998	2025-12-01 14:25:03.501679+00	2025-12-01 14:25:03.501679+00	password	2764add8-dde8-4d4a-b549-0520937f9a20
-1e0e562f-3b8b-4437-8c48-1eeb848bd829	2025-12-01 03:57:01.687469+00	2025-12-01 03:57:01.687469+00	password	67099995-b858-4e4e-b21d-bd1fb0b94580
 f3c64228-ca3b-4174-98c6-fe18a9228ecf	2025-12-01 04:16:15.180431+00	2025-12-01 04:16:15.180431+00	password	7e8afdab-332a-4332-8f30-f6f8aa57eb0f
 60ee6aff-0b31-4cdc-802d-e1477507c498	2025-12-01 15:08:56.452331+00	2025-12-01 15:08:56.452331+00	password	3ab358d5-e036-4c80-ad36-bc862a7dc5c5
 4276400e-90b7-4b2c-9178-7b4e99658949	2025-12-01 04:24:16.942426+00	2025-12-01 04:24:16.942426+00	password	75bcb66c-401d-4309-a5e7-5c0e26e49929
@@ -3719,9 +3832,7 @@ aff3aaaf-c7f1-473d-a6ac-61146d5f8bc9	2025-12-01 05:00:31.210631+00	2025-12-01 05
 2bd5af8f-0d65-4b91-886b-3400148abe89	2025-12-01 05:03:17.549929+00	2025-12-01 05:03:17.549929+00	password	4568a309-0a9f-4fc1-b91d-4f2c2aecae6f
 7da404b9-8cc5-40e8-93fd-9fecd1c71a0b	2025-12-02 03:35:25.193455+00	2025-12-02 03:35:25.193455+00	password	af51e6d8-ea75-41ef-8ab0-f9d1a246ed17
 05c0389f-c05d-4dfb-94c6-84e2d84a0ffd	2025-12-01 05:06:38.043648+00	2025-12-01 05:06:38.043648+00	password	1ccd0664-501c-45af-94ad-e784c71eda3b
-d36b4c66-852b-43fb-875e-5c719eeaa98f	2025-12-01 05:06:58.615163+00	2025-12-01 05:06:58.615163+00	password	681730ee-1855-4c79-b93a-0cbc07eb1c00
 2bca4d67-3a84-4d77-992a-faa60f67099c	2025-12-01 05:07:24.172094+00	2025-12-01 05:07:24.172094+00	password	6496794a-0a77-4393-823c-9ab962f67ab8
-564d8d1c-7d77-4ac1-a8cd-77dea7666340	2025-12-01 05:08:01.01899+00	2025-12-01 05:08:01.01899+00	password	907d7806-76a4-466f-ade7-11cfb125b1e1
 371dc252-30dc-44d5-b788-8927ee893f6f	2025-12-02 03:44:42.765381+00	2025-12-02 03:44:42.765381+00	password	c500fdf1-5661-481d-8b4d-4e178b0eac87
 200ed9c4-daeb-42ab-85f9-6b879d6319fa	2025-12-01 16:33:01.883667+00	2025-12-01 16:33:01.883667+00	password	91dea21a-f746-4198-8ae1-5e1a63f9979f
 dceea802-6e54-406a-9baa-7a864403c941	2025-12-02 03:59:16.096196+00	2025-12-02 03:59:16.096196+00	password	ef557522-8e7f-4dcd-b689-ee4831131ffe
@@ -3756,22 +3867,43 @@ b3bd392d-d2dc-4932-9c7d-61aafa71eda8	2025-12-08 04:53:22.305306+00	2025-12-08 04
 688c7d37-7a68-484d-9571-c229a7361a7b	2025-12-08 14:50:31.744771+00	2025-12-08 14:50:31.744771+00	password	eda9be49-7497-40aa-b435-f12a73e91ad4
 d296edd7-6c8e-4163-8720-91104cb93dcc	2025-12-03 02:58:03.828728+00	2025-12-03 02:58:03.828728+00	password	8ff6ecd6-dd83-4d08-a83d-172727ff36d3
 28d726be-7a14-4db3-bd2a-64910948f3a7	2025-12-09 03:45:20.036746+00	2025-12-09 03:45:20.036746+00	password	707fbcb7-261a-42bb-89d2-1576e9391be5
+4bf9a3da-73c4-4494-b018-99f26a8276ce	2025-12-10 15:18:56.497954+00	2025-12-10 15:18:56.497954+00	password	a208a9d7-c64c-4b94-b1e6-050e973516c9
 c2acfda3-ea27-41ff-8750-0f41b1525471	2025-12-09 03:56:36.749542+00	2025-12-09 03:56:36.749542+00	password	67b42c7d-0310-4036-ac9a-960e306bd612
 5032ad16-f8ff-4daf-ab2c-174a8fbd8c04	2025-12-09 04:12:42.844375+00	2025-12-09 04:12:42.844375+00	password	4651c879-8763-4649-8d7c-c889c5611712
 ea96cc53-c5b6-4744-918f-a22657eb2879	2025-12-09 04:20:20.798544+00	2025-12-09 04:20:20.798544+00	password	2cb94756-86d6-41f3-a642-4d04fad7d29d
 34f9f2f2-3037-43c4-9808-532631095984	2025-12-04 02:17:39.264813+00	2025-12-04 02:17:39.264813+00	password	2c92751b-6259-4e50-a901-486c48b6c7a2
 ad49c2b7-5597-4ddb-93ef-4eb25488c922	2025-12-04 02:28:05.016346+00	2025-12-04 02:28:05.016346+00	password	5d545aa4-a4a3-4999-9365-ca57faba5e37
 91c26bda-2e2e-48d9-b889-34aa5a143d89	2025-12-09 04:21:32.772783+00	2025-12-09 04:21:32.772783+00	password	96789402-b936-4f58-9897-c0a94569053d
+143bf5bc-ecc2-4b80-81dc-4d2099b51b31	2025-12-09 04:30:04.024247+00	2025-12-09 04:30:04.024247+00	password	5c39e3ea-b55f-47d9-aa52-c9e25da06e44
+73ffcc97-1fe9-48ee-aa08-fc91596bf303	2025-12-09 04:45:49.31128+00	2025-12-09 04:45:49.31128+00	password	854a6a8c-9f83-484c-a539-72ef1077eceb
+9b146bfd-78bc-43ad-bbd9-6aa0e24cf141	2025-12-09 07:28:52.558634+00	2025-12-09 07:28:52.558634+00	password	222cbd3b-c862-40d5-8eed-e2f3a1c00d27
+b1174052-f4ec-4ad1-91bb-97e4f69406d4	2025-12-09 07:35:39.717742+00	2025-12-09 07:35:39.717742+00	password	58d8122c-f0e1-440c-918b-e762a95c9ba9
+fedf81b8-f78e-410a-ba69-b96b9c5244d0	2025-12-09 07:36:02.470261+00	2025-12-09 07:36:02.470261+00	password	517e1f5a-3056-4157-be5b-243b8372b274
+023380a6-60c5-4806-80cb-8c4f70c12c38	2025-12-09 07:50:39.121132+00	2025-12-09 07:50:39.121132+00	password	716698d1-0c4b-42ca-a84e-bbc9094968ed
+0a82f94a-ca36-444c-a516-be4d33f6815f	2025-12-10 15:22:16.088293+00	2025-12-10 15:22:16.088293+00	password	34f9cf97-1776-483e-a0a2-ed3b903d497b
+0cd5acdc-9df3-48ab-bff8-3175aa9b5537	2025-12-09 08:09:23.478236+00	2025-12-09 08:09:23.478236+00	password	da5623c7-4f89-4def-8780-f6e662a3c2f4
+bb1f48b1-0d6a-4508-978b-470424f09693	2025-12-09 08:09:38.668488+00	2025-12-09 08:09:38.668488+00	password	86656717-a958-464f-b4d8-01772139a1d2
 ae577d85-d2fc-470f-9112-d96f461d7126	2025-12-04 03:04:10.340082+00	2025-12-04 03:04:10.340082+00	password	9593067c-9c76-47d7-9ddc-2c1309ebd33b
 0d487614-b31a-43c3-bc56-ca6a94267d76	2025-12-03 04:13:57.957667+00	2025-12-03 04:13:57.957667+00	password	230285ff-b2a4-4607-bd94-50f31dd3c953
 53ee4805-44d2-4bce-b4d1-81ad02f149b4	2025-12-03 04:20:32.493561+00	2025-12-03 04:20:32.493561+00	password	01ec6119-0b3c-4c7a-aeec-41dd20bf0ca3
+d37914c4-63ae-4da5-9c06-b1c028dfcdc9	2025-12-10 15:55:34.423461+00	2025-12-10 15:55:34.423461+00	password	7b77d88c-9734-4500-b8a8-642a00931bde
 b0545583-171d-4291-ab26-f7011d8f2f37	2025-12-03 04:33:15.939416+00	2025-12-03 04:33:15.939416+00	password	e56959d2-cf89-46e5-82b4-604a2d72b77d
+3ca5a2c7-6fac-4b57-9719-331ff0cf4788	2025-12-10 16:08:20.229064+00	2025-12-10 16:08:20.229064+00	password	4ce10af1-1249-4d0e-ab38-bd97e5908798
 cd5cbd28-da72-4761-ad61-01326bed5e13	2025-12-03 04:39:29.480364+00	2025-12-03 04:39:29.480364+00	password	3481c4cb-d194-4c1b-bc77-ed4c21c3cce7
+daed41f1-2fc0-4568-b111-81ed069ae6a0	2025-12-09 15:56:43.933953+00	2025-12-09 15:56:43.933953+00	password	d7fb5e65-8a9b-4df8-840b-dcf03c7c6d24
 20b89877-b542-4690-a8ab-c0800982a0f9	2025-12-04 04:27:18.512734+00	2025-12-04 04:27:18.512734+00	password	a7431ac1-3daa-434c-9532-68986de3a599
-0ee6dc5d-b149-4874-9b53-86ca4cafdbe1	2025-12-03 04:50:22.371078+00	2025-12-03 04:50:22.371078+00	password	e5576168-1fd0-4e55-8b27-887512c11341
 178304d2-ef7d-450e-8560-fc0dd795d70e	2025-12-04 05:56:55.781383+00	2025-12-04 05:56:55.781383+00	password	4d6dff15-ac73-453f-a30a-665cc77d733b
 6a954dea-f6f7-48ce-b805-07ffa939c25e	2025-12-03 04:58:49.412146+00	2025-12-03 04:58:49.412146+00	password	1f51d883-8edb-4093-8054-97f6d0de9b9f
+036aef63-57af-41fa-8798-56b4e03e5c31	2025-12-09 16:12:27.36602+00	2025-12-09 16:12:27.36602+00	password	1340fa57-5dbc-4c99-82c5-cb78514c2c4b
 38cd8855-6007-4a36-aa4e-d54f39325b19	2025-12-03 05:16:59.137914+00	2025-12-03 05:16:59.137914+00	password	e9ae0aa7-493f-490c-ab32-63bea605ae4b
+545c5a33-77d2-46e3-8e70-a068acacd7a2	2025-12-09 17:20:42.342375+00	2025-12-09 17:20:42.342375+00	password	d603b739-a7b3-465a-befe-966e85dbacaf
+7278d163-13c2-4b4b-a2e8-c3efd5bafafe	2025-12-09 17:50:32.362128+00	2025-12-09 17:50:32.362128+00	password	d0a39a10-9cfb-48ab-82fb-8fcad93aad00
+5372731f-2bf4-4203-891d-c26193ec7763	2025-12-09 19:18:27.374321+00	2025-12-09 19:18:27.374321+00	password	027f6806-5f3f-428a-b3db-f9eb45cd0cdc
+18e24a58-a5ec-4780-be72-8ac9888f08d0	2025-12-09 19:18:52.559185+00	2025-12-09 19:18:52.559185+00	password	a4cb6c7c-8deb-43f6-bd2d-129ea07597d3
+9159f200-faf7-4fb1-8093-e663cf7e79e2	2025-12-10 08:31:35.232043+00	2025-12-10 08:31:35.232043+00	password	ac54ae64-4c4c-4724-94d2-90df3c1f72de
+dfebf6f4-6098-4a12-940e-8831adc491dd	2025-12-10 08:32:18.330758+00	2025-12-10 08:32:18.330758+00	password	10269de3-a0fb-45ca-8cdd-b4419a00d612
+af1cf8b9-adf2-4598-b2a2-c0e6af7a1a13	2025-12-10 14:11:55.066745+00	2025-12-10 14:11:55.066745+00	password	d6b14b5e-dfd3-456c-a3a9-b40651aa39fc
+ba87c67f-0c87-4498-b52f-2dea90a3c5ad	2025-12-10 14:25:23.111872+00	2025-12-10 14:25:23.111872+00	password	b5b1bca9-47ae-4818-8c2c-017c4392e3cb
 \.
 
 
@@ -3835,29 +3967,28 @@ bb08b3bf-8a8e-42af-8d3e-0745ca0f8771	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	recove
 COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, updated_at, parent, session_id) FROM stdin;
 00000000-0000-0000-0000-000000000000	293	y4x42ou6maqk	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 04:16:15.173289+00	2025-12-01 04:16:15.173289+00	\N	f3c64228-ca3b-4174-98c6-fe18a9228ecf
 00000000-0000-0000-0000-000000000000	295	wsookx52mnk6	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	f	2025-12-01 04:24:16.940609+00	2025-12-01 04:24:16.940609+00	\N	4276400e-90b7-4b2c-9178-7b4e99658949
-00000000-0000-0000-0000-000000000000	223	uqwlnrgxnpdu	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-27 06:47:54.122341+00	2025-11-27 06:47:54.122341+00	fxppvwwns3xv	7f4bc089-e09c-42a1-bd7a-63b5060585bf
-00000000-0000-0000-0000-000000000000	226	4huwhaom3kuf	575538d0-ec9f-4ade-ac19-8c17f1453900	t	2025-11-27 07:25:32.834494+00	2025-11-27 08:30:01.560286+00	\N	f8048689-2a7e-44e1-b635-d3bad4ccfe36
-00000000-0000-0000-0000-000000000000	228	x2f3cxr5daqr	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-27 08:30:01.585798+00	2025-11-27 08:30:01.585798+00	4huwhaom3kuf	f8048689-2a7e-44e1-b635-d3bad4ccfe36
 00000000-0000-0000-0000-000000000000	386	rjiqraaylndf	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-01 18:33:52.048801+00	2025-12-03 16:17:48.818301+00	\N	e436c953-9e76-4276-b49b-e638827bba1d
 00000000-0000-0000-0000-000000000000	305	sdjhcrokqzba	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	f	2025-12-01 05:03:17.539021+00	2025-12-01 05:03:17.539021+00	\N	2bd5af8f-0d65-4b91-886b-3400148abe89
 00000000-0000-0000-0000-000000000000	308	eqa6tojltive	a1c4810c-8829-4f1d-a1c3-691c8c573c29	f	2025-12-01 05:06:38.041823+00	2025-12-01 05:06:38.041823+00	\N	05c0389f-c05d-4dfb-94c6-84e2d84a0ffd
-00000000-0000-0000-0000-000000000000	238	e2pg7xqojayc	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 11:35:11.673347+00	2025-11-30 11:35:11.673347+00	\N	96938d54-bba1-4521-a580-6955e6a08bd6
-00000000-0000-0000-0000-000000000000	309	gknjyvvitvba	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	f	2025-12-01 05:06:58.613225+00	2025-12-01 05:06:58.613225+00	\N	d36b4c66-852b-43fb-875e-5c719eeaa98f
 00000000-0000-0000-0000-000000000000	310	zc5eyaadfnor	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-01 05:07:24.170893+00	2025-12-01 05:07:24.170893+00	\N	2bca4d67-3a84-4d77-992a-faa60f67099c
-00000000-0000-0000-0000-000000000000	241	ja6vxofc4afb	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 12:28:03.921318+00	2025-11-30 12:28:03.921318+00	\N	49b43e3f-c369-409c-8860-e979f6949f3f
-00000000-0000-0000-0000-000000000000	243	5qrk2skq434w	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 13:07:47.911335+00	2025-11-30 13:07:47.911335+00	\N	e078405c-e3f0-4290-924a-5dca06358208
-00000000-0000-0000-0000-000000000000	245	fnog7xqzc425	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 14:06:17.883851+00	2025-11-30 14:06:17.883851+00	\N	2c6860db-3ff5-47fb-b6e7-045be9d0f79e
-00000000-0000-0000-0000-000000000000	311	4evqsja5cbuf	7d65be34-1117-4e69-a6c5-cc3866400df5	f	2025-12-01 05:08:01.017692+00	2025-12-01 05:08:01.017692+00	\N	564d8d1c-7d77-4ac1-a8cd-77dea7666340
-00000000-0000-0000-0000-000000000000	248	ud57kc4vzsx4	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 14:37:48.968147+00	2025-11-30 14:37:48.968147+00	\N	3203841c-da76-4941-85c8-8dde8e0e810c
+00000000-0000-0000-0000-000000000000	757	hn2yephaad24	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-10 14:02:55.159283+00	2025-12-10 14:02:55.159283+00	qjqwdz3toit4	18e24a58-a5ec-4780-be72-8ac9888f08d0
+00000000-0000-0000-0000-000000000000	761	sw455tlllwv4	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-10 14:11:55.059128+00	2025-12-10 14:11:55.059128+00	\N	af1cf8b9-adf2-4598-b2a2-c0e6af7a1a13
+00000000-0000-0000-0000-000000000000	763	fezex3z6hk6a	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-10 14:25:23.083916+00	2025-12-10 14:25:23.083916+00	\N	ba87c67f-0c87-4498-b52f-2dea90a3c5ad
+00000000-0000-0000-0000-000000000000	765	gmsh2yascvim	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-10 15:00:32.632818+00	2025-12-10 15:00:32.632818+00	\N	05800afe-b457-422f-bf44-eaadd947a8d3
 00000000-0000-0000-0000-000000000000	317	55flh2usakhu	df5a3994-22e3-4049-bd49-4a02a52828e6	f	2025-12-01 05:19:18.067135+00	2025-12-01 05:19:18.067135+00	\N	7bc55c61-5a14-4c6b-8745-4a6937ec5b05
+00000000-0000-0000-0000-000000000000	767	maav5y6yducg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 15:14:32.615004+00	2025-12-10 15:14:32.615004+00	\N	d00ae7b2-fa3f-49b3-85f5-586bf918f813
 00000000-0000-0000-0000-000000000000	318	qb65alap7hyq	df5a3994-22e3-4049-bd49-4a02a52828e6	f	2025-12-01 05:19:28.255419+00	2025-12-01 05:19:28.255419+00	\N	1a6835eb-ea88-4b5d-87a4-07367cd00081
 00000000-0000-0000-0000-000000000000	480	4bgzd3cjzq7u	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-02 05:29:38.806829+00	2025-12-02 05:29:38.806829+00	\N	1abe603b-bc80-4677-b0ab-a7daaf4a48a2
+00000000-0000-0000-0000-000000000000	773	hgszxpx7ebh7	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	f	2025-12-10 15:36:43.98721+00	2025-12-10 15:36:43.98721+00	mliwxmcgrsed	dfebf6f4-6098-4a12-940e-8831adc491dd
 00000000-0000-0000-0000-000000000000	324	gv4a7shcwp6b	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 11:51:12.151993+00	2025-12-01 11:51:12.151993+00	\N	ebd26c52-6fcb-44b7-bf5e-1f5c2f5eb62f
 00000000-0000-0000-0000-000000000000	328	3b2e2bdaulcw	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 12:10:01.804172+00	2025-12-01 12:10:01.804172+00	\N	fe574db9-8589-4ed8-8093-7cf36fdaa183
+00000000-0000-0000-0000-000000000000	774	eedklyalbvhb	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 15:36:47.808754+00	2025-12-10 15:36:47.808754+00	\N	f9480e33-e58f-4cb0-b32a-e4b1a6b7c0ca
 00000000-0000-0000-0000-000000000000	648	wh35mgox2grm	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-04 05:03:18.439708+00	2025-12-04 06:12:17.216378+00	\N	882d9d38-4eeb-4467-b797-52d3ccd07511
+00000000-0000-0000-0000-000000000000	776	ms4vetfuxvy2	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 15:52:54.448145+00	2025-12-10 15:52:54.448145+00	\N	2f597856-2e00-4bf6-a716-fae165d33a22
 00000000-0000-0000-0000-000000000000	491	mta6pbklhtfq	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 05:34:03.715055+00	2025-12-02 05:34:03.715055+00	\N	98921f07-3fcf-42ef-988c-14ef5c39c9c2
 00000000-0000-0000-0000-000000000000	492	qbdj5pv2ampa	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 05:34:20.727447+00	2025-12-02 05:34:20.727447+00	\N	83aa4d4f-9c80-4929-b939-8d22ebf83ab1
 00000000-0000-0000-0000-000000000000	404	7rqzakwhyagb	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 22:51:45.013208+00	2025-12-01 22:51:45.013208+00	\N	fa5eeb81-b4dc-40d2-969d-33068dc5b31f
+00000000-0000-0000-0000-000000000000	778	vbhx5wteu6fo	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 16:00:15.378048+00	2025-12-10 16:00:15.378048+00	lesr75eutxht	9072efc6-d072-466b-8d85-962a4a015fb7
 00000000-0000-0000-0000-000000000000	408	4dhet3oyport	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 23:07:43.270987+00	2025-12-01 23:07:43.270987+00	\N	aef7a8fb-0a3c-446e-a377-eac793384ca7
 00000000-0000-0000-0000-000000000000	342	qd6iudlexit5	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 12:48:30.464712+00	2025-12-01 12:48:30.464712+00	\N	919f9636-10e7-4a3f-b4d0-aa3d4e5eb453
 00000000-0000-0000-0000-000000000000	346	7k46kmuhld2e	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-01 13:07:17.39191+00	2025-12-01 13:07:17.39191+00	\N	f1cbfb67-4614-4b39-8210-1d5bfdf3c6c9
@@ -3866,7 +3997,7 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	675	2e4ysrupo7ba	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-08 04:23:47.7802+00	2025-12-08 04:23:47.7802+00	\N	237566cd-275f-40e6-a1cc-6f43f0deb46e
 00000000-0000-0000-0000-000000000000	285	o5medchlcgpq	87c98256-6c40-4fe4-a83c-67f11730b937	t	2025-11-30 17:43:25.494731+00	2025-12-01 03:56:48.354429+00	\N	8a95a400-52ba-495d-bf88-fcb3aa994e68
 00000000-0000-0000-0000-000000000000	289	cg7fkx7xfjcr	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-01 03:56:48.369085+00	2025-12-01 03:56:48.369085+00	o5medchlcgpq	8a95a400-52ba-495d-bf88-fcb3aa994e68
-00000000-0000-0000-0000-000000000000	290	jcrqtsii7utf	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-12-01 03:57:01.683764+00	2025-12-01 03:57:01.683764+00	\N	1e0e562f-3b8b-4437-8c48-1eeb848bd829
+00000000-0000-0000-0000-000000000000	782	g2b5awjak6b4	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 16:08:20.227197+00	2025-12-10 16:08:20.227197+00	\N	3ca5a2c7-6fac-4b57-9719-331ff0cf4788
 00000000-0000-0000-0000-000000000000	411	uhsea35o2x4y	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-01 23:24:11.18813+00	2025-12-02 02:38:27.006512+00	\N	17c46947-922d-487e-b6f9-4c8e9702a67a
 00000000-0000-0000-0000-000000000000	413	b67lbbejihej	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 02:38:27.018594+00	2025-12-02 02:38:27.018594+00	uhsea35o2x4y	17c46947-922d-487e-b6f9-4c8e9702a67a
 00000000-0000-0000-0000-000000000000	414	cys56bvx5xlh	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 02:38:33.338126+00	2025-12-02 02:38:33.338126+00	\N	69ac4771-6b35-41ba-acfc-63a93cc4151e
@@ -3880,22 +4011,21 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	684	vrxp36bdkuuk	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-08 16:01:26.230089+00	2025-12-08 23:29:17.709483+00	l2ryf6rbor7s	5f6bb49e-4231-466f-94ba-04728b3dfcfe
 00000000-0000-0000-0000-000000000000	376	gqqptcm4eyue	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-01 16:33:01.882252+00	2025-12-01 16:33:01.882252+00	\N	200ed9c4-daeb-42ab-85f9-6b879d6319fa
 00000000-0000-0000-0000-000000000000	384	qblkxkuqjtrc	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 18:03:24.756489+00	2025-12-01 18:03:24.756489+00	\N	6d0a0b96-a88c-4b70-9b06-acab235f445c
+00000000-0000-0000-0000-000000000000	697	striujc4adoh	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-09 04:45:49.28483+00	2025-12-09 05:45:15.263001+00	\N	73ffcc97-1fe9-48ee-aa08-fc91596bf303
+00000000-0000-0000-0000-000000000000	700	2za6kd6jouzr	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 07:28:52.53371+00	2025-12-09 07:28:52.53371+00	\N	9b146bfd-78bc-43ad-bbd9-6aa0e24cf141
 00000000-0000-0000-0000-000000000000	445	4eknrmza76yr	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 03:44:42.759448+00	2025-12-02 03:44:42.759448+00	\N	371dc252-30dc-44d5-b788-8927ee893f6f
 00000000-0000-0000-0000-000000000000	477	vqcg3thz5upo	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 05:12:26.638342+00	2025-12-02 05:12:26.638342+00	\N	c28259b9-0e4d-4225-b02d-5ba75df5c5d5
 00000000-0000-0000-0000-000000000000	646	t2o2a5pu3egg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 04:25:05.112635+00	2025-12-04 04:25:05.112635+00	\N	a0dc00a5-e5bb-47d1-ab99-6d9c682a43f8
 00000000-0000-0000-0000-000000000000	299	keipujw5z2hw	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	f	2025-12-01 04:59:31.441383+00	2025-12-01 04:59:31.441383+00	\N	652da8ad-db16-4488-a644-e1519c504313
-00000000-0000-0000-0000-000000000000	222	fxppvwwns3xv	575538d0-ec9f-4ade-ac19-8c17f1453900	t	2025-11-27 05:26:22.399127+00	2025-11-27 06:47:54.096629+00	\N	7f4bc089-e09c-42a1-bd7a-63b5060585bf
 00000000-0000-0000-0000-000000000000	649	tsso72zwhuez	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 05:56:55.749718+00	2025-12-04 05:56:55.749718+00	\N	178304d2-ef7d-450e-8560-fc0dd795d70e
-00000000-0000-0000-0000-000000000000	225	wiosntz7rfad	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-27 06:51:48.665018+00	2025-11-27 06:51:48.665018+00	\N	ef35b9b2-5826-4bc3-a2a1-d91591f0b813
 00000000-0000-0000-0000-000000000000	300	2lz6s3yuwa7f	89c9ec4e-8319-4966-b292-ce7c256c7b31	f	2025-12-01 04:59:46.796935+00	2025-12-01 04:59:46.796935+00	\N	45ae6b22-e1e7-4d3c-9465-907031557800
+00000000-0000-0000-0000-000000000000	737	dsdxifl5mvab	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-09 17:20:42.339767+00	2025-12-09 17:20:42.339767+00	\N	545c5a33-77d2-46e3-8e70-a068acacd7a2
 00000000-0000-0000-0000-000000000000	301	asgxalfzatkt	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-01 05:00:31.209389+00	2025-12-01 05:00:31.209389+00	\N	aff3aaaf-c7f1-473d-a6ac-61146d5f8bc9
 00000000-0000-0000-0000-000000000000	302	hqbycz4fcot7	21ece05e-1290-49e2-8b53-ec02e97c673a	f	2025-12-01 05:01:01.218324+00	2025-12-01 05:01:01.218324+00	\N	16520364-8f12-4b2e-8430-eef41af9f1f4
 00000000-0000-0000-0000-000000000000	303	nv7h2r5ruyxb	759f9b43-ea4d-44fb-a90c-54283028423c	f	2025-12-01 05:01:30.398003+00	2025-12-01 05:01:30.398003+00	\N	70d7959c-f32b-4efc-873c-2de98b45cc0f
 00000000-0000-0000-0000-000000000000	304	sb44e4psu3xw	31c9657e-17b6-4f66-b3a3-d623c78dbdac	f	2025-12-01 05:02:08.518115+00	2025-12-01 05:02:08.518115+00	\N	1df5aa60-8d3d-4dd3-8507-b2aad7562910
-00000000-0000-0000-0000-000000000000	242	ox6mgu52t3m5	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 12:43:48.355031+00	2025-11-30 12:43:48.355031+00	\N	9879ad54-515e-4f0f-a913-fa49ce72a002
 00000000-0000-0000-0000-000000000000	403	gmuelmfxp5ea	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 22:47:57.188325+00	2025-12-01 22:47:57.188325+00	\N	ee41c673-2116-40d1-b628-94bea79ea81c
 00000000-0000-0000-0000-000000000000	405	ed4eec6tfsf3	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 23:03:44.267063+00	2025-12-01 23:03:44.267063+00	\N	5fc54002-865a-4828-8ee8-ce7bc437aad7
-00000000-0000-0000-0000-000000000000	251	fcgrwvjuhdie	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 15:29:55.609005+00	2025-11-30 15:29:55.609005+00	\N	d06eb9f8-951e-43f2-a3f3-5ec742787e70
 00000000-0000-0000-0000-000000000000	412	57qjjvl7u6tf	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-02 02:13:38.537643+00	2025-12-02 02:13:38.537643+00	\N	eb5f7419-05b7-48fc-95d8-30767dc8e1b5
 00000000-0000-0000-0000-000000000000	416	niyfjldorlwl	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 02:45:51.476795+00	2025-12-02 02:45:51.476795+00	\N	5e10f96e-6a26-4b50-8493-faf501cd8d4b
 00000000-0000-0000-0000-000000000000	419	lfu26xsye6vw	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 02:55:58.842558+00	2025-12-02 02:55:58.842558+00	\N	130622f3-8814-43f2-ab04-07deeb071305
@@ -3905,19 +4035,16 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	327	7svybumzp7kg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 11:55:33.332542+00	2025-12-01 11:55:33.332542+00	\N	fbdf825c-916a-42ed-8d49-49630604520d
 00000000-0000-0000-0000-000000000000	438	bowkyhlfad7i	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 03:25:46.787085+00	2025-12-02 03:25:46.787085+00	\N	d9b33e9a-a86e-4851-969b-6067b8b4b1c4
 00000000-0000-0000-0000-000000000000	496	vuopocesh2dh	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 05:41:48.59784+00	2025-12-02 05:41:48.59784+00	\N	4585e0a2-1ded-45cb-9e67-fe3af0f0f909
-00000000-0000-0000-0000-000000000000	271	75mi6nrk4bd6	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-11-30 17:00:49.658205+00	2025-11-30 17:00:49.658205+00	\N	7377664c-2637-4987-9764-2a658cb81df6
+00000000-0000-0000-0000-000000000000	751	c3vi4ijbnxwr	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 19:18:27.369345+00	2025-12-09 19:18:27.369345+00	\N	5372731f-2bf4-4203-891d-c26193ec7763
 00000000-0000-0000-0000-000000000000	676	mhjcd3ubngzi	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-08 04:36:15.558941+00	2025-12-08 04:36:15.558941+00	\N	631ffbb5-8925-4431-8dd0-b1a7efb86ef3
 00000000-0000-0000-0000-000000000000	682	h4q3yuqi7rfn	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-08 14:50:31.722383+00	2025-12-08 14:50:31.722383+00	\N	688c7d37-7a68-484d-9571-c229a7361a7b
 00000000-0000-0000-0000-000000000000	444	5q4gmoowgysk	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-02 03:35:25.192183+00	2025-12-02 03:35:25.192183+00	\N	7da404b9-8cc5-40e8-93fd-9fecd1c71a0b
 00000000-0000-0000-0000-000000000000	446	duzj27ajpnwx	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 03:59:16.07942+00	2025-12-02 03:59:16.07942+00	\N	dceea802-6e54-406a-9baa-7a864403c941
 00000000-0000-0000-0000-000000000000	685	oztus46ol5ak	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-08 23:29:17.737535+00	2025-12-09 03:45:13.537236+00	vrxp36bdkuuk	5f6bb49e-4231-466f-94ba-04728b3dfcfe
+00000000-0000-0000-0000-000000000000	752	zkvdhg5riauk	56624f75-13c4-4487-ae0f-87f4f9115a42	t	2025-12-09 19:18:52.556623+00	2025-12-10 07:56:09.548429+00	\N	18e24a58-a5ec-4780-be72-8ac9888f08d0
 00000000-0000-0000-0000-000000000000	500	sufnvffcn7ny	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 05:44:43.676875+00	2025-12-02 05:44:43.676875+00	\N	9d5aafdb-3820-472b-9443-133c8b5145ba
 00000000-0000-0000-0000-000000000000	690	ndpxpdcwumml	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 03:56:36.747512+00	2025-12-09 03:56:36.747512+00	\N	c2acfda3-ea27-41ff-8750-0f41b1525471
-00000000-0000-0000-0000-000000000000	227	5hupv23p54uc	575538d0-ec9f-4ade-ac19-8c17f1453900	t	2025-11-27 07:33:45.668388+00	2025-12-01 13:18:31.506604+00	\N	3967c48a-2884-4bf8-8a56-67c4f2928431
 00000000-0000-0000-0000-000000000000	693	4365r6mjxxwj	9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	f	2025-12-09 04:20:20.778637+00	2025-12-09 04:20:20.778637+00	\N	ea96cc53-c5b6-4744-918f-a22657eb2879
-00000000-0000-0000-0000-000000000000	347	qnrkqzcvhesq	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-12-01 13:18:31.516617+00	2025-12-01 13:18:31.516617+00	5hupv23p54uc	3967c48a-2884-4bf8-8a56-67c4f2928431
-00000000-0000-0000-0000-000000000000	348	7mvpckpgmio4	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-12-01 13:18:49.587615+00	2025-12-01 13:18:49.587615+00	\N	8e3c8e6e-7a78-4289-87e3-c2337f11d92b
-00000000-0000-0000-0000-000000000000	349	nftzvegoxj4o	575538d0-ec9f-4ade-ac19-8c17f1453900	f	2025-12-01 13:19:03.199177+00	2025-12-01 13:19:03.199177+00	\N	70787eac-d9f7-40a7-b378-7f37fce6b9c1
 00000000-0000-0000-0000-000000000000	452	poh7mv3txosj	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-02 04:25:36.853069+00	2025-12-02 04:25:36.853069+00	\N	d5837f1f-aac5-45c7-b94e-9e62f88920ad
 00000000-0000-0000-0000-000000000000	695	nr75yuywm7qc	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 04:21:32.77096+00	2025-12-09 04:21:32.77096+00	\N	91c26bda-2e2e-48d9-b889-34aa5a143d89
 00000000-0000-0000-0000-000000000000	502	r3oz66rre4eo	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-02 05:51:29.034703+00	2025-12-02 05:51:29.034703+00	\N	45deb554-5881-4fe2-a0bc-5e66455960f0
@@ -3925,16 +4052,22 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	459	nqvl5qice2bd	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-02 04:52:02.103927+00	2025-12-02 04:52:02.103927+00	\N	02dc9655-9c24-455d-9e57-0d5443a55617
 00000000-0000-0000-0000-000000000000	460	szvozgdw7si3	31c9657e-17b6-4f66-b3a3-d623c78dbdac	f	2025-12-02 04:52:48.725328+00	2025-12-02 04:52:48.725328+00	\N	5fac8f0e-8f51-49e5-9764-c2aa13e31f04
 00000000-0000-0000-0000-000000000000	466	jzqcbeafew5q	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-02 05:04:01.092779+00	2025-12-02 05:04:01.092779+00	\N	457ab19f-b260-4678-93cd-c4b0375a283a
+00000000-0000-0000-0000-000000000000	698	37isebzfllws	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-09 05:45:15.29319+00	2025-12-09 06:46:43.306882+00	striujc4adoh	73ffcc97-1fe9-48ee-aa08-fc91596bf303
 00000000-0000-0000-0000-000000000000	365	gyphpbyd5qgb	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-01 14:25:03.49727+00	2025-12-01 14:25:03.49727+00	\N	48fbb3dd-1656-48f4-838e-d5b7f9dcb998
 00000000-0000-0000-0000-000000000000	362	22ewxnwvhcoq	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-01 13:57:14.648888+00	2025-12-01 15:02:25.366751+00	\N	f7ee869f-dc34-4ed2-be9f-cf51b8b88cf6
+00000000-0000-0000-0000-000000000000	701	epmqnujez47q	f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	f	2025-12-09 07:35:39.703505+00	2025-12-09 07:35:39.703505+00	\N	b1174052-f4ec-4ad1-91bb-97e4f69406d4
 00000000-0000-0000-0000-000000000000	505	ugzaazn23ujs	87c98256-6c40-4fe4-a83c-67f11730b937	t	2025-12-02 06:11:00.246173+00	2025-12-02 08:49:07.869018+00	\N	a979af1f-1390-4806-a544-646a49f804cd
 00000000-0000-0000-0000-000000000000	506	yjgdwogmxe3m	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-02 08:49:07.891373+00	2025-12-02 08:49:07.891373+00	ugzaazn23ujs	a979af1f-1390-4806-a544-646a49f804cd
+00000000-0000-0000-0000-000000000000	702	lfhmhcw26fgm	dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	f	2025-12-09 07:36:02.468214+00	2025-12-09 07:36:02.468214+00	\N	fedf81b8-f78e-410a-ba69-b96b9c5244d0
 00000000-0000-0000-0000-000000000000	507	bskadekvmfc7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-02 08:49:35.093699+00	2025-12-03 02:24:44.379526+00	\N	dfc6799d-b181-4f04-abd1-46a6397606d2
 00000000-0000-0000-0000-000000000000	380	j3hhxvafyggl	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	f	2025-12-01 17:05:04.667716+00	2025-12-01 17:05:04.667716+00	\N	c87b5af8-83ba-44c6-a2d8-b5a5a25c4f29
+00000000-0000-0000-0000-000000000000	705	mc6hbebcfxik	89c9ec4e-8319-4966-b292-ce7c256c7b31	f	2025-12-09 08:09:23.469823+00	2025-12-09 08:09:23.469823+00	\N	0cd5acdc-9df3-48ab-bff8-3175aa9b5537
+00000000-0000-0000-0000-000000000000	706	giqincombjuo	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-09 08:09:38.665528+00	2025-12-09 08:09:38.665528+00	\N	bb1f48b1-0d6a-4508-978b-470424f09693
 00000000-0000-0000-0000-000000000000	383	cjrplbvb46yn	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 17:55:51.60237+00	2025-12-01 17:55:51.60237+00	\N	1ddc1681-afa3-46e8-bc9e-362d5d6b4943
 00000000-0000-0000-0000-000000000000	385	nrpw5ogp7hbe	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 18:13:36.148435+00	2025-12-01 18:13:36.148435+00	\N	840fa248-32ae-41bf-99a3-f8258237c315
 00000000-0000-0000-0000-000000000000	371	6k3zayc6pelh	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-01 15:14:12.504399+00	2025-12-01 21:35:26.518749+00	\N	f4fb49b3-f37c-42e6-a70e-9e84c1e61d28
 00000000-0000-0000-0000-000000000000	387	2vtehbn66xl3	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-01 21:35:26.530356+00	2025-12-01 21:35:26.530356+00	6k3zayc6pelh	f4fb49b3-f37c-42e6-a70e-9e84c1e61d28
+00000000-0000-0000-0000-000000000000	723	ahrbxrwblech	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 16:12:27.363382+00	2025-12-09 16:12:27.363382+00	\N	036aef63-57af-41fa-8798-56b4e03e5c31
 00000000-0000-0000-0000-000000000000	508	pxecqzrmlxmd	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 02:24:44.401524+00	2025-12-03 02:24:44.401524+00	bskadekvmfc7	dfc6799d-b181-4f04-abd1-46a6397606d2
 00000000-0000-0000-0000-000000000000	575	sw7azhkexzek	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 05:16:59.135467+00	2025-12-03 05:16:59.135467+00	\N	38cd8855-6007-4a36-aa4e-d54f39325b19
 00000000-0000-0000-0000-000000000000	510	rtkgesmn3ynd	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	f	2025-12-03 02:29:25.581995+00	2025-12-03 02:29:25.581995+00	\N	2f72848b-38ca-473a-ad77-36dad188fab3
@@ -3945,9 +4078,10 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	516	h4fagyi7hh62	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 02:58:03.825642+00	2025-12-03 02:58:03.825642+00	\N	d296edd7-6c8e-4163-8720-91104cb93dcc
 00000000-0000-0000-0000-000000000000	580	dnv3eedlq6jc	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 06:28:54.472771+00	2025-12-03 06:28:54.472771+00	\N	26701bac-fda8-4756-b47c-24e174c55369
 00000000-0000-0000-0000-000000000000	584	gtrlwxno3qsq	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 16:17:48.846979+00	2025-12-03 16:17:48.846979+00	rjiqraaylndf	e436c953-9e76-4276-b49b-e638827bba1d
+00000000-0000-0000-0000-000000000000	747	xx7rbiurvyrk	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 17:50:32.360158+00	2025-12-09 17:50:32.360158+00	\N	7278d163-13c2-4b4b-a2e8-c3efd5bafafe
+00000000-0000-0000-0000-000000000000	755	xarunthnk7df	87c98256-6c40-4fe4-a83c-67f11730b937	f	2025-12-10 08:31:35.220809+00	2025-12-10 08:31:35.220809+00	\N	9159f200-faf7-4fb1-8093-e663cf7e79e2
 00000000-0000-0000-0000-000000000000	670	sgbxvg3avrj2	56624f75-13c4-4487-ae0f-87f4f9115a42	t	2025-12-04 11:10:38.414458+00	2025-12-04 12:25:34.534168+00	7slrhvarjg7a	e44372af-21e9-4d18-a64d-b8fce3553c72
 00000000-0000-0000-0000-000000000000	667	pzcqypvfuzqg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-04 06:36:40.909371+00	2025-12-08 04:05:29.981169+00	\N	a08921c7-2d68-4ad8-bfa3-946a8ba93a22
-00000000-0000-0000-0000-000000000000	591	lesr75eutxht	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-03 17:01:55.806802+00	2025-12-03 17:01:55.806802+00	\N	9072efc6-d072-466b-8d85-962a4a015fb7
 00000000-0000-0000-0000-000000000000	583	oti6piqylx7c	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-03 07:15:23.302624+00	2025-12-04 02:00:47.046571+00	\N	647034fc-8606-4010-b39a-7591b93896c4
 00000000-0000-0000-0000-000000000000	592	43m2sa3okngz	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 02:00:47.072148+00	2025-12-04 02:00:47.072148+00	oti6piqylx7c	647034fc-8606-4010-b39a-7591b93896c4
 00000000-0000-0000-0000-000000000000	674	zfql25pgr6eg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-08 04:09:59.512686+00	2025-12-08 04:09:59.512686+00	\N	f28cd1d0-d896-4e02-af52-1b5db996dde4
@@ -3957,6 +4091,7 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	537	qsrrgntxrcjp	c9e5376f-6a51-46f4-bd7a-7599c4a86595	f	2025-12-03 04:13:57.954409+00	2025-12-03 04:13:57.954409+00	\N	0d487614-b31a-43c3-bc56-ca6a94267d76
 00000000-0000-0000-0000-000000000000	679	2uzqiih6juti	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-08 04:53:22.302045+00	2025-12-08 14:05:42.004911+00	\N	b3bd392d-d2dc-4932-9c7d-61aafa71eda8
 00000000-0000-0000-0000-000000000000	539	7bnjkr3zujkv	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-03 04:20:32.491313+00	2025-12-03 04:20:32.491313+00	\N	53ee4805-44d2-4bce-b4d1-81ad02f149b4
+00000000-0000-0000-0000-000000000000	753	qjqwdz3toit4	56624f75-13c4-4487-ae0f-87f4f9115a42	t	2025-12-10 07:56:09.577757+00	2025-12-10 14:02:55.143843+00	zkvdhg5riauk	18e24a58-a5ec-4780-be72-8ac9888f08d0
 00000000-0000-0000-0000-000000000000	683	l2ryf6rbor7s	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-08 14:59:42.418267+00	2025-12-08 16:01:26.198727+00	\N	5f6bb49e-4231-466f-94ba-04728b3dfcfe
 00000000-0000-0000-0000-000000000000	686	ve7cjbwurjiz	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 03:45:13.557611+00	2025-12-09 03:45:13.557611+00	oztus46ol5ak	5f6bb49e-4231-466f-94ba-04728b3dfcfe
 00000000-0000-0000-0000-000000000000	543	b5j2scwlo2na	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	f	2025-12-03 04:33:15.936313+00	2025-12-03 04:33:15.936313+00	\N	b0545583-171d-4291-ab26-f7011d8f2f37
@@ -3965,13 +4100,22 @@ COPY auth.refresh_tokens (instance_id, id, token, user_id, revoked, created_at, 
 00000000-0000-0000-0000-000000000000	604	gjgjd3klhwre	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 02:28:05.012241+00	2025-12-04 02:28:05.012241+00	\N	ad49c2b7-5597-4ddb-93ef-4eb25488c922
 00000000-0000-0000-0000-000000000000	687	mjrphwigxzxm	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 03:45:20.034045+00	2025-12-09 03:45:20.034045+00	\N	28d726be-7a14-4db3-bd2a-64910948f3a7
 00000000-0000-0000-0000-000000000000	691	j3wnamua5iog	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 04:12:42.816811+00	2025-12-09 04:12:42.816811+00	\N	5032ad16-f8ff-4daf-ab2c-174a8fbd8c04
+00000000-0000-0000-0000-000000000000	696	kyyepo3rvi4r	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 04:30:04.020106+00	2025-12-09 04:30:04.020106+00	\N	143bf5bc-ecc2-4b80-81dc-4d2099b51b31
 00000000-0000-0000-0000-000000000000	608	aluvqbt7ex46	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-04 02:39:49.862755+00	2025-12-04 02:39:49.862755+00	\N	d6200208-0a2e-4eca-9d13-422f292eaf82
+00000000-0000-0000-0000-000000000000	699	tvcf2s5bgqpr	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 06:46:43.322219+00	2025-12-09 06:46:43.322219+00	37isebzfllws	73ffcc97-1fe9-48ee-aa08-fc91596bf303
 00000000-0000-0000-0000-000000000000	552	ro6vlq67x4pt	c9e5376f-6a51-46f4-bd7a-7599c4a86595	f	2025-12-03 04:39:29.479064+00	2025-12-03 04:39:29.479064+00	\N	cd5cbd28-da72-4761-ad61-01326bed5e13
-00000000-0000-0000-0000-000000000000	556	v7msiumtcreq	7d65be34-1117-4e69-a6c5-cc3866400df5	f	2025-12-03 04:50:22.369052+00	2025-12-03 04:50:22.369052+00	\N	0ee6dc5d-b149-4874-9b53-86ca4cafdbe1
+00000000-0000-0000-0000-000000000000	703	nmw3y4slhhhq	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 07:50:39.089498+00	2025-12-09 07:50:39.089498+00	\N	023380a6-60c5-4806-80cb-8c4f70c12c38
 00000000-0000-0000-0000-000000000000	559	rizwdt4pzezu	56624f75-13c4-4487-ae0f-87f4f9115a42	f	2025-12-03 04:58:49.410883+00	2025-12-03 04:58:49.410883+00	\N	6a954dea-f6f7-48ce-b805-07ffa939c25e
+00000000-0000-0000-0000-000000000000	719	glpfwetamgtu	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-09 15:56:43.899965+00	2025-12-09 15:56:43.899965+00	\N	daed41f1-2fc0-4568-b111-81ed069ae6a0
+00000000-0000-0000-0000-000000000000	768	ayaqfoltwciq	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 15:18:56.493225+00	2025-12-10 15:18:56.493225+00	\N	4bf9a3da-73c4-4494-b018-99f26a8276ce
+00000000-0000-0000-0000-000000000000	772	la6tmm2ueczn	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-10 15:22:16.086932+00	2025-12-10 15:22:16.086932+00	\N	0a82f94a-ca36-444c-a516-be4d33f6815f
+00000000-0000-0000-0000-000000000000	756	mliwxmcgrsed	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	t	2025-12-10 08:32:18.328834+00	2025-12-10 15:36:43.974254+00	\N	dfebf6f4-6098-4a12-940e-8831adc491dd
 00000000-0000-0000-0000-000000000000	622	udpqvdgodauk	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 02:56:50.619598+00	2025-12-04 02:56:50.619598+00	\N	c5959399-e666-4060-a054-dd7bb67a672b
 00000000-0000-0000-0000-000000000000	623	bytinba5d7px	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 03:04:10.313104+00	2025-12-04 03:04:10.313104+00	\N	ae577d85-d2fc-470f-9112-d96f461d7126
+00000000-0000-0000-0000-000000000000	777	vpoihdtzs2k4	89c9ec4e-8319-4966-b292-ce7c256c7b31	f	2025-12-10 15:55:34.41947+00	2025-12-10 15:55:34.41947+00	\N	d37914c4-63ae-4da5-9c06-b1c028dfcdc9
+00000000-0000-0000-0000-000000000000	591	lesr75eutxht	4f8f6708-17d2-4df7-a0fd-8046df660ca4	t	2025-12-03 17:01:55.806802+00	2025-12-10 16:00:15.372559+00	\N	9072efc6-d072-466b-8d85-962a4a015fb7
 00000000-0000-0000-0000-000000000000	626	pmftuxtt5jpg	4f8f6708-17d2-4df7-a0fd-8046df660ca4	f	2025-12-04 03:44:07.137256+00	2025-12-04 03:44:07.137256+00	\N	f78d8113-f2b2-429b-a266-b49f8dfe7858
+00000000-0000-0000-0000-000000000000	779	rd7rer7bbp4f	89c9ec4e-8319-4966-b292-ce7c256c7b31	f	2025-12-10 16:05:22.463091+00	2025-12-10 16:05:22.463091+00	\N	a5350822-6d17-4455-baab-070f8fa53ef4
 00000000-0000-0000-0000-000000000000	636	v72iqctqoajz	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	f	2025-12-04 04:16:40.714721+00	2025-12-04 04:16:40.714721+00	\N	f9cc774d-1d8a-4af6-8fc4-258f49e81836
 \.
 
@@ -4079,19 +4223,19 @@ COPY auth.sessions (id, user_id, created_at, updated_at, factor_id, aal, not_aft
 f3c64228-ca3b-4174-98c6-fe18a9228ecf	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 04:16:15.164532+00	2025-12-01 04:16:15.164532+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.228.74	\N	\N	\N	\N	\N
 4276400e-90b7-4b2c-9178-7b4e99658949	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	2025-12-01 04:24:16.939308+00	2025-12-01 04:24:16.939308+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 26701bac-fda8-4756-b47c-24e174c55369	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-03 06:28:54.463274+00	2025-12-03 06:28:54.463274+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.95	\N	\N	\N	\N	\N
-ef35b9b2-5826-4bc3-a2a1-d91591f0b813	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-27 06:51:48.626235+00	2025-11-27 06:51:48.626235+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.65	\N	\N	\N	\N	\N
 20b89877-b542-4690-a8ab-c0800982a0f9	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 04:27:18.496018+00	2025-12-04 04:27:18.496018+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.39.37	\N	\N	\N	\N	\N
 178304d2-ef7d-450e-8560-fc0dd795d70e	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 05:56:55.709885+00	2025-12-04 05:56:55.709885+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.228.75	\N	\N	\N	\N	\N
+7278d163-13c2-4b4b-a2e8-c3efd5bafafe	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 17:50:32.357419+00	2025-12-09 17:50:32.357419+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.41.246	\N	\N	\N	\N	\N
 2bd5af8f-0d65-4b91-886b-3400148abe89	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	2025-12-01 05:03:17.531375+00	2025-12-01 05:03:17.531375+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 05c0389f-c05d-4dfb-94c6-84e2d84a0ffd	a1c4810c-8829-4f1d-a1c3-691c8c573c29	2025-12-01 05:06:38.039897+00	2025-12-01 05:06:38.039897+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
-d36b4c66-852b-43fb-875e-5c719eeaa98f	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	2025-12-01 05:06:58.611783+00	2025-12-01 05:06:58.611783+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
-9879ad54-515e-4f0f-a913-fa49ce72a002	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 12:43:48.323319+00	2025-11-30 12:43:48.323319+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
+5372731f-2bf4-4203-891d-c26193ec7763	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 19:18:27.368301+00	2025-12-09 19:18:27.368301+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.98.72	\N	\N	\N	\N	\N
 2bca4d67-3a84-4d77-992a-faa60f67099c	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-01 05:07:24.170141+00	2025-12-01 05:07:24.170141+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
-564d8d1c-7d77-4ac1-a8cd-77dea7666340	7d65be34-1117-4e69-a6c5-cc3866400df5	2025-12-01 05:08:01.016927+00	2025-12-01 05:08:01.016927+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
+dfebf6f4-6098-4a12-940e-8831adc491dd	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	2025-12-10 08:32:18.326069+00	2025-12-10 15:36:44.002684+00	\N	aal1	\N	2025-12-10 15:36:44.00259	Dart/3.10 (dart:io)	114.122.115.152	\N	\N	\N	\N	\N
 7bc55c61-5a14-4c6b-8745-4a6937ec5b05	df5a3994-22e3-4049-bd49-4a02a52828e6	2025-12-01 05:19:18.065235+00	2025-12-01 05:19:18.065235+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
-d06eb9f8-951e-43f2-a3f3-5ec742787e70	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 15:29:55.607301+00	2025-11-30 15:29:55.607301+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
+9159f200-faf7-4fb1-8093-e663cf7e79e2	87c98256-6c40-4fe4-a83c-67f11730b937	2025-12-10 08:31:35.208368+00	2025-12-10 08:31:35.208368+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.10.99.20	\N	\N	\N	\N	\N
 1a6835eb-ea88-4b5d-87a4-07367cd00081	df5a3994-22e3-4049-bd49-4a02a52828e6	2025-12-01 05:19:28.254233+00	2025-12-01 05:19:28.254233+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 1abe603b-bc80-4677-b0ab-a7daaf4a48a2	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-02 05:29:38.804645+00	2025-12-02 05:29:38.804645+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.203	\N	\N	\N	\N	\N
+18e24a58-a5ec-4780-be72-8ac9888f08d0	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-09 19:18:52.55552+00	2025-12-10 14:02:55.179294+00	\N	aal1	\N	2025-12-10 14:02:55.177917	Dart/3.10 (dart:io)	140.213.98.4	\N	\N	\N	\N	\N
 d99161ce-6464-4b1e-9d40-b33057ef6565	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 05:37:02.957626+00	2025-12-02 05:37:02.957626+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.203	\N	\N	\N	\N	\N
 9d5aafdb-3820-472b-9443-133c8b5145ba	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-02 05:44:43.673534+00	2025-12-02 05:44:43.673534+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.203	\N	\N	\N	\N	\N
 fbdf825c-916a-42ed-8d49-49630604520d	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 11:55:33.330862+00	2025-12-01 11:55:33.330862+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.122	\N	\N	\N	\N	\N
@@ -4102,10 +4246,9 @@ e436c953-9e76-4276-b49b-e638827bba1d	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-1
 aef7a8fb-0a3c-446e-a377-eac793384ca7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 23:07:43.269343+00	2025-12-01 23:07:43.269343+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.98.57	\N	\N	\N	\N	\N
 919f9636-10e7-4a3f-b4d0-aa3d4e5eb453	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 12:48:30.463011+00	2025-12-01 12:48:30.463011+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.122	\N	\N	\N	\N	\N
 f1cbfb67-4614-4b39-8210-1d5bfdf3c6c9	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-01 13:07:17.385764+00	2025-12-01 13:07:17.385764+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.18.68	\N	\N	\N	\N	\N
-3967c48a-2884-4bf8-8a56-67c4f2928431	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-27 07:33:45.645295+00	2025-12-01 13:18:31.527596+00	\N	aal1	\N	2025-12-01 13:18:31.5275	Dart/3.10 (dart:io)	114.10.145.97	\N	\N	\N	\N	\N
+fedf81b8-f78e-410a-ba69-b96b9c5244d0	dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	2025-12-09 07:36:02.467463+00	2025-12-09 07:36:02.467463+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.18.178	\N	\N	\N	\N	\N
 d7d72c5b-551f-4acb-b5ce-137945168885	a1c4810c-8829-4f1d-a1c3-691c8c573c29	2025-12-03 02:39:06.812314+00	2025-12-03 02:39:06.812314+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.123.31	\N	\N	\N	\N	\N
 8a95a400-52ba-495d-bf88-fcb3aa994e68	87c98256-6c40-4fe4-a83c-67f11730b937	2025-11-30 17:43:25.480537+00	2025-12-01 03:56:48.389815+00	\N	aal1	\N	2025-12-01 03:56:48.389101	Dart/3.10 (dart:io)	182.253.228.74	\N	\N	\N	\N	\N
-1e0e562f-3b8b-4437-8c48-1eeb848bd829	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-12-01 03:57:01.67101+00	2025-12-01 03:57:01.67101+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.228.74	\N	\N	\N	\N	\N
 17c46947-922d-487e-b6f9-4c8e9702a67a	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 23:24:11.18647+00	2025-12-02 02:38:27.036587+00	\N	aal1	\N	2025-12-02 02:38:27.035217	Dart/3.10 (dart:io)	182.253.123.29	\N	\N	\N	\N	\N
 69ac4771-6b35-41ba-acfc-63a93cc4151e	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-02 02:38:33.334083+00	2025-12-02 02:38:33.334083+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.123.29	\N	\N	\N	\N	\N
 1f6fea4c-9a7d-431f-9c9a-6d1dbb85f90c	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 02:50:59.764512+00	2025-12-02 02:50:59.764512+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.39.88	\N	\N	\N	\N	\N
@@ -4138,43 +4281,41 @@ ea96cc53-c5b6-4744-918f-a22657eb2879	9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	2025-1
 5fac8f0e-8f51-49e5-9764-c2aa13e31f04	31c9657e-17b6-4f66-b3a3-d623c78dbdac	2025-12-02 04:52:48.721175+00	2025-12-02 04:52:48.721175+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.203	\N	\N	\N	\N	\N
 457ab19f-b260-4678-93cd-c4b0375a283a	87c98256-6c40-4fe4-a83c-67f11730b937	2025-12-02 05:04:01.051018+00	2025-12-02 05:04:01.051018+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.203	\N	\N	\N	\N	\N
 6a954dea-f6f7-48ce-b805-07ffa939c25e	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-03 04:58:49.409592+00	2025-12-03 04:58:49.409592+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.37.174	\N	\N	\N	\N	\N
+73ffcc97-1fe9-48ee-aa08-fc91596bf303	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 04:45:49.252359+00	2025-12-09 06:46:43.347866+00	\N	aal1	\N	2025-12-09 06:46:43.346519	Dart/3.10 (dart:io)	140.213.18.178	\N	\N	\N	\N	\N
 c5959399-e666-4060-a054-dd7bb67a672b	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 02:56:50.618608+00	2025-12-04 02:56:50.618608+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.43.208	\N	\N	\N	\N	\N
+b1174052-f4ec-4ad1-91bb-97e4f69406d4	f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	2025-12-09 07:35:39.686867+00	2025-12-09 07:35:39.686867+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.118	\N	\N	\N	\N	\N
 f78d8113-f2b2-429b-a266-b49f8dfe7858	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 03:44:07.134993+00	2025-12-04 03:44:07.134993+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.147.132	\N	\N	\N	\N	\N
 f9cc774d-1d8a-4af6-8fc4-258f49e81836	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	2025-12-04 04:16:40.713082+00	2025-12-04 04:16:40.713082+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.39.37	\N	\N	\N	\N	\N
 38cd8855-6007-4a36-aa4e-d54f39325b19	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-03 05:16:59.13402+00	2025-12-03 05:16:59.13402+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.49.141	\N	\N	\N	\N	\N
-7f4bc089-e09c-42a1-bd7a-63b5060585bf	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-27 05:26:22.398146+00	2025-11-27 06:47:54.154744+00	\N	aal1	\N	2025-11-27 06:47:54.152857	Dart/3.10 (dart:io)	114.10.144.218	\N	\N	\N	\N	\N
-f8048689-2a7e-44e1-b635-d3bad4ccfe36	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-27 07:25:32.785168+00	2025-11-27 08:30:01.617305+00	\N	aal1	\N	2025-11-27 08:30:01.615477	Dart/3.10 (dart:io)	114.10.149.218	\N	\N	\N	\N	\N
+0cd5acdc-9df3-48ab-bff8-3175aa9b5537	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 08:09:23.457087+00	2025-12-09 08:09:23.457087+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.45.58	\N	\N	\N	\N	\N
+bb1f48b1-0d6a-4508-978b-470424f09693	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-09 08:09:38.662425+00	2025-12-09 08:09:38.662425+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.43.105	\N	\N	\N	\N	\N
 652da8ad-db16-4488-a644-e1519c504313	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	2025-12-01 04:59:31.429693+00	2025-12-01 04:59:31.429693+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 45ae6b22-e1e7-4d3c-9465-907031557800	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-01 04:59:46.794282+00	2025-12-01 04:59:46.794282+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 a0dc00a5-e5bb-47d1-ab99-6d9c682a43f8	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 04:25:05.104114+00	2025-12-04 04:25:05.104114+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.39.37	\N	\N	\N	\N	\N
-96938d54-bba1-4521-a580-6955e6a08bd6	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 11:35:11.659184+00	2025-11-30 11:35:11.659184+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
 aff3aaaf-c7f1-473d-a6ac-61146d5f8bc9	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-01 05:00:31.208577+00	2025-12-01 05:00:31.208577+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
-49b43e3f-c369-409c-8860-e979f6949f3f	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 12:28:03.92026+00	2025-11-30 12:28:03.92026+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
-e078405c-e3f0-4290-924a-5dca06358208	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 13:07:47.868717+00	2025-11-30 13:07:47.868717+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
-2c6860db-3ff5-47fb-b6e7-045be9d0f79e	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 14:06:17.878907+00	2025-11-30 14:06:17.878907+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
 16520364-8f12-4b2e-8430-eef41af9f1f4	21ece05e-1290-49e2-8b53-ec02e97c673a	2025-12-01 05:01:01.203687+00	2025-12-01 05:01:01.203687+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.11	\N	\N	\N	\N	\N
 70d7959c-f32b-4efc-873c-2de98b45cc0f	759f9b43-ea4d-44fb-a90c-54283028423c	2025-12-01 05:01:30.396569+00	2025-12-01 05:01:30.396569+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
-3203841c-da76-4941-85c8-8dde8e0e810c	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 14:37:48.966277+00	2025-11-30 14:37:48.966277+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.97.8	\N	\N	\N	\N	\N
 1df5aa60-8d3d-4dd3-8507-b2aad7562910	31c9657e-17b6-4f66-b3a3-d623c78dbdac	2025-12-01 05:02:08.517247+00	2025-12-01 05:02:08.517247+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	112.215.209.95	\N	\N	\N	\N	\N
 882d9d38-4eeb-4467-b797-52d3ccd07511	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 05:03:18.416345+00	2025-12-04 06:12:17.25394+00	\N	aal1	\N	2025-12-04 06:12:17.252617	Dart/3.10 (dart:io)	140.213.39.33	\N	\N	\N	\N	\N
+af1cf8b9-adf2-4598-b2a2-c0e6af7a1a13	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-10 14:11:55.050248+00	2025-12-10 14:11:55.050248+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.24.218	\N	\N	\N	\N	\N
 ee41c673-2116-40d1-b628-94bea79ea81c	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 22:47:57.169194+00	2025-12-01 22:47:57.169194+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.98.57	\N	\N	\N	\N	\N
 5fc54002-865a-4828-8ee8-ce7bc437aad7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 23:03:44.255868+00	2025-12-01 23:03:44.255868+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.98.57	\N	\N	\N	\N	\N
+ba87c67f-0c87-4498-b52f-2dea90a3c5ad	87c98256-6c40-4fe4-a83c-67f11730b937	2025-12-10 14:25:23.052176+00	2025-12-10 14:25:23.052176+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.51	\N	\N	\N	\N	\N
 eb5f7419-05b7-48fc-95d8-30767dc8e1b5	87c98256-6c40-4fe4-a83c-67f11730b937	2025-12-02 02:13:38.487825+00	2025-12-02 02:13:38.487825+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.122.117.220	\N	\N	\N	\N	\N
 5e10f96e-6a26-4b50-8493-faf501cd8d4b	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 02:45:51.475766+00	2025-12-02 02:45:51.475766+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.123.29	\N	\N	\N	\N	\N
-7377664c-2637-4987-9764-2a658cb81df6	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-11-30 17:00:49.643648+00	2025-11-30 17:00:49.643648+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.22.66	\N	\N	\N	\N	\N
+05800afe-b457-422f-bf44-eaadd947a8d3	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-10 15:00:32.622709+00	2025-12-10 15:00:32.622709+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.18.250	\N	\N	\N	\N	\N
 ebd26c52-6fcb-44b7-bf5e-1f5c2f5eb62f	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 11:51:12.135175+00	2025-12-01 11:51:12.135175+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.122	\N	\N	\N	\N	\N
 fe574db9-8589-4ed8-8093-7cf36fdaa183	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-01 12:10:01.78049+00	2025-12-01 12:10:01.78049+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.122	\N	\N	\N	\N	\N
 130622f3-8814-43f2-ab04-07deeb071305	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 02:55:58.832468+00	2025-12-02 02:55:58.832468+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.45.1	\N	\N	\N	\N	\N
-9072efc6-d072-466b-8d85-962a4a015fb7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-03 17:01:55.776247+00	2025-12-03 17:01:55.776247+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.98.249	\N	\N	\N	\N	\N
+d00ae7b2-fa3f-49b3-85f5-586bf918f813	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 15:14:32.60498+00	2025-12-10 15:14:32.60498+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.51	\N	\N	\N	\N	\N
 647034fc-8606-4010-b39a-7591b93896c4	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-03 07:15:23.290296+00	2025-12-04 02:00:47.102945+00	\N	aal1	\N	2025-12-04 02:00:47.102847	Dart/3.10 (dart:io)	140.213.51.15	\N	\N	\N	\N	\N
 d91bd682-7055-46f8-be57-c8aaeb9d48a9	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 02:03:53.15511+00	2025-12-04 02:03:53.15511+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.51.15	\N	\N	\N	\N	\N
 98921f07-3fcf-42ef-988c-14ef5c39c9c2	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 05:34:03.714171+00	2025-12-02 05:34:03.714171+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.203	\N	\N	\N	\N	\N
 83aa4d4f-9c80-4929-b939-8d22ebf83ab1	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 05:34:20.726169+00	2025-12-02 05:34:20.726169+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.203	\N	\N	\N	\N	\N
 4585e0a2-1ded-45cb-9e67-fe3af0f0f909	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-02 05:41:48.564389+00	2025-12-02 05:41:48.564389+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.203	\N	\N	\N	\N	\N
+4bf9a3da-73c4-4494-b018-99f26a8276ce	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 15:18:56.490248+00	2025-12-10 15:18:56.490248+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.51	\N	\N	\N	\N	\N
 34f9f2f2-3037-43c4-9808-532631095984	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 02:17:39.260199+00	2025-12-04 02:17:39.260199+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.43.208	\N	\N	\N	\N	\N
 ad49c2b7-5597-4ddb-93ef-4eb25488c922	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 02:28:05.008933+00	2025-12-04 02:28:05.008933+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.43.208	\N	\N	\N	\N	\N
-8e3c8e6e-7a78-4289-87e3-c2337f11d92b	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-12-01 13:18:49.581572+00	2025-12-01 13:18:49.581572+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.97	\N	\N	\N	\N	\N
-70787eac-d9f7-40a7-b378-7f37fce6b9c1	575538d0-ec9f-4ade-ac19-8c17f1453900	2025-12-01 13:19:03.198057+00	2025-12-01 13:19:03.198057+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.145.97	\N	\N	\N	\N	\N
 e321af3b-729b-4ceb-8717-6e6fc6a39186	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	2025-12-04 12:26:08.647702+00	2025-12-04 12:26:08.647702+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.10.97.117	\N	\N	\N	\N	\N
 371dc252-30dc-44d5-b788-8927ee893f6f	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-02 03:44:42.751011+00	2025-12-02 03:44:42.751011+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.144.136	\N	\N	\N	\N	\N
 237566cd-275f-40e6-a1cc-6f43f0deb46e	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-08 04:23:47.759149+00	2025-12-08 04:23:47.759149+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.105.79	\N	\N	\N	\N	\N
@@ -4193,10 +4334,22 @@ b3bd392d-d2dc-4932-9c7d-61aafa71eda8	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-1
 28d726be-7a14-4db3-bd2a-64910948f3a7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 03:45:20.020847+00	2025-12-09 03:45:20.020847+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.45.45	\N	\N	\N	\N	\N
 ae577d85-d2fc-470f-9112-d96f461d7126	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-04 03:04:10.288577+00	2025-12-04 03:04:10.288577+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.43.208	\N	\N	\N	\N	\N
 c2acfda3-ea27-41ff-8750-0f41b1525471	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 03:56:36.746357+00	2025-12-09 03:56:36.746357+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.123.27	\N	\N	\N	\N	\N
+0a82f94a-ca36-444c-a516-be4d33f6815f	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 15:22:16.085873+00	2025-12-10 15:22:16.085873+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.157	\N	\N	\N	\N	\N
+143bf5bc-ecc2-4b80-81dc-4d2099b51b31	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 04:30:04.016354+00	2025-12-09 04:30:04.016354+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	182.253.123.27	\N	\N	\N	\N	\N
+9b146bfd-78bc-43ad-bbd9-6aa0e24cf141	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 07:28:52.498181+00	2025-12-09 07:28:52.498181+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.118	\N	\N	\N	\N	\N
 c28259b9-0e4d-4225-b02d-5ba75df5c5d5	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-02 05:12:26.625927+00	2025-12-02 05:12:26.625927+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.10.148.203	\N	\N	\N	\N	\N
+023380a6-60c5-4806-80cb-8c4f70c12c38	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 07:50:39.064881+00	2025-12-09 07:50:39.064881+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	203.78.124.108	\N	\N	\N	\N	\N
+f9480e33-e58f-4cb0-b32a-e4b1a6b7c0ca	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 15:36:47.805132+00	2025-12-10 15:36:47.805132+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.122.115.152	\N	\N	\N	\N	\N
+daed41f1-2fc0-4568-b111-81ed069ae6a0	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 15:56:43.874224+00	2025-12-09 15:56:43.874224+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.100.48	\N	\N	\N	\N	\N
 0d487614-b31a-43c3-bc56-ca6a94267d76	c9e5376f-6a51-46f4-bd7a-7599c4a86595	2025-12-03 04:13:57.951631+00	2025-12-03 04:13:57.951631+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.49.141	\N	\N	\N	\N	\N
 53ee4805-44d2-4bce-b4d1-81ad02f149b4	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-03 04:20:32.488411+00	2025-12-03 04:20:32.488411+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.38.28	\N	\N	\N	\N	\N
-0ee6dc5d-b149-4874-9b53-86ca4cafdbe1	7d65be34-1117-4e69-a6c5-cc3866400df5	2025-12-03 04:50:22.367317+00	2025-12-03 04:50:22.367317+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.37.174	\N	\N	\N	\N	\N
+2f597856-2e00-4bf6-a716-fae165d33a22	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 15:52:54.439853+00	2025-12-10 15:52:54.439853+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.157	\N	\N	\N	\N	\N
+036aef63-57af-41fa-8798-56b4e03e5c31	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-09 16:12:27.361756+00	2025-12-09 16:12:27.361756+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.41.246	\N	\N	\N	\N	\N
+d37914c4-63ae-4da5-9c06-b1c028dfcdc9	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-10 15:55:34.417574+00	2025-12-10 15:55:34.417574+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	114.122.115.152	\N	\N	\N	\N	\N
+9072efc6-d072-466b-8d85-962a4a015fb7	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-03 17:01:55.776247+00	2025-12-10 16:00:15.389031+00	\N	aal1	\N	2025-12-10 16:00:15.388935	Dart/3.9 (dart:io)	182.10.99.20	\N	\N	\N	\N	\N
+a5350822-6d17-4455-baab-070f8fa53ef4	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-10 16:05:22.438617+00	2025-12-10 16:05:22.438617+00	\N	aal1	\N	\N	Dart/3.9 (dart:io)	182.10.99.20	\N	\N	\N	\N	\N
+3ca5a2c7-6fac-4b57-9719-331ff0cf4788	4f8f6708-17d2-4df7-a0fd-8046df660ca4	2025-12-10 16:08:20.22619+00	2025-12-10 16:08:20.22619+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.99.157	\N	\N	\N	\N	\N
+545c5a33-77d2-46e3-8e70-a068acacd7a2	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-09 17:20:42.33876+00	2025-12-09 17:20:42.33876+00	\N	aal1	\N	\N	Dart/3.10 (dart:io)	140.213.49.212	\N	\N	\N	\N	\N
 \.
 
 
@@ -4221,24 +4374,23 @@ COPY auth.sso_providers (id, resource_id, created_at, updated_at, disabled) FROM
 --
 
 COPY auth.users (instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, invited_at, confirmation_token, confirmation_sent_at, recovery_token, recovery_sent_at, email_change_token_new, email_change, email_change_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, is_super_admin, created_at, updated_at, phone, phone_confirmed_at, phone_change, phone_change_token, phone_change_sent_at, email_change_token_current, email_change_confirm_status, banned_until, reauthentication_token, reauthentication_sent_at, is_sso_user, deleted_at, is_anonymous) FROM stdin;
-00000000-0000-0000-0000-000000000000	87c98256-6c40-4fe4-a83c-67f11730b937	authenticated	authenticated	lukasjoo17@gmail.com	$2a$10$6lGNuZn62pxWNFLBu4Nox.Pm7xcGdplCAiyjQhQIqRxLWG5sU684u	2025-11-26 16:38:47.585876+00	\N		\N	pkce_95a088053ef38d264e4c4f0cd6629e3af49eb776cf2bd6c250ef4ce3	2025-12-04 06:21:08.190202+00			\N	2025-12-09 03:56:15.083589+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-11-19 06:22:50.723939+00	2025-12-09 03:56:15.092178+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	4f8f6708-17d2-4df7-a0fd-8046df660ca4	authenticated	authenticated	rezkysukajaya@gmail.com	$2a$10$HZXVA8IEqfN3J9/8Nv3W9uK./IXFgXzKUsLCGUT2CtknBWxMLKvTe	2025-12-01 04:16:15.150268+00	\N		\N	pkce_b0957062ff512280e9a5e1e2f0d170a51133e7ba2bd54ff26458a68f	2025-12-01 05:27:56.536733+00			\N	2025-12-10 16:08:20.223666+00	{"provider": "email", "providers": ["email"]}	{"sub": "4f8f6708-17d2-4df7-a0fd-8046df660ca4", "email": "rezkysukajaya@gmail.com", "full_name": "Rezky Asmir", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:16:15.103232+00	2025-12-10 16:08:20.228732+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	87c98256-6c40-4fe4-a83c-67f11730b937	authenticated	authenticated	lukasjoo17@gmail.com	$2a$10$6lGNuZn62pxWNFLBu4Nox.Pm7xcGdplCAiyjQhQIqRxLWG5sU684u	2025-11-26 16:38:47.585876+00	\N		\N	pkce_95a088053ef38d264e4c4f0cd6629e3af49eb776cf2bd6c250ef4ce3	2025-12-04 06:21:08.190202+00			\N	2025-12-10 15:04:22.47873+00	{"provider": "email", "providers": ["email"]}	{"email_verified": true}	\N	2025-11-19 06:22:50.723939+00	2025-12-10 15:04:22.538788+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	fbc43a0a-9cf3-47e3-be55-d8c4456582dd	authenticated	authenticated	amandakayuambon@gmail.com	$2a$10$AAcmW2wKk6rDjON2O.4xHOVR1viD1Z83cUl7Zby9Hu0L7NAw74MDq	2025-12-01 04:24:16.935849+00	\N		\N	pkce_3b2651f8ea7abbbcc658fce6492871b179594fe7e247d032084269b8	2025-12-01 11:33:39.145997+00			\N	2025-12-04 12:26:08.647609+00	{"provider": "email", "providers": ["email"]}	{"sub": "fbc43a0a-9cf3-47e3-be55-d8c4456582dd", "email": "amandakayuambon@gmail.com", "full_name": "Amanda Juliet", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:24:16.923798+00	2025-12-04 12:26:08.667047+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	authenticated	authenticated	lewis@gmail.com	$2a$10$QHBFH9McZWGoPjHZ/UYCoOXPbm71FNUoGHnZJadjxyk/ihBuDmKGa	2025-12-01 04:59:31.418604+00	\N		\N		\N			\N	2025-12-04 04:16:50.601262+00	{"provider": "email", "providers": ["email"]}	{"sub": "854b3bf3-77a5-46ae-8c00-d2ab86f78cbb", "email": "lewis@gmail.com", "full_name": "Lewis Hamilton", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:59:31.380305+00	2025-12-04 04:16:50.60466+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	4f8f6708-17d2-4df7-a0fd-8046df660ca4	authenticated	authenticated	rezkysukajaya@gmail.com	$2a$10$HZXVA8IEqfN3J9/8Nv3W9uK./IXFgXzKUsLCGUT2CtknBWxMLKvTe	2025-12-01 04:16:15.150268+00	\N		\N	pkce_b0957062ff512280e9a5e1e2f0d170a51133e7ba2bd54ff26458a68f	2025-12-01 05:27:56.536733+00			\N	2025-12-09 04:21:32.767452+00	{"provider": "email", "providers": ["email"]}	{"sub": "4f8f6708-17d2-4df7-a0fd-8046df660ca4", "email": "rezkysukajaya@gmail.com", "full_name": "Rezky Asmir", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:16:15.103232+00	2025-12-09 04:21:32.772481+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	575538d0-ec9f-4ade-ac19-8c17f1453900	authenticated	authenticated	sukajaya@gmail.com	$2a$10$zodvL90BhnflY6x400AmzutV2w00L6AVMcPQxY4YNl4RQ2Jeck7lW	2025-11-19 10:53:10.930541+00	\N		\N		\N			\N	2025-12-01 13:19:03.19795+00	{"provider": "email", "providers": ["email"]}	{"sub": "575538d0-ec9f-4ade-ac19-8c17f1453900", "email": "sukajaya@gmail.com", "full_name": "Admin SPPG Sukajaya Lembang 1", "email_verified": true, "phone_verified": false}	\N	2025-11-19 10:53:10.924196+00	2025-12-01 13:19:03.200183+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	21ece05e-1290-49e2-8b53-ec02e97c673a	authenticated	authenticated	andikabinawisata@gmail.com	$2a$10$QjFVVYw0mpZcagwJ81vye.SKFJFyG7U0IjLTmzvKd05PXm1wO5NeC	2025-12-01 05:01:01.192633+00	\N		\N		\N			\N	2025-12-04 04:05:40.524867+00	{"provider": "email", "providers": ["email"]}	{"sub": "21ece05e-1290-49e2-8b53-ec02e97c673a", "email": "andikabinawisata@gmail.com", "full_name": "Andika Rill", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:01:01.098248+00	2025-12-04 04:05:40.542944+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	a1c4810c-8829-4f1d-a1c3-691c8c573c29	authenticated	authenticated	smpn6_7a@gmail.com	$2a$10$qdjLdgj3ivlfxKBw20Cng.p54Evdsklrrx9mZx371T9vkMh9cH7sG	2025-12-01 05:06:38.035916+00	\N		\N		\N			\N	2025-12-03 05:15:08.440844+00	{"provider": "email", "providers": ["email"]}	{"sub": "a1c4810c-8829-4f1d-a1c3-691c8c573c29", "email": "smpn6_7a@gmail.com", "full_name": "Siti Nurhaliza", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:06:38.025098+00	2025-12-03 05:15:08.443013+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	authenticated	authenticated	vincentsmpn6@gmail.com	$2a$10$C3wqhJHOtkxiEm0wzz6i/etcDOJm/k4W0HqQvRTjaZMCk0/ojkJGS	2025-12-01 05:00:31.204894+00	\N		\N		\N			\N	2025-12-04 06:36:14.489344+00	{"provider": "email", "providers": ["email"]}	{"sub": "62e03fa9-7cbb-4090-b5c2-d59bfc268bda", "email": "vincentsmpn6@gmail.com", "full_name": "Vincent Hernandes", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:00:31.197654+00	2025-12-04 06:36:14.494331+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	759f9b43-ea4d-44fb-a90c-54283028423c	authenticated	authenticated	aryabhayangkari19@gmail.com	$2a$10$GVSg9zXjc3CaL4oh8gJESOe1xIFcQJfb.LLOWrtFfghTeSfgG1Iru	2025-12-01 05:01:30.392855+00	\N		\N		\N			\N	2025-12-03 04:35:41.836877+00	{"provider": "email", "providers": ["email"]}	{"sub": "759f9b43-ea4d-44fb-a90c-54283028423c", "email": "aryabhayangkari19@gmail.com", "full_name": "Arya Well", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:01:30.382701+00	2025-12-03 04:35:41.839196+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	authenticated	authenticated	vincentsmpn6@gmail.com	$2a$10$C3wqhJHOtkxiEm0wzz6i/etcDOJm/k4W0HqQvRTjaZMCk0/ojkJGS	2025-12-01 05:00:31.204894+00	\N		\N		\N			\N	2025-12-09 19:18:21.869909+00	{"provider": "email", "providers": ["email"]}	{"sub": "62e03fa9-7cbb-4090-b5c2-d59bfc268bda", "email": "vincentsmpn6@gmail.com", "full_name": "Vincent Hernandes", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:00:31.197654+00	2025-12-09 19:18:21.884347+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	authenticated	authenticated	khaerulpancasila@gmail.com	$2a$10$fqZaWgLD2ViyTLkVywJQ2etwDzw1dpTSVcchWAmEmsB7Rv5C4tXXi	2025-12-01 05:03:17.524072+00	\N		\N	pkce_e054dfca7b2680e55ced8f561e807ae8f74ddf9d19b8a0f363c5319a	2025-12-01 05:27:33.870997+00			\N	2025-12-10 08:32:18.325973+00	{"provider": "email", "providers": ["email"]}	{"sub": "e590dca8-4e0b-4aeb-9021-fe5ac9157f3f", "email": "khaerulpancasila@gmail.com", "full_name": "Khaerul Gacor", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:03:17.514425+00	2025-12-10 15:36:43.996421+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	89c9ec4e-8319-4966-b292-ce7c256c7b31	authenticated	authenticated	max@gmail.com	$2a$10$ZrtCM/sjV59WrcWKNkUEIes3rPTtGiIVU62NO1ByNtyGotQAA0CNi	2025-12-01 04:59:46.782343+00	\N		\N		\N			\N	2025-12-10 16:05:22.438506+00	{"provider": "email", "providers": ["email"]}	{"sub": "89c9ec4e-8319-4966-b292-ce7c256c7b31", "email": "max@gmail.com", "full_name": "Max Verstappen", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:59:46.763335+00	2025-12-10 16:05:22.494551+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	56624f75-13c4-4487-ae0f-87f4f9115a42	authenticated	authenticated	smpn6_8a@gmail.com	$2a$10$s8nwjdhXNW/h7ymXifRW/e8DAzvR5mKKvZz6tAB34cR7IxuFUdDya	2025-12-01 05:07:24.16681+00	\N		\N		\N			\N	2025-12-10 16:08:08.040779+00	{"provider": "email", "providers": ["email"]}	{"sub": "56624f75-13c4-4487-ae0f-87f4f9115a42", "email": "smpn6_8a@gmail.com", "full_name": "William Nicole", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:07:24.162316+00	2025-12-10 16:08:08.044753+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	c9e5376f-6a51-46f4-bd7a-7599c4a86595	authenticated	authenticated	binawisata_11a@gmail.com	$2a$10$uVbv0h6Hho7v/tZJRV2JyOkS2L/XI.iZWkVFqk.1CpbiroQsz278K	2025-12-03 04:13:57.94336+00	\N		\N		\N			\N	2025-12-04 06:30:46.201462+00	{"provider": "email", "providers": ["email"]}	{"sub": "c9e5376f-6a51-46f4-bd7a-7599c4a86595", "email": "binawisata_11a@gmail.com", "full_name": "Jeremy Thomas Alva Edison", "email_verified": true, "phone_verified": false}	\N	2025-12-03 04:13:57.924446+00	2025-12-04 06:30:46.205036+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	authenticated	authenticated	khaerulpancasila@gmail.com	$2a$10$fqZaWgLD2ViyTLkVywJQ2etwDzw1dpTSVcchWAmEmsB7Rv5C4tXXi	2025-12-01 05:03:17.524072+00	\N		\N	pkce_e054dfca7b2680e55ced8f561e807ae8f74ddf9d19b8a0f363c5319a	2025-12-01 05:27:33.870997+00			\N	2025-12-04 06:18:37.357764+00	{"provider": "email", "providers": ["email"]}	{"sub": "e590dca8-4e0b-4aeb-9021-fe5ac9157f3f", "email": "khaerulpancasila@gmail.com", "full_name": "Khaerul Gacor", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:03:17.514425+00	2025-12-04 06:18:37.375835+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	56624f75-13c4-4487-ae0f-87f4f9115a42	authenticated	authenticated	smpn6_8a@gmail.com	$2a$10$s8nwjdhXNW/h7ymXifRW/e8DAzvR5mKKvZz6tAB34cR7IxuFUdDya	2025-12-01 05:07:24.16681+00	\N		\N		\N			\N	2025-12-04 06:44:10.204032+00	{"provider": "email", "providers": ["email"]}	{"sub": "56624f75-13c4-4487-ae0f-87f4f9115a42", "email": "smpn6_8a@gmail.com", "full_name": "William Nicole", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:07:24.162316+00	2025-12-04 12:25:34.57792+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	7d65be34-1117-4e69-a6c5-cc3866400df5	authenticated	authenticated	smpn6_8b@gmail.com	$2a$10$I.x69DwFa0FR1PIIPWqOVe.ASloLXx3SjnkPuwMV6Gww.eWqRoa/.	2025-12-01 05:08:01.013572+00	\N		\N		\N			\N	2025-12-03 05:14:42.620337+00	{"provider": "email", "providers": ["email"]}	{"sub": "7d65be34-1117-4e69-a6c5-cc3866400df5", "email": "smpn6_8b@gmail.com", "full_name": "Kevin Just", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:08:01.0092+00	2025-12-03 05:14:42.622373+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	759f9b43-ea4d-44fb-a90c-54283028423c	authenticated	authenticated	aryabhayangkari19@gmail.com	$2a$10$GVSg9zXjc3CaL4oh8gJESOe1xIFcQJfb.LLOWrtFfghTeSfgG1Iru	2025-12-01 05:01:30.392855+00	\N		\N		\N			\N	2025-12-09 17:50:16.27242+00	{"provider": "email", "providers": ["email"]}	{"sub": "759f9b43-ea4d-44fb-a90c-54283028423c", "email": "aryabhayangkari19@gmail.com", "full_name": "Arya Well", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:01:30.382701+00	2025-12-09 17:50:16.27751+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	31c9657e-17b6-4f66-b3a3-d623c78dbdac	authenticated	authenticated	deffapgri@gmail.com	$2a$10$6RzJ.g1cXPPwbEqPRzKFL.jJvLFaAdfLc8ZimJArCBcHJB.GRjfzu	2025-12-01 05:02:08.51293+00	\N		\N		\N			\N	2025-12-04 04:07:45.158733+00	{"provider": "email", "providers": ["email"]}	{"sub": "31c9657e-17b6-4f66-b3a3-d623c78dbdac", "email": "deffapgri@gmail.com", "full_name": "Deffa Momo", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:02:08.495788+00	2025-12-04 04:07:45.162069+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	89c9ec4e-8319-4966-b292-ce7c256c7b31	authenticated	authenticated	max@gmail.com	$2a$10$ZrtCM/sjV59WrcWKNkUEIes3rPTtGiIVU62NO1ByNtyGotQAA0CNi	2025-12-01 04:59:46.782343+00	\N		\N		\N			\N	2025-12-04 06:20:46.574072+00	{"provider": "email", "providers": ["email"]}	{"sub": "89c9ec4e-8319-4966-b292-ce7c256c7b31", "email": "max@gmail.com", "full_name": "Max Verstappen", "email_verified": true, "phone_verified": false}	\N	2025-12-01 04:59:46.763335+00	2025-12-04 06:20:46.646015+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	df5a3994-22e3-4049-bd49-4a02a52828e6	authenticated	authenticated	aleykaryawangi@gmail.com	$2a$10$4ejA9zp40ObDSAyfRm999.WS33m8TdZRKq7Ztm876CIC0AWaNHUQS	2025-12-01 05:19:18.060645+00	\N		\N	pkce_7e4a5c25307c520b34c26000f504273923f4d9bdb8c68dab4762c743	2025-12-01 05:28:08.201776+00			\N	2025-12-04 06:22:02.886296+00	{"provider": "email", "providers": ["email"]}	{"sub": "df5a3994-22e3-4049-bd49-4a02a52828e6", "email": "aleykaryawangi@gmail.com", "full_name": "Aley Tirta", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:19:18.049991+00	2025-12-04 06:22:02.888385+00	\N	\N			\N		0	\N		\N	f	\N	f
-00000000-0000-0000-0000-000000000000	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	authenticated	authenticated	smpn6_7b@gmail.com	$2a$10$AGQe4J.i2O/viSzLysPsXeXYG90hg4wcjmMf/czvZeAGSskh0CYvC	2025-12-01 05:06:58.608578+00	\N		\N		\N			\N	2025-12-04 06:30:53.908771+00	{"provider": "email", "providers": ["email"]}	{"sub": "3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf", "email": "smpn6_7b@gmail.com", "full_name": "Eiza Sahputra", "email_verified": true, "phone_verified": false}	\N	2025-12-01 05:06:58.601347+00	2025-12-04 06:30:53.911083+00	\N	\N			\N		0	\N		\N	f	\N	f
 00000000-0000-0000-0000-000000000000	9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	authenticated	authenticated	islamal_12a@gmail.com	$2a$10$53mcxhvi787wKlj3DdSuzOHIJANkvZ.Z.uo57G3As4WzHMJXIrnn2	2025-12-09 04:20:20.754757+00	\N		\N		\N			\N	2025-12-09 04:21:25.933969+00	{"provider": "email", "providers": ["email"]}	{"sub": "9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3", "email": "islamal_12a@gmail.com", "full_name": "Yogi Wisata", "email_verified": true, "phone_verified": false}	\N	2025-12-09 04:20:20.712436+00	2025-12-09 04:21:25.936657+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	authenticated	authenticated	george@gmail.com	$2a$10$1BXolCOjviwVE5Qg8XpPe.zqcr2P/uiOHG4eQgg/m4ky8BLLr00sa	2025-12-09 07:35:39.67665+00	\N		\N		\N			\N	2025-12-09 07:35:39.686163+00	{"provider": "email", "providers": ["email"]}	{"sub": "f58ca1d9-1e13-4725-a8b9-a5c8d8456de0", "email": "george@gmail.com", "full_name": "George Russel", "email_verified": true, "phone_verified": false}	\N	2025-12-09 07:35:39.637249+00	2025-12-09 07:35:39.716674+00	\N	\N			\N		0	\N		\N	f	\N	f
+00000000-0000-0000-0000-000000000000	dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	authenticated	authenticated	leclerc@gmail.com	$2a$10$XWGc3jU56.eV2eeHdw6Pm.xebl91sCqVlj2OcyeyVibkVbPZOx3.q	2025-12-09 07:36:02.463256+00	\N		\N		\N			\N	2025-12-09 07:36:02.467362+00	{"provider": "email", "providers": ["email"]}	{"sub": "dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446", "email": "leclerc@gmail.com", "full_name": "Charles Leclerc", "email_verified": true, "phone_verified": false}	\N	2025-12-09 07:36:02.445056+00	2025-12-09 07:36:02.469953+00	\N	\N			\N		0	\N		\N	f	\N	f
 \.
 
 
@@ -4255,14 +4407,11 @@ COPY public.change_request_details (id, request_id, menu_id, new_quantity, new_s
 --
 
 COPY public.change_requests (id, sppg_id, school_id, requester_id, request_type, old_notes, status, admin_response, created_at, updated_at) FROM stdin;
-6f76e84b-c4fb-4f52-afb4-6a449c9a355b	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Jadwal	REQ_JADWAL: {"Senin":"10:00:00","Selasa":"10:00:00","Rabu":"10:00:00","Kamis":"10:00:00","Jumat":"10:00:00","Sabtu":"10:00:00"} | REQ_TOLERANCE: 45 | Note: 	approved	OK	2025-12-02 03:13:03.680934+00	2025-12-02 10:13:36.507325+00
-6a4cdd45-3ae1-4c4f-b65e-86164984634f	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU: Saus Tomat Sachet, Chicken Bolognese, Ayam Karage, Ayam Geprek Katsu, Wortel Jagung Steam | Note: 	approved	OK	2025-12-02 03:14:50.119721+00	2025-12-02 10:15:20.297678+00
-76719540-849b-489b-a8a0-478953fadf57	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Tambah/Kurang Porsi	REQ_PORSI: 420 | Note: 	approved	OK	2025-12-02 03:15:03.470845+00	2025-12-02 10:15:21.688852+00
-4e913829-16ff-4d88-97d6-20083326765e	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU: Tahu Bejek Kemangi, Chicken Bolognese, Ayam Karage, Ayam Geprek Katsu, Wortel Jagung Steam | Note: 	approved	Tidak sesuai 	2025-12-02 03:18:03.836833+00	2025-12-02 10:18:27.534551+00
-b9b25211-301d-45ed-bc96-1d98f5fab17f	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU: Mix Vegetable, Chicken Bolognese, Ayam Karage, Ayam Geprek Katsu, Wortel Jagung Steam | Note: 	rejected	tidak sesuai 	2025-12-02 03:18:40.669997+00	2025-12-02 10:18:54.094643+00
-600cd14e-0181-4918-8223-103c513a35e7	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	eb691e6a-4655-4d7b-a1bd-954851b48313	31c9657e-17b6-4f66-b3a3-d623c78dbdac	Tambah/Kurang Porsi	REQ_PORSI: 80 | Note: 	approved	OK	2025-12-04 04:08:07.066778+00	2025-12-04 11:08:27.887992+00
-fd0ff989-8b9e-4e12-8a66-9957a822a044	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Jadwal	REQ_JADWAL: {"Senin":"10:00:00","Selasa":"08:00:00","Rabu":"10:00:00","Kamis":"10:00:00","Jumat":"10:00:00","Sabtu":"10:00:00"} | REQ_TOLERANCE: 45 | Note: 	approved	OK	2025-12-04 04:24:58.001593+00	2025-12-04 11:25:13.311791+00
-23514257-e1b9-4154-a354-3d2fbe597af9	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU: Tumis Tahu Wortel, Chicken Bolognese, Ayam Karage, Ayam Geprek Katsu, Wortel Jagung Steam | Note: 	pending	\N	2025-12-04 06:37:29.753646+00	\N
+db1300d6-9615-4a3d-972d-2ecbafa42168	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU_SET_ID: f0eff4ab-3e65-40f4-b286-5213ca678f52 | OLD_NAME: SMPN 6 Lembang - Custom Menu Set 6 (Dimsum-Fries) | NEW_NAME: Menu Set 5 (Katsu Burger) | Note: 	pending	\N	2025-12-09 08:54:17.639948+00	\N
+ea87d547-5e0b-48e4-8565-96f91a1bb222	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Tambah/Kurang Porsi	REQ_PORSI: 450 | Note: 	approved	Terlalu Banyak 	2025-12-09 08:54:28.23005+00	2025-12-09 16:07:22.477888+00
+89d68d18-ae33-4c12-b118-40abd9719637	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Jadwal	REQ_JADWAL: {"Senin":"10:00:00","Selasa":"09:30:00","Rabu":"10:00:00","Kamis":"10:00:00","Jumat":"10:00:00","Sabtu":"10:00:00"} | REQ_TOLERANCE: 45 | Note: 	rejected	Terlalu Pagi 	2025-12-09 08:54:11.959936+00	2025-12-09 16:07:32.086249+00
+6deb94cf-2a32-441a-9cd8-383cda072957	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Perubahan Menu	REQ_MENU_SET_ID: c7e2865b-2dee-437c-850b-a85586b954a4 | OLD_NAME: Menu Set 4 (Karage-Bejek) | NEW_NAME: Menu Set 4 (Karage-Bejek) | Note: 	cancelled	Cancelled by Coordinator/User	2025-12-09 17:10:00.945748+00	\N
+b8fed282-cb4d-4738-af55-b898f582044f	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	42b865b0-09ff-43d2-ad73-61d6784f9fb0	759f9b43-ea4d-44fb-a90c-54283028423c	Perubahan Menu	REQ_MENU_SET_ID: fa1205a8-5771-4668-95a5-2548dfd470a1 | OLD_NAME: Menu Set 5 (Katsu Burger) | NEW_NAME: Menu Set 3 (Nasi-Geprek) | Note: 	pending	\N	2025-12-09 17:21:33.762553+00	\N
 \.
 
 
@@ -4271,6 +4420,7 @@ fd0ff989-8b9e-4e12-8a66-9957a822a044	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb
 --
 
 COPY public.class_receptions (id, stop_id, teacher_id, class_name, qty_received, notes, created_at, issue_type, proof_photo_url, admin_response, resolved_at) FROM stdin;
+54b55cda-c8ba-4539-9c8c-c84c6137793b	293aebaf-b428-48c7-bdfd-a93bf5991950	56624f75-13c4-4487-ae0f-87f4f9115a42	8A	35	[Porsi Kurang (Terdampak: 5)] 	2025-12-10 15:21:33.14745+00	Porsi Kurang	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/teacher_reception/1765380091897.jpg	\N	\N
 \.
 
 
@@ -4279,6 +4429,7 @@ COPY public.class_receptions (id, stop_id, teacher_id, class_name, qty_received,
 --
 
 COPY public.delivery_routes (id, date, sppg_id, vehicle_id, courier_id, status, start_time, end_time, load_proof_photo_url, menu_id, departure_time) FROM stdin;
+3c86c486-3a4b-482c-907b-7562ab5c791d	2025-12-10	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	0df5af82-9115-48b8-aff3-35a8cf265f00	89c9ec4e-8319-4966-b292-ce7c256c7b31	active	2025-12-09 15:56:29.273204+00	\N	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/loading_proof/1765270579145.jpg	\N	07:08:00
 \.
 
 
@@ -4286,7 +4437,24 @@ COPY public.delivery_routes (id, date, sppg_id, vehicle_id, courier_id, status, 
 -- Data for Name: delivery_stops; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.delivery_stops (id, route_id, school_id, sequence_order, status, arrival_time, completion_time, received_qty, reception_notes, proof_photo_url, recipient_name, admin_response, resolved_at, courier_proof_photo_url, estimated_arrival_time) FROM stdin;
+COPY public.delivery_stops (id, route_id, school_id, sequence_order, status, arrival_time, completion_time, received_qty, issue_details, proof_photo_url, recipient_name, admin_response, resolved_at, courier_proof_photo_url, estimated_arrival_time, koordinator_id) FROM stdin;
+7248cc6b-5e62-4198-93ed-c31bf61a9e9f	3c86c486-3a4b-482c-907b-7562ab5c791d	536e1c09-bdad-485c-af26-5048c5a8ce86	2	completed	2025-12-10 00:00:27.865573+00	\N	0	\N	\N	\N	\N	\N	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/arrival_proof/1765299627443.jpg	07:26:00	\N
+8649e82f-6c92-4092-8dae-8be2aa635d51	3c86c486-3a4b-482c-907b-7562ab5c791d	94b270c8-272b-4cf3-b444-a2180fdc380c	3	completed	2025-12-10 00:04:15.167992+00	\N	0	\N	\N	\N	\N	\N	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/arrival_proof/1765299854338.jpg	07:36:00	\N
+8bc0ee8e-3d54-449d-808d-eeda8fee35ff	3c86c486-3a4b-482c-907b-7562ab5c791d	eb691e6a-4655-4d7b-a1bd-954851b48313	4	completed	2025-12-10 00:04:23.891477+00	\N	0	\N	\N	\N	\N	\N	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/arrival_proof/1765299863368.jpg	07:50:00	\N
+293aebaf-b428-48c7-bdfd-a93bf5991950	3c86c486-3a4b-482c-907b-7562ab5c791d	5d61cb08-02a2-4886-baaf-13a794afe9de	1	issue_reported	2025-12-09 23:53:02.239556+00	2025-12-10 00:46:46.261645+00	450	"[{\\"type\\":\\"Kemasan Rusak\\",\\"notes\\":\\"Rusak bocor\\",\\"qty_impacted\\":20,\\"received_qty\\":null,\\"expected_qty\\":450},{\\"type\\":\\"Terlambat\\",\\"notes\\":\\"\\",\\"qty_impacted\\":100,\\"received_qty\\":null,\\"expected_qty\\":450},{\\"type\\":\\"Jumlah Tidak Sesuai\\",\\"notes\\":\\"\\",\\"qty_impacted\\":0,\\"received_qty\\":400,\\"expected_qty\\":450}]"	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/coordinator_reception/1765302405499.jpg	Koordinator Sekolah	Kami kirim ganti rugi 20 kotak besok 	2025-12-10 02:18:13.122897+00	https://mqyfrqgfpqwlrloqtpvi.supabase.co/storage/v1/object/public/evidence/arrival_proof/1765299181582.jpg	07:14:00	62e03fa9-7cbb-4090-b5c2-d59bfc268bda
+\.
+
+
+--
+-- Data for Name: menu_sets; Type: TABLE DATA; Schema: public; Owner: -
+--
+
+COPY public.menu_sets (id, sppg_id, set_name, karbo_id, protein_id, sayur_id, buah_id, nabati_id, pelengkap_id, created_at, total_energy, total_protein, total_fat, total_carbs) FROM stdin;
+d0a84b39-fed8-4129-9ba3-586e3fb43672	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Menu Set 1 (Tempe-Spaghetti)	15ea9562-78fa-42b6-8159-1e15f6867d20	79d81db7-9f8d-4f73-851b-2598455bf065	d3eb0076-da01-4388-83b0-17fe0ae76bcd	a4880620-8106-44bb-9b10-0b72643ff0b1	5bfab294-61cc-4c07-a1cd-771c690361cb	\N	2025-12-09 05:16:10.948786+00	455	16	5	49
+947c5f9e-f9ce-4715-aa33-4d63eb7857fe	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Menu Set 2 (Dimsum-Fries)	016e86a8-21b3-4437-89b4-b4f7ce8ff5e9	e1a77cca-eb41-43da-a44b-6174551b5a02	182ef2a8-71f3-4603-aabc-5778282b2624	c3be067a-4e2d-4afb-8dcd-242e21b9a2f8	5bfab294-61cc-4c07-a1cd-771c690361cb	1b74a05b-9328-400a-9543-cb71d0cc8fdb	2025-12-09 05:16:10.948786+00	448	13	23	48
+f0eff4ab-3e65-40f4-b286-5213ca678f52	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Menu Set 5 (Katsu Burger)	9570fb43-b94d-41df-abba-7b413b4b7756	1bad49ed-5e27-4393-a8c4-050656e1337c	44576188-a913-4662-aa16-fc1981392748	a4880620-8106-44bb-9b10-0b72643ff0b1	5d9cad75-c209-4522-9834-27fa8e6a40c0	88cd5658-f7fd-41e1-be80-29ac549bc2b1	2025-12-09 05:16:10.948786+00	360	13	13	47
+fa1205a8-5771-4668-95a5-2548dfd470a1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Menu Set 3 (Nasi-Geprek)	52a55ddd-8720-428a-a77a-28d8b992eab7	1786c2ed-f7c2-4e1f-86d5-4dd274116d28	fd0809e9-82ba-4768-bd75-f2e683d20fa3	a4880620-8106-44bb-9b10-0b72643ff0b1	5d9cad75-c209-4522-9834-27fa8e6a40c0	\N	2025-12-09 07:00:50.496983+00	573	25	12	69
+73191133-cbb7-4b2c-b376-fe470b0489a6	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Menu Set 4 (Karage-Bejek)	52a55ddd-8720-428a-a77a-28d8b992eab7	1e0e3ea5-9da6-4ce9-8c3c-2d077cb06306	6068d724-b68e-4692-acb2-0d712cf3bd87	ac53899e-d8b8-45fd-b0f9-0a0ffd88e186	5d9cad75-c209-4522-9834-27fa8e6a40c0	\N	2025-12-09 17:12:42.089946+00	690	17	21	71
 \.
 
 
@@ -4294,29 +4462,29 @@ COPY public.delivery_stops (id, route_id, school_id, sequence_order, status, arr
 -- Data for Name: menus; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.menus (id, sppg_id, name, category, cooking_duration_minutes, created_at, max_consume_minutes) FROM stdin;
-1bad49ed-5e27-4393-a8c4-050656e1337c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Katsu	Lauk Protein	25	2025-12-01 11:40:00.441879+00	120
-5bfab294-61cc-4c07-a1cd-771c690361cb	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Stik Tempe	Lauk Nabati	20	2025-12-01 11:40:00.441879+00	120
-15ea9562-78fa-42b6-8159-1e15f6867d20	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Spaghetti	Karbo	10	2025-12-01 11:40:00.441879+00	120
-d3eb0076-da01-4388-83b0-17fe0ae76bcd	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Mix Vegetable	Sayur	8	2025-12-01 11:40:00.441879+00	120
-79d81db7-9f8d-4f73-851b-2598455bf065	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Bolognese	Saus/Lauk	15	2025-12-01 11:40:00.441879+00	120
-016e86a8-21b3-4437-89b4-b4f7ce8ff5e9	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	French Fries	Karbo	15	2025-12-01 11:40:00.441879+00	120
-182ef2a8-71f3-4603-aabc-5778282b2624	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Wortel Jagung Steam	Sayur	10	2025-12-01 11:40:00.441879+00	120
-e1a77cca-eb41-43da-a44b-6174551b5a02	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Dimsum	Lauk Protein	12	2025-12-01 11:40:00.441879+00	120
-c3be067a-4e2d-4afb-8dcd-242e21b9a2f8	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Semangka Potong	Buah	5	2025-12-01 11:40:00.441879+00	120
-1b74a05b-9328-400a-9543-cb71d0cc8fdb	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Saus Tomat Sachet	Pelengkap	0	2025-12-01 11:40:00.441879+00	120
-52a55ddd-8720-428a-a77a-28d8b992eab7	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Nasi Putih	Karbo	30	2025-12-01 11:40:00.441879+00	120
-1786c2ed-f7c2-4e1f-86d5-4dd274116d28	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Ayam Geprek Katsu	Lauk Protein	25	2025-12-01 11:40:00.441879+00	120
-fd0809e9-82ba-4768-bd75-f2e683d20fa3	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Tumis Tahu Wortel	Sayur	10	2025-12-01 11:40:00.441879+00	120
-d5c6b2bd-3f73-442e-8a3a-09065a1f4911	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Timun & Tomat Iris	Sayur	5	2025-12-01 11:40:00.441879+00	120
-a4880620-8106-44bb-9b10-0b72643ff0b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Melon Slice	Buah	5	2025-12-01 11:40:00.441879+00	120
-1e0e3ea5-9da6-4ce9-8c3c-2d077cb06306	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Ayam Karage	Lauk Protein	20	2025-12-01 11:40:00.441879+00	120
-5d9cad75-c209-4522-9834-27fa8e6a40c0	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Tahu Bejek Kemangi	Lauk Nabati	15	2025-12-01 11:40:00.441879+00	120
-6068d724-b68e-4692-acb2-0d712cf3bd87	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Salad Coleslaw Mayo	Sayur	10	2025-12-01 11:40:00.441879+00	120
-ac53899e-d8b8-45fd-b0f9-0a0ffd88e186	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Jeruk Manis	Buah	0	2025-12-01 11:40:00.441879+00	120
-9570fb43-b94d-41df-abba-7b413b4b7756	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Roti Bun (Burger)	Karbo	5	2025-12-01 11:40:00.441879+00	120
-44576188-a913-4662-aa16-fc1981392748	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Lettuce & Tomat	Sayur	5	2025-12-01 11:40:00.441879+00	120
-88cd5658-f7fd-41e1-be80-29ac549bc2b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Saus Mayonnaise	Pelengkap	0	2025-12-01 11:40:00.441879+00	120
+COPY public.menus (id, sppg_id, name, category, cooking_duration_minutes, created_at, max_consume_minutes, energy, protein, fat, carbs) FROM stdin;
+79d81db7-9f8d-4f73-851b-2598455bf065	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Bolognese	Lauk Protein	15	2025-12-01 11:40:00.441879+00	120	110	5	2	4
+1bad49ed-5e27-4393-a8c4-050656e1337c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Katsu	Lauk Protein	25	2025-12-01 11:40:00.441879+00	120	150	7	6	7
+5bfab294-61cc-4c07-a1cd-771c690361cb	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Stik Tempe	Lauk Nabati	20	2025-12-01 11:40:00.441879+00	120	110	6	3	3
+15ea9562-78fa-42b6-8159-1e15f6867d20	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Spaghetti	Karbo	10	2025-12-01 11:40:00.441879+00	120	190	3	0	40
+d3eb0076-da01-4388-83b0-17fe0ae76bcd	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Mix Vegetable	Sayur	8	2025-12-01 11:40:00.441879+00	120	20	0	0	0
+016e86a8-21b3-4437-89b4-b4f7ce8ff5e9	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	French Fries	Karbo	15	2025-12-01 11:40:00.441879+00	120	180	2	10	25
+182ef2a8-71f3-4603-aabc-5778282b2624	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Wortel Jagung Steam	Sayur	10	2025-12-01 11:40:00.441879+00	120	20	0	0	4
+e1a77cca-eb41-43da-a44b-6174551b5a02	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Chicken Dimsum	Lauk Protein	12	2025-12-01 11:40:00.441879+00	120	160	6	3	4
+c3be067a-4e2d-4afb-8dcd-242e21b9a2f8	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Semangka Potong	Buah	5	2025-12-01 11:40:00.441879+00	120	30	0	0	7
+1b74a05b-9328-400a-9543-cb71d0cc8fdb	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Saus Tomat Sachet	Pelengkap	0	2025-12-01 11:40:00.441879+00	120	8	0	0	4
+52a55ddd-8720-428a-a77a-28d8b992eab7	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Nasi Putih	Karbo	30	2025-12-01 11:40:00.441879+00	120	250	4	0	50
+1786c2ed-f7c2-4e1f-86d5-4dd274116d28	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Ayam Geprek Katsu	Lauk Protein	25	2025-12-01 11:40:00.441879+00	120	260	10	9	8
+fd0809e9-82ba-4768-bd75-f2e683d20fa3	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Tumis Tahu Wortel	Sayur	10	2025-12-01 11:40:00.441879+00	120	30	0	0	0
+d5c6b2bd-3f73-442e-8a3a-09065a1f4911	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Timun & Tomat Iris	Sayur	5	2025-12-01 11:40:00.441879+00	120	5	0	0	0
+a4880620-8106-44bb-9b10-0b72643ff0b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Melon Slice	Buah	5	2025-12-01 11:40:00.441879+00	120	35	0	0	8
+1e0e3ea5-9da6-4ce9-8c3c-2d077cb06306	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Ayam Karage	Lauk Protein	20	2025-12-01 11:40:00.441879+00	120	220	9	11	5
+5d9cad75-c209-4522-9834-27fa8e6a40c0	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Tahu Bejek Kemangi	Lauk Nabati	15	2025-12-01 11:40:00.441879+00	120	80	4	3	2
+6068d724-b68e-4692-acb2-0d712cf3bd87	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Salad Coleslaw Mayo	Sayur	10	2025-12-01 11:40:00.441879+00	120	100	0	7	4
+ac53899e-d8b8-45fd-b0f9-0a0ffd88e186	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Jeruk Manis	Buah	0	2025-12-01 11:40:00.441879+00	120	40	0	0	10
+9570fb43-b94d-41df-abba-7b413b4b7756	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Roti Bun (Burger)	Karbo	5	2025-12-01 11:40:00.441879+00	120	150	2	0	20
+44576188-a913-4662-aa16-fc1981392748	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Lettuce & Tomat	Sayur	5	2025-12-01 11:40:00.441879+00	120	5	0	0	0
+88cd5658-f7fd-41e1-be80-29ac549bc2b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Saus Mayonnaise	Pelengkap	0	2025-12-01 11:40:00.441879+00	120	25	0	4	0
 \.
 
 
@@ -4325,8 +4493,8 @@ ac53899e-d8b8-45fd-b0f9-0a0ffd88e186	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Jeruk 
 --
 
 COPY public.notifications (id, user_id, title, body, type, is_read, related_id, created_at) FROM stdin;
-83aa5424-814c-4d80-8921-5f90ddb0aaba	56624f75-13c4-4487-ae0f-87f4f9115a42	Keluhan Kualitas Ditindaklanjuti	Admin SPPG merespon keluhan Anda: makan aja uraniumnya	success	t	\N	2025-12-04 04:18:45.28044+00
 0ff302cb-e155-452e-a4f3-d9c47d3e56c6	21ece05e-1290-49e2-8b53-ec02e97c673a	Laporan Penerimaan Ditindaklanjuti	Admin SPPG merespon laporan Anda: kurang	success	t	\N	2025-12-04 03:43:33.850915+00
+c6d54e3b-6337-4f87-9a34-f9fa403b269b	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Laporan Penerimaan Ditindaklanjuti	Admin SPPG merespon laporan Anda: Kami kirim ganti rugi 20 kotak besok 	success	f	\N	2025-12-09 19:18:13.465825+00
 \.
 
 
@@ -4335,6 +4503,27 @@ COPY public.notifications (id, user_id, title, body, type, is_read, related_id, 
 --
 
 COPY public.production_schedules (id, sppg_id, date, menu_id, total_portions, start_cooking_time, target_finish_time, notes, created_at) FROM stdin;
+5c26f881-c0d5-4d72-8d3a-631fa6d7dae2	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	1b74a05b-9328-400a-9543-cb71d0cc8fdb	180	07:15:00	07:15:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+a19021c0-d10b-4a76-ba13-e44fccce883b	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	182ef2a8-71f3-4603-aabc-5778282b2624	600	07:05:00	07:15:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+edff20c9-4a61-447f-b8de-b2cf9d86e6ce	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	5d9cad75-c209-4522-9834-27fa8e6a40c0	640	06:50:00	07:05:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+0f3e7efe-0d87-4999-a09b-4e69e23d7df3	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	d3eb0076-da01-4388-83b0-17fe0ae76bcd	200	06:42:00	06:50:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+0147a364-4f0d-4aca-9fab-ccd933bdbe35	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	d5c6b2bd-3f73-442e-8a3a-09065a1f4911	330	06:37:00	06:42:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+a17818e9-6773-4975-a15b-40d1ace7f19d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	016e86a8-21b3-4437-89b4-b4f7ce8ff5e9	550	06:22:00	06:37:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+1f486d30-5c97-41ec-9105-bb7585ad7ee2	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	6068d724-b68e-4692-acb2-0d712cf3bd87	270	06:12:00	06:22:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+983614e3-94cd-47e6-aa06-728c16f68584	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	e1a77cca-eb41-43da-a44b-6174551b5a02	550	06:00:00	06:12:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+47dac307-798c-4d41-a5f8-037b6d614161	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	ac53899e-d8b8-45fd-b0f9-0a0ffd88e186	250	06:00:00	06:00:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+75624840-d8e6-44c0-98db-fdaf74c4a525	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	79d81db7-9f8d-4f73-851b-2598455bf065	970	05:45:00	06:00:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+94acce14-f099-4dc1-bfde-11aeada8f01c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	1e0e3ea5-9da6-4ce9-8c3c-2d077cb06306	820	05:25:00	05:45:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+491fcf3f-2eaa-4ec3-bda3-127d09a6327a	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	5bfab294-61cc-4c07-a1cd-771c690361cb	540	05:05:00	05:25:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+bf1af7dd-5eac-4e0d-bc9d-d8de4b299955	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	c3be067a-4e2d-4afb-8dcd-242e21b9a2f8	690	05:00:00	05:05:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+5aa0fb83-79b8-44d4-aacb-1d91daba59c9	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	44576188-a913-4662-aa16-fc1981392748	300	04:55:00	05:00:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+8a2d43e9-da29-4c78-86ac-f0904dbded4a	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	52a55ddd-8720-428a-a77a-28d8b992eab7	300	04:25:00	04:55:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+230ccec7-8a5f-47c2-ba9e-19ff9a7f1393	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	fd0809e9-82ba-4768-bd75-f2e683d20fa3	790	04:15:00	04:25:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+d3a253c0-dd38-4033-8ec3-2c884110f29f	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	1786c2ed-f7c2-4e1f-86d5-4dd274116d28	1180	03:50:00	04:15:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+9c8e98c6-cafa-4325-b919-d82aa78daa0d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	15ea9562-78fa-42b6-8159-1e15f6867d20	200	03:40:00	03:50:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+ab0dc04b-9968-4177-a7dd-1a33281f4a5e	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	a4880620-8106-44bb-9b10-0b72643ff0b1	120	03:35:00	03:40:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+0660a5b2-1c88-41b7-9c4a-2391127e6af5	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	1bad49ed-5e27-4393-a8c4-050656e1337c	240	03:10:00	03:35:00	Auto Schedule (Urutan Masak)	2025-12-09 04:47:02.775291+00
+b1539405-afe2-40ad-8da8-42ca4a122737	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	2025-12-10	1786c2ed-f7c2-4e1f-86d5-4dd274116d28	830	06:13:00	07:08:00	Auto-Schedule (Rute #3c86c486-3a4b-482c-907b-7562ab5c791d, Bottleneck: 25 mnt)	2025-12-09 08:55:41.599385+00
 \.
 
 
@@ -4342,24 +4531,24 @@ COPY public.production_schedules (id, sppg_id, date, menu_id, total_portions, st
 -- Data for Name: profiles; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.profiles (id, full_name, role, sppg_id, school_id, created_at, email, class_name, dob, address, "position", phone_number) FROM stdin;
-854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	Lewis Hamilton	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:59:31.606806+00	lewis@gmail.com	\N	\N	\N	\N	085210987654
-89c9ec4e-8319-4966-b292-ce7c256c7b31	Max Verstappen	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:59:46.921527+00	max@gmail.com	\N	\N	\N	\N	081918273645
-62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Vincent Hernandes	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:00:31.368336+00	vincentsmpn6@gmail.com	\N	\N	\N	\N	081255556666
-21ece05e-1290-49e2-8b53-ec02e97c673a	Andika Rill	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	4c8f9325-8d93-4151-b535-69d7d7d0263c	2025-12-01 05:01:01.610848+00	andikabinawisata@gmail.com	\N	\N	\N	\N	081377778888
-df5a3994-22e3-4049-bd49-4a02a52828e6	Aley Tirta	admin_sppg	5f43c4e4-ca11-4e57-aa76-9ce3d60b208f	\N	2025-12-01 05:19:18.210007+00	aleykaryawangi@gmail.com	\N	\N	\N	\N	081234567890
-759f9b43-ea4d-44fb-a90c-54283028423c	Arya Well	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	42b865b0-09ff-43d2-ad73-61d6784f9fb0	2025-12-01 05:01:30.936189+00	aryabhayangkari19@gmail.com	\N	\N	\N	\N	081122334455
-31c9657e-17b6-4f66-b3a3-d623c78dbdac	Deffa Momo	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	eb691e6a-4655-4d7b-a1bd-954851b48313	2025-12-01 05:02:08.676976+00	jonathanjooo19@gmail.com 	\N	\N	\N	\N	087788990011
-e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	Khaerul Gacor	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	99688918-7097-43ad-a293-526159101e6d	2025-12-01 05:03:17.695993+00	khaerulpancasila@gmail.com	\N	\N	\N	\N	085210987654
-56624f75-13c4-4487-ae0f-87f4f9115a42	William Nicole	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:07:24.256865+00	smpn6_8a@gmail.com	8A	\N	\N	\N	081918273645
-a1c4810c-8829-4f1d-a1c3-691c8c573c29	Siti Nurhaliza	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:06:38.156713+00	smpn6_7a@gmail.com	7A	\N	\N	\N	081255556666
-c9e5376f-6a51-46f4-bd7a-7599c4a86595	Jeremy Thomas Alva Edison	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	4c8f9325-8d93-4151-b535-69d7d7d0263c	2025-12-03 04:13:58.190536+00	binawisata_11a@gmail.com	11A	\N	\N	\N	081377778888
-7d65be34-1117-4e69-a6c5-cc3866400df5	Kevin Just	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:08:01.161202+00	smpn6_8b@gmail.com	8B	\N	\N	\N	081255556666
-3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	Eiza Sahputra	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:06:58.761113+00	smpn6_7b@gmail.com	7B	\N	\N	\N	081377778888
-9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	Yogi Wisata	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	94b270c8-272b-4cf3-b444-a2180fdc380c	2025-12-09 04:20:21.005504+00	islamal_12a@gmail.com	12A	\N	\N	\N	08325635322
-87c98256-6c40-4fe4-a83c-67f11730b937	Admin BGN	bgn	\N	\N	2025-11-19 06:24:35.685412+00	lukasjoo17@gmail.com	\N	\N	\N	\N	081234567890
-4f8f6708-17d2-4df7-a0fd-8046df660ca4	Rezky Asmir	admin_sppg	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:16:15.350594+00	rezkysukajaya@gmail.com	\N	\N	\N	\N	081122334455
-fbc43a0a-9cf3-47e3-be55-d8c4456582dd	Amanda Juliet	admin_sppg	851f3b68-3c34-4cdf-9d36-c576aae60578	\N	2025-12-01 04:24:17.063766+00	amandakayuambon@gmail.com	\N	\N	\N	\N	087788990011
+COPY public.profiles (id, full_name, role, sppg_id, school_id, created_at, email, class_name, dob, address, "position", phone_number, student_count_class) FROM stdin;
+854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	Lewis Hamilton	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:59:31.606806+00	lewis@gmail.com	\N	\N	\N	\N	085210987654	0
+89c9ec4e-8319-4966-b292-ce7c256c7b31	Max Verstappen	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:59:46.921527+00	max@gmail.com	\N	\N	\N	\N	081918273645	0
+62e03fa9-7cbb-4090-b5c2-d59bfc268bda	Vincent Hernandes	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:00:31.368336+00	vincentsmpn6@gmail.com	\N	\N	\N	\N	081255556666	0
+21ece05e-1290-49e2-8b53-ec02e97c673a	Andika Rill	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	4c8f9325-8d93-4151-b535-69d7d7d0263c	2025-12-01 05:01:01.610848+00	andikabinawisata@gmail.com	\N	\N	\N	\N	081377778888	0
+df5a3994-22e3-4049-bd49-4a02a52828e6	Aley Tirta	admin_sppg	5f43c4e4-ca11-4e57-aa76-9ce3d60b208f	\N	2025-12-01 05:19:18.210007+00	aleykaryawangi@gmail.com	\N	\N	\N	\N	081234567890	0
+759f9b43-ea4d-44fb-a90c-54283028423c	Arya Well	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	42b865b0-09ff-43d2-ad73-61d6784f9fb0	2025-12-01 05:01:30.936189+00	aryabhayangkari19@gmail.com	\N	\N	\N	\N	081122334455	0
+31c9657e-17b6-4f66-b3a3-d623c78dbdac	Deffa Momo	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	eb691e6a-4655-4d7b-a1bd-954851b48313	2025-12-01 05:02:08.676976+00	jonathanjooo19@gmail.com 	\N	\N	\N	\N	087788990011	0
+e590dca8-4e0b-4aeb-9021-fe5ac9157f3f	Khaerul Gacor	koordinator	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	99688918-7097-43ad-a293-526159101e6d	2025-12-01 05:03:17.695993+00	khaerulpancasila@gmail.com	\N	\N	\N	\N	085210987654	0
+f58ca1d9-1e13-4725-a8b9-a5c8d8456de0	George Russel	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-09 07:35:39.925211+00	george@gmail.com	\N	\N	\N	\N	08332156969	0
+dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446	Charles Leclerc	kurir	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-09 07:36:02.610016+00	leclerc@gmail.com	\N	\N	\N	\N	08836391212	0
+9d3400b7-4a7e-4318-bdf3-b29f6bcd6ef3	Yogi Wisata	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	536e1c09-bdad-485c-af26-5048c5a8ce86	2025-12-09 04:20:21.005504+00	islamal_12a@gmail.com	12A	\N	\N	\N	08325635322	25
+c9e5376f-6a51-46f4-bd7a-7599c4a86595	Jeremy Thomas Alva Edison	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	4c8f9325-8d93-4151-b535-69d7d7d0263c	2025-12-03 04:13:58.190536+00	binawisata_11a@gmail.com	11A	\N	\N	\N	081377778888	30
+87c98256-6c40-4fe4-a83c-67f11730b937	Admin BGN	bgn	\N	\N	2025-11-19 06:24:35.685412+00	lukasjoo17@gmail.com	\N	\N	\N	\N	081234567890	0
+4f8f6708-17d2-4df7-a0fd-8046df660ca4	Rezky Asmir	admin_sppg	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	\N	2025-12-01 04:16:15.350594+00	rezkysukajaya@gmail.com	\N	\N	\N	\N	081122334455	0
+fbc43a0a-9cf3-47e3-be55-d8c4456582dd	Amanda Juliet	admin_sppg	851f3b68-3c34-4cdf-9d36-c576aae60578	\N	2025-12-01 04:24:17.063766+00	amandakayuambon@gmail.com	\N	\N	\N	\N	087788990011	0
+a1c4810c-8829-4f1d-a1c3-691c8c573c29	Siti Nurhaliza	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:06:38.156713+00	smpn6_7a@gmail.com	7A	\N	\N	\N	081255556666	40
+56624f75-13c4-4487-ae0f-87f4f9115a42	William Nicole	walikelas	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	5d61cb08-02a2-4886-baaf-13a794afe9de	2025-12-01 05:07:24.256865+00	smpn6_8a@gmail.com	8A	\N	\N	\N	081918273645	45
 \.
 
 
@@ -4376,6 +4565,18 @@ COPY public.qc_reports (id, school_id, reporter_id, report_type, description, ph
 --
 
 COPY public.route_menus (id, route_id, menu_id, created_at) FROM stdin;
+2cc32ac3-1209-4820-a3b7-50df93357f41	3c86c486-3a4b-482c-907b-7562ab5c791d	1786c2ed-f7c2-4e1f-86d5-4dd274116d28	2025-12-09 08:55:41.347901+00
+5cce3d22-9530-4c76-8ceb-e4b577aced2d	3c86c486-3a4b-482c-907b-7562ab5c791d	182ef2a8-71f3-4603-aabc-5778282b2624	2025-12-09 08:55:41.347901+00
+1bbeae76-5d44-44e8-996c-861a1e6fdd03	3c86c486-3a4b-482c-907b-7562ab5c791d	e1a77cca-eb41-43da-a44b-6174551b5a02	2025-12-09 08:55:41.347901+00
+28e693df-3871-4a15-948c-2d5c2751f57b	3c86c486-3a4b-482c-907b-7562ab5c791d	c3be067a-4e2d-4afb-8dcd-242e21b9a2f8	2025-12-09 08:55:41.347901+00
+dd87db41-8b73-4b0b-aa43-b8d8d0303ba0	3c86c486-3a4b-482c-907b-7562ab5c791d	1b74a05b-9328-400a-9543-cb71d0cc8fdb	2025-12-09 08:55:41.347901+00
+97132af0-4fe3-4f6c-a3c6-f4a268cb00e2	3c86c486-3a4b-482c-907b-7562ab5c791d	1e0e3ea5-9da6-4ce9-8c3c-2d077cb06306	2025-12-09 08:55:41.347901+00
+acbbbcdc-d7ca-45c7-b39c-6c463f56ecac	3c86c486-3a4b-482c-907b-7562ab5c791d	fd0809e9-82ba-4768-bd75-f2e683d20fa3	2025-12-09 08:55:41.347901+00
+4a526e48-8267-44e6-9e01-6f6b7f993ba4	3c86c486-3a4b-482c-907b-7562ab5c791d	6068d724-b68e-4692-acb2-0d712cf3bd87	2025-12-09 08:55:41.347901+00
+4c29f343-b7e7-4d6f-a072-aa0689af2c45	3c86c486-3a4b-482c-907b-7562ab5c791d	5bfab294-61cc-4c07-a1cd-771c690361cb	2025-12-09 08:55:41.347901+00
+ae0b20a3-d48b-4a75-b71c-ba8a7551cd2e	3c86c486-3a4b-482c-907b-7562ab5c791d	15ea9562-78fa-42b6-8159-1e15f6867d20	2025-12-09 08:55:41.347901+00
+17dcba0a-70be-4466-84fa-1fd6d1a8dd05	3c86c486-3a4b-482c-907b-7562ab5c791d	d3eb0076-da01-4388-83b0-17fe0ae76bcd	2025-12-09 08:55:41.347901+00
+b94e4621-fc16-4e0e-b520-58ca065e1893	3c86c486-3a4b-482c-907b-7562ab5c791d	79d81db7-9f8d-4f73-851b-2598455bf065	2025-12-09 08:55:41.347901+00
 \.
 
 
@@ -4384,16 +4585,16 @@ COPY public.route_menus (id, route_id, menu_id, created_at) FROM stdin;
 --
 
 COPY public.schools (id, sppg_id, name, address, gps_lat, gps_long, student_count, deadline_time, service_time_minutes, is_high_risk, tolerance_minutes, menu_default) FROM stdin;
-00cf1bdc-da40-4eab-ad25-35141ac1e613	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Posyandu Tulip RW 03 Lembang		-6.86747265966512	107.547055040389	120	{"Senin":"09:40:00","Selasa":"09:40:00","Rabu":"09:40:00","Kamis":"09:40:00","Jumat":"09:40:00","Sabtu":"09:40:00"}	20	t	20	Chicken Katsu, Melon Slice, Spaghetti, Ayam Geprek Katsu, Tumis Tahu Wortel
-05a1c300-c286-4c99-815b-f1d09668a12d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Lembang		-6.81564818476786	107.62227197585	300	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	10	f	45	Nasi Putih, Lettuce & Tomat, Melon Potong, Semangka Potong, Tumis Tahu Wortel
-9d78ef2f-23dc-4196-983a-8bcf379c84b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Merdeka		-6.82290504228437	107.612583518324	250	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	10	t	45	Stik Tempe, Ayam Karage, Chicken Bolognese, Ayam Geprek Katsu, Jeruk Manis
-94b270c8-272b-4cf3-b444-a2180fdc380c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMAS Islam Al Musyawarah		-6.81991073087959	107.615855611579	150	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	15	f	25	Chicken Dimsum, Ayam Karage, Tumis Tahu Wortel, Melon Potong, Salad Coleslaw Mayo
-4c8f9325-8d93-4151-b535-69d7d7d0263c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMKS Bina Wisata Lembang		-6.82079356481892	107.620491676047	210	{"Senin":"09:40:00","Selasa":"09:40:00","Rabu":"09:40:00","Kamis":"09:40:00","Jumat":"09:40:00","Sabtu":"09:40:00"}	25	f	50	Stik Tempe, French Fries, Ayam Geprek Katsu, Semangka Potong, Timun & Tomat Iris
-42b865b0-09ff-43d2-ad73-61d6784f9fb0	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	TK Bhayangkari 19	Jl. Bhayangkara II	-6.8150805551087	107.616425868215	120	{"Senin":"08:00:00","Selasa":"08:00:00","Rabu":"08:00:00","Kamis":"08:00:00","Jumat":"08:00:00","Sabtu":"08:00:00"}	15	f	40	French Fries, Chicken Katsu, Timun & Tomat Iris, Mix Vegetable, Salad Coleslaw Mayo
-eb691e6a-4655-4d7b-a1bd-954851b48313	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	TK PGRI	Jl. Masjid Panorama No. 21	-6.81395797769589	107.623824836455	80	{"Senin":"09:50:00","Selasa":"09:50:00","Rabu":"09:50:00","Kamis":"09:50:00","Jumat":"09:50:00","Sabtu":"09:50:00"}	15	t	40	Stik Tempe, Spaghetti, Mix Vegetable, Chicken Bolognese
-99688918-7097-43ad-a293-526159101e6d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Pancasila 		-6.82269916345972	107.612681839592	220	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	15	t	45	Chicken Dimsum, French Fries, Tahu Bejek Kemangi, Tumis Tahu Wortel, Chicken Bolognese
-536e1c09-bdad-485c-af26-5048c5a8ce86	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	MTs Islam Al Musyawarah		-6.82000569461219	107.615920467219	180	{"Senin":"08:00:00","Selasa":"08:00:00","Rabu":"08:00:00","Kamis":"08:00:00","Jumat":"08:00:00","Sabtu":"08:00:00"}	15	f	30	Ayam Geprek Katsu, Wortel Jagung Steam, Chicken Dimsum, Semangka Potong, Saus Tomat Sachet
-5d61cb08-02a2-4886-baaf-13a794afe9de	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMPN 6 Lembang		-6.82292370503044	107.612662365068	420	{"Senin":"10:00:00","Selasa":"08:00:00","Rabu":"10:00:00","Kamis":"10:00:00","Jumat":"10:00:00","Sabtu":"10:00:00"}	20	f	45	Tahu Bejek Kemangi, Chicken Bolognese, Ayam Karage, Ayam Geprek Katsu, Wortel Jagung Steam
+00cf1bdc-da40-4eab-ad25-35141ac1e613	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	Posyandu Tulip RW 03 Lembang		-6.86747265966512	107.547055040389	120	{"Senin":"09:40:00","Selasa":"09:40:00","Rabu":"09:40:00","Kamis":"09:40:00","Jumat":"09:40:00","Sabtu":"09:40:00"}	20	f	20	Menu Set 5 (Katsu Burger)
+05a1c300-c286-4c99-815b-f1d09668a12d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Lembang		-6.81564818476786	107.62227197585	300	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	10	f	45	Menu Set 2 (Dimsum-Fries)
+9d78ef2f-23dc-4196-983a-8bcf379c84b1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Merdeka		-6.82290504228437	107.612583518324	250	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	10	f	45	Menu Set 2 (Dimsum-Fries)
+4c8f9325-8d93-4151-b535-69d7d7d0263c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMKS Bina Wisata Lembang		-6.82079356481892	107.620491676047	210	{"Senin":"09:40:00","Selasa":"09:40:00","Rabu":"09:40:00","Kamis":"09:40:00","Jumat":"09:40:00","Sabtu":"09:40:00"}	25	f	50	Menu Set 4 (Karage-Bejek)
+5d61cb08-02a2-4886-baaf-13a794afe9de	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMPN 6 Lembang		-6.82292370503044	107.612662365068	450	{"Senin":"10:00:00","Selasa":"08:00:00","Rabu":"10:00:00","Kamis":"10:00:00","Jumat":"10:00:00","Sabtu":"10:00:00"}	20	f	45	Menu Set 4 (Karage-Bejek)
+42b865b0-09ff-43d2-ad73-61d6784f9fb0	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	TK Bhayangkari 19	Jl. Bhayangkara II	-6.8150805551087	107.616425868215	120	{"Senin":"08:00:00","Selasa":"08:00:00","Rabu":"08:00:00","Kamis":"08:00:00","Jumat":"08:00:00","Sabtu":"08:00:00"}	15	f	40	Menu Set 5 (Katsu Burger)
+eb691e6a-4655-4d7b-a1bd-954851b48313	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	TK PGRI	Jl. Masjid Panorama No. 21	-6.81395797769589	107.623824836455	80	{"Senin":"09:00:00","Selasa":"09:00:00","Rabu":"09:00:00","Kamis":"09:00:00","Jumat":"09:00:00","Sabtu":"09:00:00"}	15	f	40	Menu Set 5 (Katsu Burger)
+536e1c09-bdad-485c-af26-5048c5a8ce86	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	MTs Islam Al Musyawarah		-6.82000569461219	107.615920467219	180	{"Senin":"08:00:00","Selasa":"08:00:00","Rabu":"08:00:00","Kamis":"08:00:00","Jumat":"08:00:00","Sabtu":"08:00:00"}	15	f	30	Menu Set 5 (Katsu Burger)
+94b270c8-272b-4cf3-b444-a2180fdc380c	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SMAS Islam Al Musyawarah		-6.81991073087959	107.615855611579	150	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	15	f	25	Menu Set 4 (Karage-Bejek)
+99688918-7097-43ad-a293-526159101e6d	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	SDN Pancasila 		-6.82269916345972	107.612681839592	220	{"Senin":"09:30:00","Selasa":"09:30:00","Rabu":"09:30:00","Kamis":"09:30:00","Jumat":"09:30:00","Sabtu":"09:30:00"}	15	f	45	Menu Set 1 (Tempe-Spaghetti)
 \.
 
 
@@ -4412,49 +4613,9 @@ COPY public.sppgs (id, name, address, gps_lat, gps_long, created_at, email, phon
 -- Data for Name: vehicles; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.vehicles (id, sppg_id, plate_number, driver_name, capacity_limit, is_active, courier_profile_id) FROM stdin;
-0df5af82-9115-48b8-aff3-35a8cf265f00	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	D 3301 MAX	Max Verstappen	500	t	89c9ec4e-8319-4966-b292-ce7c256c7b31
-7154e730-d0be-429e-85db-b726619cf3c1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	D 6767 YES	Lewis Hamilton	500	t	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb
-\.
-
-
---
--- Data for Name: messages_2025_12_02; Type: TABLE DATA; Schema: realtime; Owner: -
---
-
-COPY realtime.messages_2025_12_02 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
-\.
-
-
---
--- Data for Name: messages_2025_12_03; Type: TABLE DATA; Schema: realtime; Owner: -
---
-
-COPY realtime.messages_2025_12_03 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
-\.
-
-
---
--- Data for Name: messages_2025_12_04; Type: TABLE DATA; Schema: realtime; Owner: -
---
-
-COPY realtime.messages_2025_12_04 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
-\.
-
-
---
--- Data for Name: messages_2025_12_05; Type: TABLE DATA; Schema: realtime; Owner: -
---
-
-COPY realtime.messages_2025_12_05 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
-\.
-
-
---
--- Data for Name: messages_2025_12_06; Type: TABLE DATA; Schema: realtime; Owner: -
---
-
-COPY realtime.messages_2025_12_06 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+COPY public.vehicles (id, sppg_id, plate_number, driver_name, capacity_limit, is_active, courier_profile_id, assistant_courier_id) FROM stdin;
+0df5af82-9115-48b8-aff3-35a8cf265f00	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	D 3301 MAX	Max Verstappen	500	t	89c9ec4e-8319-4966-b292-ce7c256c7b31	f58ca1d9-1e13-4725-a8b9-a5c8d8456de0
+7154e730-d0be-429e-85db-b726619cf3c1	1ec001e5-08d6-4f44-b59d-ef6d0baa27e8	D 6767 YES	Lewis Hamilton	500	t	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	dd7ca0a5-6fb1-4229-8b9b-f2858c9fd446
 \.
 
 
@@ -4463,6 +4624,54 @@ COPY realtime.messages_2025_12_06 (topic, extension, payload, event, private, up
 --
 
 COPY realtime.messages_2025_12_07 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_08; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_08 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_09; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_09 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_10; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_10 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_11; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_11 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_12; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_12 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
+\.
+
+
+--
+-- Data for Name: messages_2025_12_13; Type: TABLE DATA; Schema: realtime; Owner: -
+--
+
+COPY realtime.messages_2025_12_13 (topic, extension, payload, event, private, updated_at, inserted_at, id) FROM stdin;
 \.
 
 
@@ -4641,6 +4850,7 @@ c3f30757-891a-41dc-a204-062c88e13928	evidence	coordinator_reception/176481679623
 5cca3851-da2a-4a56-b033-e2c9fd720566	evidence	teacher_reception/1764817001880.jpg	c9e5376f-6a51-46f4-bd7a-7599c4a86595	2025-12-04 02:56:43.040417+00	2025-12-04 02:56:43.040417+00	2025-12-04 02:56:43.040417+00	{"eTag": "\\"27155e561f934d88fe3d7cc6e7e67bb5\\"", "size": 129096, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T02:56:44.000Z", "contentLength": 129096, "httpStatusCode": 200}	c492a331-5e33-409c-aabf-acdd50a46816	c9e5376f-6a51-46f4-bd7a-7599c4a86595	{}	2
 2382b353-46d8-4cde-9d57-25a7a6d1ab16	evidence	loading_proof/1764522196111.jpg	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	2025-11-30 17:03:17.871288+00	2025-11-30 17:03:17.871288+00	2025-11-30 17:03:17.871288+00	{"eTag": "\\"4a17936776da804286657056326d7543\\"", "size": 122568, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-11-30T17:03:18.000Z", "contentLength": 122568, "httpStatusCode": 200}	706816ff-6dae-48aa-a53b-a03580b12054	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	{}	2
 bf3907bc-fb01-4d3e-86fc-5c1b58c72b6a	evidence	arrival_proof/1764522204366.jpg	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	2025-11-30 17:03:25.854718+00	2025-11-30 17:03:25.854718+00	2025-11-30 17:03:25.854718+00	{"eTag": "\\"8431ac2a43ac9487797047a767632709\\"", "size": 113659, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-11-30T17:03:26.000Z", "contentLength": 113659, "httpStatusCode": 200}	767a3dec-4db3-4f12-b237-de0dae00c33d	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	{}	2
+e973d392-1ded-4330-91d9-f58e5cbfe93b	evidence	arrival_proof/1765299181582.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 16:53:03.191775+00	2025-12-09 16:53:03.191775+00	2025-12-09 16:53:03.191775+00	{"eTag": "\\"7f56368e8f117fbc1c3e6feb58b7f276\\"", "size": 148200, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T16:53:04.000Z", "contentLength": 148200, "httpStatusCode": 200}	ff31e31e-f9c9-4558-af3a-998285846547	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 1adebb2c-9e27-4f34-a87b-0fd1cd15950a	evidence	arrival_proof/1764522267904.jpg	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	2025-11-30 17:04:29.227827+00	2025-11-30 17:04:29.227827+00	2025-11-30 17:04:29.227827+00	{"eTag": "\\"d0e36eb0498a4e2bc83ee74203939742\\"", "size": 115699, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-11-30T17:04:30.000Z", "contentLength": 115699, "httpStatusCode": 200}	7e09f251-0094-4a55-a79e-187c49f91767	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	{}	2
 0ac4e31d-5420-4831-b0b5-f1a5c03201dd	evidence	arrival_proof/1764522331235.jpg	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	2025-11-30 17:05:32.85528+00	2025-11-30 17:05:32.85528+00	2025-11-30 17:05:32.85528+00	{"eTag": "\\"06e8ecf52aec48b78c4a70875940c541\\"", "size": 130029, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-11-30T17:05:33.000Z", "contentLength": 130029, "httpStatusCode": 200}	859a641e-4e73-45e9-abeb-f072aa7652f5	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	{}	2
 e148d286-517f-4c8d-ba55-70101d059e37	evidence	arrival_proof/1764524458370.jpg	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	2025-11-30 17:40:59.592414+00	2025-11-30 17:40:59.592414+00	2025-11-30 17:40:59.592414+00	{"eTag": "\\"c6a70709ea8c6a32849929b5dbe2a86e\\"", "size": 10359, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-11-30T17:41:00.000Z", "contentLength": 10359, "httpStatusCode": 200}	07d70971-29d2-48f9-9425-876a0d20d9d4	99edd030-5b13-4596-bf3a-d8a94b4cb4c0	{}	2
@@ -4665,8 +4875,10 @@ d7802f37-b25e-4b26-8c05-d301efcb1523	evidence	arrival_proof/1764821836550.jpg	85
 5837fa17-90df-4363-8a09-5dff85943c33	evidence	arrival_proof/1764653629941.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-02 05:33:50.692607+00	2025-12-02 05:33:50.692607+00	2025-12-02 05:33:50.692607+00	{"eTag": "\\"8c05e3e28c8cb0687d519528ed4c93ff\\"", "size": 143073, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-02T05:33:51.000Z", "contentLength": 143073, "httpStatusCode": 200}	589c60f7-2b2b-4966-ae22-e2c8d721aead	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 e008850f-3838-46ce-b4ac-0fa23c5c09bd	evidence	teacher_reception/1764821903749.jpg	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-04 04:18:24.747385+00	2025-12-04 04:18:24.747385+00	2025-12-04 04:18:24.747385+00	{"eTag": "\\"b2ace1f22b3c8204a94995e547dcfb02\\"", "size": 39366, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T04:18:25.000Z", "contentLength": 39366, "httpStatusCode": 200}	740f0bb4-77ea-46a7-9ebe-f22b17654f3f	56624f75-13c4-4487-ae0f-87f4f9115a42	{}	2
 41732288-4113-439f-ba16-923886449f96	evidence	arrival_proof/1764653634207.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-02 05:33:54.788475+00	2025-12-02 05:33:54.788475+00	2025-12-02 05:33:54.788475+00	{"eTag": "\\"54ce330ec35e9f26ebe74e3befd6b1c8\\"", "size": 135296, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-02T05:33:55.000Z", "contentLength": 135296, "httpStatusCode": 200}	b6de9cbd-88b5-434b-87c2-e7e323226e01	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+69e67dc9-2d92-40e0-9bde-c31c47c027ca	evidence	arrival_proof/1765299627443.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 17:00:28.809871+00	2025-12-09 17:00:28.809871+00	2025-12-09 17:00:28.809871+00	{"eTag": "\\"f06030b659a992273275f3d362821518\\"", "size": 85221, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T17:00:29.000Z", "contentLength": 85221, "httpStatusCode": 200}	8bcc680d-2b2f-43d9-bec9-efc795d91784	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 1734bd33-0c31-4a66-8544-6376ed49a46e	evidence	arrival_proof/1764734249871.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 03:57:30.610055+00	2025-12-03 03:57:30.610055+00	2025-12-03 03:57:30.610055+00	{"eTag": "\\"797748c7bdce21bb4828cabb65a05992\\"", "size": 116091, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T03:57:31.000Z", "contentLength": 116091, "httpStatusCode": 200}	fd093e0b-7fb0-4f9a-9fd1-f511307d5669	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 4e3e066a-5b94-46ce-9b5d-04c4f01ccbdb	evidence	arrival_proof/1764734257237.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 03:57:37.819391+00	2025-12-03 03:57:37.819391+00	2025-12-03 03:57:37.819391+00	{"eTag": "\\"267bdc87169643043e5fbab240b753dc\\"", "size": 65920, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T03:57:38.000Z", "contentLength": 65920, "httpStatusCode": 200}	40d26666-c960-4902-aea6-b6b77299d716	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+017879ec-e35c-47c0-94a0-eebf6eb70c18	evidence	arrival_proof/1765299854338.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 17:04:16.039644+00	2025-12-09 17:04:16.039644+00	2025-12-09 17:04:16.039644+00	{"eTag": "\\"089757a5d0327b9e2d63278348166784\\"", "size": 133176, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T17:04:17.000Z", "contentLength": 133176, "httpStatusCode": 200}	bffa7c57-f2f6-41ab-9697-68f5c35136f2	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 0af6f3c8-0c66-4044-b75f-06fc83015258	evidence	coordinator_reception/1764734315027.jpg	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-03 03:58:35.794531+00	2025-12-03 03:58:35.794531+00	2025-12-03 03:58:35.794531+00	{"eTag": "\\"8dcc5de2ff410d1311cf2cb2fd303984\\"", "size": 64340, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T03:58:36.000Z", "contentLength": 64340, "httpStatusCode": 200}	af075508-0b9c-4f88-84d9-f98029c1800c	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	{}	2
 b91c3559-d374-4b98-93da-2cadd4da3b72	evidence	teacher_reception/1764734508000.jpg	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	2025-12-03 04:01:49.080912+00	2025-12-03 04:01:49.080912+00	2025-12-03 04:01:49.080912+00	{"eTag": "\\"c944554aa6cebf5f362140416fb939b7\\"", "size": 134907, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T04:01:50.000Z", "contentLength": 134907, "httpStatusCode": 200}	89b3c82c-6bcc-4a16-8cbf-60bd71a48073	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	{}	2
 bc7bfec9-a80d-4310-ba2c-dd429ed2eada	evidence	arrival_proof/1764734836984.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 04:07:17.961405+00	2025-12-03 04:07:17.961405+00	2025-12-03 04:07:17.961405+00	{"eTag": "\\"e03fce10ffee53f95d15299e8487ec89\\"", "size": 117739, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T04:07:18.000Z", "contentLength": 117739, "httpStatusCode": 200}	497f0bc7-bc91-40e1-ace7-79dd88a7738f	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
@@ -4678,6 +4890,7 @@ e5aa46b0-7f63-441c-a5e8-f44b8372303b	evidence	loading_proof/1764736407126.jpg	85
 0a56ba88-23d2-4033-8005-d10c019d7af7	evidence	arrival_proof/1764736581446.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 04:36:22.167906+00	2025-12-03 04:36:22.167906+00	2025-12-03 04:36:22.167906+00	{"eTag": "\\"a0a85624a92006a2d8df161c013a3233\\"", "size": 141968, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T04:36:23.000Z", "contentLength": 141968, "httpStatusCode": 200}	76683c6e-05ba-46e3-8d35-cc18e7b01b09	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 0a839450-223b-4867-8d7c-34a5fb74297a	evidence	teacher_reception/1764829881552.jpg	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	2025-12-04 06:31:22.922817+00	2025-12-04 06:31:22.922817+00	2025-12-04 06:31:22.922817+00	{"eTag": "\\"f9bfa805b244adf26e51a38e1096d74b\\"", "size": 84539, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T06:31:23.000Z", "contentLength": 84539, "httpStatusCode": 200}	e1b1452a-5108-45ef-b538-678ba7fb4c8f	3b66df4f-307b-4d90-ba1b-0b08ab1c7ebf	{}	2
 4ab0f200-2640-4b3e-b604-3aec33e761e8	evidence	arrival_proof/1764738222613.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 05:03:43.532703+00	2025-12-03 05:03:43.532703+00	2025-12-03 05:03:43.532703+00	{"eTag": "\\"ba51bb235e316849cda9eef864f16e7d\\"", "size": 112224, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T05:03:44.000Z", "contentLength": 112224, "httpStatusCode": 200}	69ac473d-3a9f-43a2-9e77-45c7d020961d	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+b4875e91-c358-4289-9f96-ce10a9db67af	evidence	arrival_proof/1765299863368.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 17:04:24.839767+00	2025-12-09 17:04:24.839767+00	2025-12-09 17:04:24.839767+00	{"eTag": "\\"88922b94f82d4bdf7ef750a062f3d3d6\\"", "size": 167857, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T17:04:25.000Z", "contentLength": 167857, "httpStatusCode": 200}	4fdd1c52-4ff7-41cb-8437-9ab7b3ba5618	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 ca1aac9c-f64c-4033-87da-18ede6a1f047	evidence	arrival_proof/1764738943378.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 05:15:48.065465+00	2025-12-03 05:15:48.065465+00	2025-12-03 05:15:48.065465+00	{"eTag": "\\"2cbb01f9c5a4aee72cfa6c7c2abb4d57\\"", "size": 181955, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T05:15:49.000Z", "contentLength": 181955, "httpStatusCode": 200}	de306f1a-f4a5-427c-b8cf-4ea87d821f36	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 71d01833-40bc-46bc-be66-2519a8faa7ed	evidence	arrival_proof/1764738948945.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 05:15:50.268896+00	2025-12-03 05:15:50.268896+00	2025-12-03 05:15:50.268896+00	{"eTag": "\\"8cea10690f633dbd907c8db29605dbfc\\"", "size": 175312, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T05:15:51.000Z", "contentLength": 175312, "httpStatusCode": 200}	4bed6d94-480d-453c-bb10-a4b41e7984e5	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 200561c7-e8cb-4696-97fa-d39fd01d0452	evidence	arrival_proof/1764738957487.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 05:15:58.884089+00	2025-12-03 05:15:58.884089+00	2025-12-03 05:15:58.884089+00	{"eTag": "\\"812d8bcddbec284c58475e56680a8449\\"", "size": 165968, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T05:15:59.000Z", "contentLength": 165968, "httpStatusCode": 200}	1fb57a6c-fa8d-4d78-a25a-3b0cd2cc7cd3	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
@@ -4688,6 +4901,7 @@ ac3f2364-2927-42cf-aa36-d58c48a77d3b	evidence	arrival_proof/1764738984839.jpg	89
 3e159fb3-a427-4b75-9c35-03371f6fa249	evidence	teacher_reception/1764830902928.jpg	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-04 06:48:24.16255+00	2025-12-04 06:48:24.16255+00	2025-12-04 06:48:24.16255+00	{"eTag": "\\"56d22d93cb48ae027b57a64799ad3265\\"", "size": 86001, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T06:48:25.000Z", "contentLength": 86001, "httpStatusCode": 200}	770880dd-8938-4216-a993-2512f1063a80	56624f75-13c4-4487-ae0f-87f4f9115a42	{}	2
 3d9a48d5-cb74-4c1b-86f6-044bc76d960c	evidence	loading_proof/1764781135604.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 16:59:56.633211+00	2025-12-03 16:59:56.633211+00	2025-12-03 16:59:56.633211+00	{"eTag": "\\"423ecbde60baebc908c3734c6269931a\\"", "size": 18899, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T16:59:57.000Z", "contentLength": 18899, "httpStatusCode": 200}	5e7dba42-7ab1-4360-a9a9-8ed9536143d9	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 40730f9d-e425-4448-847d-a4dc397d80f7	evidence	arrival_proof/1764781144493.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-03 17:00:05.399614+00	2025-12-03 17:00:05.399614+00	2025-12-03 17:00:05.399614+00	{"eTag": "\\"baa69afc8a1456f98b4f0b4411587d41\\"", "size": 18984, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T17:00:06.000Z", "contentLength": 18984, "httpStatusCode": 200}	bad7e109-8fe8-49dc-b575-be8058bb34f8	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+f671b4e6-7129-47a2-b82e-2c966823bb49	evidence	coordinator_reception/1765302405499.jpg	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-09 17:46:47.181556+00	2025-12-09 17:46:47.181556+00	2025-12-09 17:46:47.181556+00	{"eTag": "\\"5dca1c4b794b9dc7d6a4208f2a22d2ab\\"", "size": 50431, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T17:46:48.000Z", "contentLength": 50431, "httpStatusCode": 200}	bb901b45-be88-4e8a-a572-473191c8f05c	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	{}	2
 1cbd9147-5aab-435b-8637-466e8520fd0b	evidence	coordinator_reception/1764781209870.jpg	31c9657e-17b6-4f66-b3a3-d623c78dbdac	2025-12-03 17:01:10.876701+00	2025-12-03 17:01:10.876701+00	2025-12-03 17:01:10.876701+00	{"eTag": "\\"86d69a2ad9bd9f3045e4f20f7d640fb4\\"", "size": 18984, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T17:01:11.000Z", "contentLength": 18984, "httpStatusCode": 200}	4949e2ee-4e89-4f42-a42d-3e197f082143	31c9657e-17b6-4f66-b3a3-d623c78dbdac	{}	2
 bd0d7c4a-7eb5-4ed2-a13c-2846e62a976d	evidence	coordinator_reception/1764781245368.jpg	31c9657e-17b6-4f66-b3a3-d623c78dbdac	2025-12-03 17:01:46.512631+00	2025-12-03 17:01:46.512631+00	2025-12-03 17:01:46.512631+00	{"eTag": "\\"0a18ddff6bd33403264c9805b75c35b5\\"", "size": 19263, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-03T17:01:47.000Z", "contentLength": 19263, "httpStatusCode": 200}	391348d4-b0b9-4045-b4a5-059e99292299	31c9657e-17b6-4f66-b3a3-d623c78dbdac	{}	2
 d6cad904-22df-472a-bfd6-3f1d0427ba30	evidence	loading_proof/1764814605745.jpg	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	2025-12-04 02:16:46.940304+00	2025-12-04 02:16:46.940304+00	2025-12-04 02:16:46.940304+00	{"eTag": "\\"ceed83cfe1f044a11eb50ef7a720c377\\"", "size": 56653, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T02:16:47.000Z", "contentLength": 56653, "httpStatusCode": 200}	a0d9f9ef-0773-43c3-8120-421640a249ec	854b3bf3-77a5-46ae-8c00-d2ab86f78cbb	{}	2
@@ -4695,6 +4909,8 @@ ed4151c1-cb17-4619-8e93-212ab10fc4aa	evidence	arrival_proof/1764814618703.jpg	85
 2739431a-408d-431e-a886-6f8d53ed5038	evidence	coordinator_reception/1764814650997.jpg	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	2025-12-04 02:17:32.158901+00	2025-12-04 02:17:32.158901+00	2025-12-04 02:17:32.158901+00	{"eTag": "\\"7a746ec851d3432b63fd9adfb505ac67\\"", "size": 62916, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T02:17:33.000Z", "contentLength": 62916, "httpStatusCode": 200}	d3d91304-a2f6-48af-9704-8198931a8faf	62e03fa9-7cbb-4090-b5c2-d59bfc268bda	{}	2
 db1bec7a-2c7c-4077-a748-e418eb4de8f8	evidence	loading_proof/1764816734140.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-04 02:52:15.165486+00	2025-12-04 02:52:15.165486+00	2025-12-04 02:52:15.165486+00	{"eTag": "\\"da534b6c15d110e69190628e07fb4cde\\"", "size": 27841, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T02:52:16.000Z", "contentLength": 27841, "httpStatusCode": 200}	637daa2a-ed52-47b4-a9cb-b48eb7bb96c7	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
 a2c3be4f-a493-4207-9f34-80bbb25ea1c9	evidence	arrival_proof/1764816740245.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-04 02:52:20.752175+00	2025-12-04 02:52:20.752175+00	2025-12-04 02:52:20.752175+00	{"eTag": "\\"fce8374bf1b35971f1f034b416194a5a\\"", "size": 10066, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-04T02:52:21.000Z", "contentLength": 10066, "httpStatusCode": 200}	4c5c50a1-d7eb-4339-9d74-52996ac3de78	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+6f9a8e1b-9c49-4117-978c-cd959e62d3d2	evidence	loading_proof/1765270579145.jpg	89c9ec4e-8319-4966-b292-ce7c256c7b31	2025-12-09 08:56:30.17034+00	2025-12-09 08:56:30.17034+00	2025-12-09 08:56:30.17034+00	{"eTag": "\\"c76c296436d498c3566330337a546e62\\"", "size": 48604, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-09T08:56:31.000Z", "contentLength": 48604, "httpStatusCode": 200}	100c5261-a605-42ca-999f-fde8020c8ec8	89c9ec4e-8319-4966-b292-ce7c256c7b31	{}	2
+36c93542-7f8b-4d2b-80f2-61ab89e31ef9	evidence	teacher_reception/1765380091897.jpg	56624f75-13c4-4487-ae0f-87f4f9115a42	2025-12-10 15:21:32.852777+00	2025-12-10 15:21:32.852777+00	2025-12-10 15:21:32.852777+00	{"eTag": "\\"7aff002f03c631abaaeac3cc14e64ea2\\"", "size": 93386, "mimetype": "image/jpeg", "cacheControl": "max-age=3600", "lastModified": "2025-12-10T15:21:33.000Z", "contentLength": 93386, "httpStatusCode": 200}	d405d3ce-619b-4b7d-932f-31b08cbf6be7	56624f75-13c4-4487-ae0f-87f4f9115a42	{}	2
 \.
 
 
@@ -4747,14 +4963,14 @@ COPY vault.secrets (id, name, description, secret, key_id, nonce, created_at, up
 -- Name: refresh_tokens_id_seq; Type: SEQUENCE SET; Schema: auth; Owner: -
 --
 
-SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 695, true);
+SELECT pg_catalog.setval('auth.refresh_tokens_id_seq', 782, true);
 
 
 --
 -- Name: subscription_id_seq; Type: SEQUENCE SET; Schema: realtime; Owner: -
 --
 
-SELECT pg_catalog.setval('realtime.subscription_id_seq', 3, true);
+SELECT pg_catalog.setval('realtime.subscription_id_seq', 5, true);
 
 
 --
@@ -5022,6 +5238,14 @@ ALTER TABLE ONLY public.delivery_stops
 
 
 --
+-- Name: menu_sets menu_sets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: menus menus_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5086,6 +5310,14 @@ ALTER TABLE ONLY public.sppgs
 
 
 --
+-- Name: menu_sets unique_set_name_per_sppg; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT unique_set_name_per_sppg UNIQUE (sppg_id, set_name);
+
+
+--
 -- Name: vehicles vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5102,51 +5334,59 @@ ALTER TABLE ONLY realtime.messages
 
 
 --
--- Name: messages_2025_12_02 messages_2025_12_02_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2025_12_02
-    ADD CONSTRAINT messages_2025_12_02_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- Name: messages_2025_12_03 messages_2025_12_03_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2025_12_03
-    ADD CONSTRAINT messages_2025_12_03_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- Name: messages_2025_12_04 messages_2025_12_04_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2025_12_04
-    ADD CONSTRAINT messages_2025_12_04_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- Name: messages_2025_12_05 messages_2025_12_05_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2025_12_05
-    ADD CONSTRAINT messages_2025_12_05_pkey PRIMARY KEY (id, inserted_at);
-
-
---
--- Name: messages_2025_12_06 messages_2025_12_06_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
---
-
-ALTER TABLE ONLY realtime.messages_2025_12_06
-    ADD CONSTRAINT messages_2025_12_06_pkey PRIMARY KEY (id, inserted_at);
-
-
---
 -- Name: messages_2025_12_07 messages_2025_12_07_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
 --
 
 ALTER TABLE ONLY realtime.messages_2025_12_07
     ADD CONSTRAINT messages_2025_12_07_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_08 messages_2025_12_08_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_08
+    ADD CONSTRAINT messages_2025_12_08_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_09 messages_2025_12_09_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_09
+    ADD CONSTRAINT messages_2025_12_09_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_10 messages_2025_12_10_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_10
+    ADD CONSTRAINT messages_2025_12_10_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_11 messages_2025_12_11_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_11
+    ADD CONSTRAINT messages_2025_12_11_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_12 messages_2025_12_12_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_12
+    ADD CONSTRAINT messages_2025_12_12_pkey PRIMARY KEY (id, inserted_at);
+
+
+--
+-- Name: messages_2025_12_13 messages_2025_12_13_pkey; Type: CONSTRAINT; Schema: realtime; Owner: -
+--
+
+ALTER TABLE ONLY realtime.messages_2025_12_13
+    ADD CONSTRAINT messages_2025_12_13_pkey PRIMARY KEY (id, inserted_at);
 
 
 --
@@ -5575,6 +5815,13 @@ CREATE INDEX users_is_anonymous_idx ON auth.users USING btree (is_anonymous);
 
 
 --
+-- Name: idx_vehicles_assistant_courier_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_vehicles_assistant_courier_id ON public.vehicles USING btree (assistant_courier_id);
+
+
+--
 -- Name: ix_realtime_subscription_entity; Type: INDEX; Schema: realtime; Owner: -
 --
 
@@ -5589,45 +5836,52 @@ CREATE INDEX messages_inserted_at_topic_index ON ONLY realtime.messages USING bt
 
 
 --
--- Name: messages_2025_12_02_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2025_12_02_inserted_at_topic_idx ON realtime.messages_2025_12_02 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- Name: messages_2025_12_03_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2025_12_03_inserted_at_topic_idx ON realtime.messages_2025_12_03 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- Name: messages_2025_12_04_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2025_12_04_inserted_at_topic_idx ON realtime.messages_2025_12_04 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- Name: messages_2025_12_05_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2025_12_05_inserted_at_topic_idx ON realtime.messages_2025_12_05 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
--- Name: messages_2025_12_06_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
---
-
-CREATE INDEX messages_2025_12_06_inserted_at_topic_idx ON realtime.messages_2025_12_06 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
-
-
---
 -- Name: messages_2025_12_07_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
 --
 
 CREATE INDEX messages_2025_12_07_inserted_at_topic_idx ON realtime.messages_2025_12_07 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_08_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_08_inserted_at_topic_idx ON realtime.messages_2025_12_08 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_09_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_09_inserted_at_topic_idx ON realtime.messages_2025_12_09 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_10_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_10_inserted_at_topic_idx ON realtime.messages_2025_12_10 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_11_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_11_inserted_at_topic_idx ON realtime.messages_2025_12_11 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_12_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_12_inserted_at_topic_idx ON realtime.messages_2025_12_12 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
+
+
+--
+-- Name: messages_2025_12_13_inserted_at_topic_idx; Type: INDEX; Schema: realtime; Owner: -
+--
+
+CREATE INDEX messages_2025_12_13_inserted_at_topic_idx ON realtime.messages_2025_12_13 USING btree (inserted_at DESC, topic) WHERE ((extension = 'broadcast'::text) AND (private IS TRUE));
 
 
 --
@@ -5715,76 +5969,6 @@ CREATE UNIQUE INDEX vector_indexes_name_bucket_id_idx ON storage.vector_indexes 
 
 
 --
--- Name: messages_2025_12_02_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_02_inserted_at_topic_idx;
-
-
---
--- Name: messages_2025_12_02_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_02_pkey;
-
-
---
--- Name: messages_2025_12_03_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_03_inserted_at_topic_idx;
-
-
---
--- Name: messages_2025_12_03_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_03_pkey;
-
-
---
--- Name: messages_2025_12_04_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_04_inserted_at_topic_idx;
-
-
---
--- Name: messages_2025_12_04_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_04_pkey;
-
-
---
--- Name: messages_2025_12_05_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_05_inserted_at_topic_idx;
-
-
---
--- Name: messages_2025_12_05_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_05_pkey;
-
-
---
--- Name: messages_2025_12_06_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_06_inserted_at_topic_idx;
-
-
---
--- Name: messages_2025_12_06_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
---
-
-ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_06_pkey;
-
-
---
 -- Name: messages_2025_12_07_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
 --
 
@@ -5796,6 +5980,90 @@ ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.
 --
 
 ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_07_pkey;
+
+
+--
+-- Name: messages_2025_12_08_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_08_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_08_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_08_pkey;
+
+
+--
+-- Name: messages_2025_12_09_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_09_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_09_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_09_pkey;
+
+
+--
+-- Name: messages_2025_12_10_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_10_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_10_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_10_pkey;
+
+
+--
+-- Name: messages_2025_12_11_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_11_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_11_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_11_pkey;
+
+
+--
+-- Name: messages_2025_12_12_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_12_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_12_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_12_pkey;
+
+
+--
+-- Name: messages_2025_12_13_inserted_at_topic_idx; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_inserted_at_topic_index ATTACH PARTITION realtime.messages_2025_12_13_inserted_at_topic_idx;
+
+
+--
+-- Name: messages_2025_12_13_pkey; Type: INDEX ATTACH; Schema: realtime; Owner: -
+--
+
+ALTER INDEX realtime.messages_pkey ATTACH PARTITION realtime.messages_2025_12_13_pkey;
 
 
 --
@@ -6071,6 +6339,14 @@ ALTER TABLE ONLY public.delivery_routes
 
 
 --
+-- Name: delivery_stops delivery_stops_koordinator_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.delivery_stops
+    ADD CONSTRAINT delivery_stops_koordinator_id_fkey FOREIGN KEY (koordinator_id) REFERENCES public.profiles(id);
+
+
+--
 -- Name: delivery_stops delivery_stops_route_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6084,6 +6360,62 @@ ALTER TABLE ONLY public.delivery_stops
 
 ALTER TABLE ONLY public.delivery_stops
     ADD CONSTRAINT delivery_stops_school_id_fkey FOREIGN KEY (school_id) REFERENCES public.schools(id) ON DELETE CASCADE;
+
+
+--
+-- Name: menu_sets menu_sets_buah_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_buah_id_fkey FOREIGN KEY (buah_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_karbo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_karbo_id_fkey FOREIGN KEY (karbo_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_nabati_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_nabati_id_fkey FOREIGN KEY (nabati_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_pelengkap_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_pelengkap_id_fkey FOREIGN KEY (pelengkap_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_protein_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_protein_id_fkey FOREIGN KEY (protein_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_sayur_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_sayur_id_fkey FOREIGN KEY (sayur_id) REFERENCES public.menus(id) ON DELETE SET NULL;
+
+
+--
+-- Name: menu_sets menu_sets_sppg_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.menu_sets
+    ADD CONSTRAINT menu_sets_sppg_id_fkey FOREIGN KEY (sppg_id) REFERENCES public.sppgs(id) ON DELETE CASCADE;
 
 
 --
@@ -6172,6 +6504,14 @@ ALTER TABLE ONLY public.route_menus
 
 ALTER TABLE ONLY public.schools
     ADD CONSTRAINT schools_sppg_id_fkey FOREIGN KEY (sppg_id) REFERENCES public.sppgs(id);
+
+
+--
+-- Name: vehicles vehicles_assistant_courier_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.vehicles
+    ADD CONSTRAINT vehicles_assistant_courier_id_fkey FOREIGN KEY (assistant_courier_id) REFERENCES public.profiles(id);
 
 
 --
@@ -6333,6 +6673,17 @@ ALTER TABLE auth.sso_providers ENABLE ROW LEVEL SECURITY;
 --
 
 ALTER TABLE auth.users ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: menu_sets Allow Admin SPPG CRUD on menu_sets; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY "Allow Admin SPPG CRUD on menu_sets" ON public.menu_sets TO authenticated USING ((sppg_id = ( SELECT profiles.sppg_id
+   FROM public.profiles
+  WHERE (profiles.id = auth.uid())))) WITH CHECK ((sppg_id = ( SELECT profiles.sppg_id
+   FROM public.profiles
+  WHERE (profiles.id = auth.uid()))));
+
 
 --
 -- Name: menus Allow All Auth Menus; Type: POLICY; Schema: public; Owner: -
@@ -6597,6 +6948,12 @@ ALTER TABLE public.class_receptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.delivery_routes ENABLE ROW LEVEL SECURITY;
 
 --
+-- Name: menu_sets; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.menu_sets ENABLE ROW LEVEL SECURITY;
+
+--
 -- Name: menus; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -6760,6 +7117,13 @@ ALTER PUBLICATION supabase_realtime ADD TABLE ONLY public.delivery_routes;
 
 
 --
+-- Name: supabase_realtime menu_sets; Type: PUBLICATION TABLE; Schema: public; Owner: -
+--
+
+ALTER PUBLICATION supabase_realtime ADD TABLE ONLY public.menu_sets;
+
+
+--
 -- Name: supabase_realtime notifications; Type: PUBLICATION TABLE; Schema: public; Owner: -
 --
 
@@ -6836,5 +7200,5 @@ CREATE EVENT TRIGGER pgrst_drop_watch ON sql_drop
 -- PostgreSQL database dump complete
 --
 
-\unrestrict IQqMjM0Z93D8dM9W6K8bbFlVo7hkR3EB3U1v42QlSQOZXpWNBSUat0n18WLDwUC
+\unrestrict dxsaFSA19ePnYeLiVSFnUYc7pifGxPjfXpdR0poooBPbn1HRdaA0gBCMUgdLj2Z
 

@@ -4,20 +4,29 @@ import '../../../models/school_model.dart'; // Sesuaikan path import ini
 class SchoolService {
   final _supabase = Supabase.instance.client;
 
+  // Helper untuk mendapatkan SPPG ID (menangani kasus NULL)
+  Future<String> _getMySppgId() async {
+    final userId = _supabase.auth.currentUser!.id;
+    final profile = await _supabase
+        .from('profiles')
+        .select('sppg_id')
+        .eq('id', userId)
+        .single();
+
+    final String? mySppgId = profile['sppg_id'];
+
+    // Melempar exception jika SPPG ID null, karena SchoolService hanya untuk Admin SPPG.
+    if (mySppgId == null) {
+      throw Exception("User profile tidak memiliki ID SPPG. Akses Ditolak!");
+    }
+    return mySppgId;
+  }
+
   // --- 1. AMBIL DATA SEKOLAH (KHUSUS SPPG YG LOGIN) ---
   Future<List<School>> getMySchools() async {
     try {
-      // Langkah A: Kita harus tau dulu, siapa User yg lagi login?
-      final userId = _supabase.auth.currentUser!.id;
-
-      // Langkah B: Cek di tabel profiles, user ini kerja di SPPG mana?
-      final profile = await _supabase
-          .from('profiles')
-          .select('sppg_id')
-          .eq('id', userId)
-          .single();
-
-      final String mySppgId = profile['sppg_id'];
+      // Langkah A & B: Cek ID SPPG user ini (menggunakan helper baru)
+      final String mySppgId = await _getMySppgId();
 
       // Langkah C: Ambil sekolah yang sppg_id nya SAMA dengan punya user
       final response = await _supabase
@@ -28,9 +37,9 @@ class SchoolService {
 
       final List<dynamic> data = response;
       return data.map((json) => School.fromJson(json)).toList();
-      
     } catch (e) {
-      throw Exception('Gagal mengambil data sekolah: $e');
+      // Menangkap error dari _getMySppgId atau error Supabase lainnya
+      throw Exception('Gagal mengambil data sekolah: ${e.toString()}');
     }
   }
 
@@ -39,24 +48,27 @@ class SchoolService {
     try {
       // Kita perlu inject 'sppg_id' otomatis biar admin gak perlu input manual
       final userId = _supabase.auth.currentUser!.id;
-      
       final profile = await _supabase
           .from('profiles')
           .select('sppg_id')
           .eq('id', userId)
           .single();
-      
-      // Masukkan ID SPPG ke dalam data yang mau dikirim
-      schoolData['sppg_id'] = profile['sppg_id'];
 
+      // Lakukan null check secara eksplisit di sini atau gunakan helper baru
+      final String? mySppgId = profile['sppg_id'];
+      if (mySppgId == null) {
+        throw Exception("Profil Admin tidak terhubung ke SPPG.");
+      }
+
+      // Masukkan ID SPPG ke dalam data yang mau dikirim
+      schoolData['sppg_id'] = mySppgId;
       // Kirim ke tabel 'schools'
       await _supabase.from('schools').insert(schoolData);
-
     } catch (e) {
       throw Exception('Gagal menambah sekolah: $e');
     }
   }
-  
+
   // --- 3. HAPUS SEKOLAH ---
   Future<void> deleteSchool(String schoolId) async {
     try {
@@ -67,7 +79,10 @@ class SchoolService {
   }
 
   // --- 4. UPDATE DATA SEKOLAH (BARU) ---
-  Future<void> updateSchool(String schoolId, Map<String, dynamic> schoolData) async {
+  Future<void> updateSchool(
+    String schoolId,
+    Map<String, dynamic> schoolData,
+  ) async {
     try {
       // Kita tidak perlu update sppg_id karena itu tidak berubah
       await _supabase.from('schools').update(schoolData).eq('id', schoolId);

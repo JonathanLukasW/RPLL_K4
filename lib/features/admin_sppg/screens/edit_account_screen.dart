@@ -65,7 +65,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       text: currentSchoolName,
     ); // <--- INI SUDAH BENAR
 
-    // [BARU] Initialize class student count
+    // [BARU] Initialize class student count (memastikan tipenya num/int)
     _classStudentCountController = TextEditingController(
       text: widget.initialData['studentCountClass']?.toString() ?? '0',
     );
@@ -77,12 +77,30 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
   }
 
   Future<void> _fetchSchools() async {
+    final schoolService = SchoolService();
     try {
-      final data = await SchoolService().getMySchools();
+      // 1. Coba ambil profile role user yang sedang login
+      final userProfile = await Supabase.instance.client
+          .from('profiles')
+          .select('role')
+          .eq('id', Supabase.instance.client.auth.currentUser!.id)
+          .single();
+      final String userRole = userProfile['role'];
 
+      // Jika user login adalah BGN, kita tidak perlu (dan tidak bisa) memuat list sekolah.
+      if (userRole.toLowerCase() == 'bgn') {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+        return; // Stop processing for BGN user
+      }
+
+      // 2. Jika bukan BGN (Admin SPPG), lanjutkan memuat data sekolah
+      final data = await schoolService.getMySchools();
       if (widget.initialRole == 'walikelas' &&
           widget.initialData['schoolId'] != null) {
-        // Load kuota saat ini (kecuali user yang sedang diedit)
         await _loadQuotaDetails(
           widget.initialData['schoolId']!,
           excludeUserId: widget.userId,
@@ -90,26 +108,26 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       }
 
       if (!mounted) return;
-
-      // [FIX 2: Hapus logika pencarian nama sekolah di sini]
-      // Karena nama sekolah sudah dibawa dari dashboard, kita tidak perlu
-      // mencarinya lagi di sini yang rentan error. Kita hanya perlu meng-update
-      // _currentSchoolNameController JIKA _selectedSchoolId berubah (saat submit).
-
       setState(() {
         _schools = data;
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error loading schools: $e")));
+      // Ini akan menangkap error "User profile tidak memiliki ID SPPG. Akses Ditolak!"
+      // yang memang dilempar SchoolService jika yang login BGN/profil rusak.
+      if (e.toString().contains("Akses Ditolak")) {
+        print("BGN User accessing Admin screen. School list skipped.");
+      } else {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error loading schools: $e")));
+      }
       setState(() => _isLoading = false);
     }
   }
 
-  // [BARU] Load Detail Kuota Sekolah (Sama seperti di AddTeacherScreen)
+  // [BARU] Load Detail Kuota Sekolah
   Future<void> _loadQuotaDetails(
     String schoolId, {
     String? excludeUserId,
@@ -123,10 +141,18 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
         setState(() {
           _totalSchoolCapacity = quota['totalSchool'] ?? 0;
           _allocatedCapacity = quota['allocated'] ?? 0;
+          // Tidak perlu memanggil setState di sini karena sudah dipanggil di caller.
         });
       }
     } catch (e) {
-      // ... (error handling)
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error load kuota: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -135,10 +161,14 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
       final int classCount =
           int.tryParse(_classStudentCountController.text) ?? 0;
       final availableQuota = _totalSchoolCapacity - _allocatedCapacity;
+      // Hitung kembali maxAllowed agar sinkron
+      final initialClassCount = widget.initialData['studentCountClass'] ?? 0;
+      final maxAllowed =
+          (_totalSchoolCapacity - _allocatedCapacity) + initialClassCount;
 
-      // Validasi Kuota Total (Termasuk kuota yang sedang diedit)
-      if (classCount >
-          availableQuota + (widget.initialData['studentCountClass'] ?? 0)) {
+      // Validasi Kuota Total
+      if (classCount > maxAllowed) {
+        // <-- Menggunakan maxAllowed yang benar
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -209,16 +239,18 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // [FIX KRITIS 4]: Hitung maxAllowed di build agar responsif
+    final isWaliKelas = widget.initialRole == 'walikelas';
+    final currentClassCount = widget.initialData['studentCountClass'] ?? 0;
+
+    // Max yang boleh diinput saat edit = (Total Sekolah - Alokasi Kelas Lain) + Porsi Kelas Saat Ini
+    final maxAllowed =
+        (_totalSchoolCapacity - _allocatedCapacity) + currentClassCount;
     // Cari nama sekolah yang saat ini dipilih (untuk display di dropdown)
     final selectedSchool = _schools.firstWhereOrNull(
       (s) => s.id == _selectedSchoolId,
     );
-    final isWaliKelas = widget.initialRole == 'walikelas';
     final availableQuota = _totalSchoolCapacity - _allocatedCapacity;
-    final maxAllowed =
-        availableQuota +
-        (widget.initialData['studentCountClass'] ??
-            0); // Max yang boleh diinput saat edit
 
     return Scaffold(
       appBar: AppBar(
@@ -346,7 +378,7 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
                       const SizedBox(height: 15),
 
                       // INFO KUOTA SEKOLAH
-                      if (_totalSchoolCapacity > 0)
+                      if (isWaliKelas && _totalSchoolCapacity > 0)
                         Card(
                           color: Colors.blue[50],
                           margin: const EdgeInsets.only(bottom: 15),
@@ -375,12 +407,14 @@ class _EditAccountScreenState extends State<EditAccountScreen> {
                         ),
 
                       // [BARU] JUMLAH PENERIMA MANFAAT DI KELAS INI
+                      // ... (TextFormField Jml Penerima Kelas Ini) ...
                       TextFormField(
                         controller: _classStudentCountController,
                         keyboardType: TextInputType.number,
                         decoration: InputDecoration(
                           labelText: "Jml Penerima Kelas Ini",
-                          hintText: "Maksimal: $maxAllowed",
+                          hintText:
+                              "Maksimal: $maxAllowed", // <-- Menampilkan maxAllowed yang benar
                           prefixIcon: const Icon(Icons.people),
                         ),
                         validator: (v) {

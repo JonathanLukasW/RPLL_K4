@@ -195,6 +195,17 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
     );
   }
 
+  // Helper untuk format waktu
+  String _formatTime(String? timeStr) {
+    if (timeStr == null || timeStr.isEmpty) return "--:--";
+    try {
+      // Ambil 5 karakter pertama (HH:mm)
+      return timeStr.substring(0, 5);
+    } catch (_) {
+      return timeStr;
+    }
+  }
+
   Widget _buildDayList() {
     final routes = _getRoutesForDay(_selectedDay);
     if (routes.isEmpty) {
@@ -218,35 +229,100 @@ class _DashboardKurirScreenState extends State<DashboardKurirScreen> {
       itemBuilder: (context, index) {
         final route = routes[index];
 
-        return Card(
-          elevation: 3,
-          margin: const EdgeInsets.only(bottom: 12),
-          child: ListTile(
-            leading: const Icon(
-              Icons.local_shipping,
-              color: Colors.blue,
-              size: 32,
-            ),
-            title: Text(
-              "Armada: ${route.vehiclePlate ?? '-'}",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
-            subtitle: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [Text("Status: ${route.status.toUpperCase()}")],
-            ),
-            trailing: const Icon(Icons.arrow_forward_ios, size: 16),
-            onTap: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => RouteDetailScreen(route: route),
+        // >>> WRAP DALAM FUTURE BUILDER UNTUK MENDAPATKAN NEXT STOP <<<
+        return FutureBuilder<Map<String, dynamic>?>(
+          future: _routeService.getNextPendingStop(route.id),
+          builder: (context, snapshot) {
+            final nextStop = snapshot.data;
+
+            String nextDestination = "Semua Stop Selesai";
+            String nextTime = "--:--";
+            bool isOngoing =
+                route.status == 'active' || route.status == 'pending';
+
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              // Tampilkan loading minimal saat fetch next stop
+              nextDestination = "Mencari tujuan...";
+            } else if (route.status == 'completed') {
+              nextDestination = "Rute Selesai Total";
+            } else if (nextStop != null && isOngoing) {
+              // Jika ada stop pending, ambil nama sekolah dan ETA-nya
+              nextDestination =
+                  "Tujuan Berikutnya: ${nextStop['schools']['name']}";
+              nextTime = _formatTime(nextStop['estimated_arrival_time']);
+            } else if (route.status == 'pending') {
+              // Jika status pending dan nextStop null, berarti belum dimulai (SPPG)
+              nextDestination = "Menunggu Validasi Muatan di SPPG";
+              nextTime = _formatTime(route.departureTime);
+            }
+
+            return Card(
+              elevation: 3,
+              // Warna card sesuai status, jika active/pending gunakan warna berbeda
+              color: route.status == 'completed'
+                  ? Colors.green[50]
+                  : (route.status == 'active'
+                        ? Colors.yellow[100]
+                        : Colors.white),
+              margin: const EdgeInsets.only(bottom: 12),
+              child: ListTile(
+                leading: Icon(
+                  route.status == 'completed'
+                      ? Icons.check_circle
+                      : Icons.local_shipping,
+                  color: route.status == 'completed'
+                      ? Colors.green
+                      : Colors.blue,
+                  size: 32,
                 ),
-              ).then((val) {
-                _fetchRoutes();
-              });
-            },
-          ),
+                title: Text(
+                  "Armada: ${route.vehiclePlate ?? '-'}",
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      "Status: ${route.status.toUpperCase()}",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: route.status == 'active'
+                            ? Colors.blue[800]
+                            : Colors.grey[700],
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    // >>> DETAIL BARU: TUJUAN DAN WAKTU <<<
+                    Text(
+                      nextDestination,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    ),
+                    Text(
+                      "Est. Tiba/Berangkat: $nextTime",
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: route.status == 'active'
+                            ? Colors.orange[800]
+                            : Colors.grey,
+                      ),
+                    ),
+                  ],
+                ),
+                isThreeLine: true,
+                trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => RouteDetailScreen(route: route),
+                    ),
+                  ).then((val) {
+                    _fetchRoutes();
+                  });
+                },
+              ),
+            );
+          },
         );
       },
     );
